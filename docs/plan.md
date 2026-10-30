@@ -53,8 +53,87 @@ other in a cycle, so the layers go one way:
    Hrefine, so `javascript:` and tricky hosts are caught), HTML subtrees
    inside Markdown nodes, and maybe HTML to Markdown.
 
-Names: the repo's name is a placeholder. These libraries are meant to be
-used together, so related names fit, unlike our other libraries'.
+Names: the repo's name is a placeholder. These libraries are designed to
+work together, so similar names and an umbrella name for the repo fit
+(the user, 2026-10-30), unlike our other libraries'. Naming waits.
+
+## Building documents (Mike's ideas, 2026-10-30)
+
+Mike's sketch of a really nice Markdown library, with notes on each
+idea. These are ideas to inform planning, not decisions.
+
+**Nesting in the types.** A group of sealed interfaces named for where a
+node may go: `FileChild`, `ParagraphChild`, `ListElementChild`,
+`CodeBlockChild`, `LinkTextChild`, and `LinkTargetChild`. A node type
+implements each place it may appear, so a program building a tree can
+only nest what renders as valid Markdown. For example, text is a
+`ParagraphChild` and a `LinkTextChild`, and a link is a `ParagraphChild`
+but not a `LinkTextChild`, since links can't nest.
+- Temper has sealed interfaces, generic ones included, and a class can
+  implement several.
+- Parsed trees must fit the same types. CommonMark's nesting is regular
+  enough: container blocks hold blocks, and paragraphs and headings
+  hold inlines, with a few exclusions, like links in links. What
+  doesn't fit (raw HTML, odd but valid input) still needs a node that
+  fits every place it can appear.
+
+**Foreign languages inside Markdown.**
+- **HTML:** make an HTML fragment from an HTML tree, a builder, or a
+  safe HTML value. Safe HTML here means HTML the library understands,
+  as structure rather than raw text, maybe validated in other ways too
+  (well formed, or within an allowlist). This fits the bridge: the
+  Markdown library defines the interface, and the HTML library (and the
+  sanitizer, for the stricter checks) supply values for it.
+- **Mermaid and others:** a fenced code block made from a Mermaid
+  tree. Generalized, Markdown defines an interface for fenced content
+  (its info string, and its text), and a Mermaid library, or any other,
+  implements it, with no dependency from Markdown back to it.
+
+**A context for names that must not collide.**
+- **Anchors:** allocate a heading's anchor ahead of time, guaranteed
+  unique, and use it as a link target from links before and after the
+  heading, ideally across files. That calls for a context per document
+  set, which hands out anchors, resolves forward references when
+  rendering, and makes links between pages relative.
+- **External links:** a global set of external URLs with unique names,
+  used by links and written as reference definitions (`[name]: url`) at
+  the end of each page that uses them. Hrefine can normalize the URLs,
+  so two spellings of one URL share a name.
+- **With lossless edits:** when editing an existing document, the
+  context is seeded from its headings and reference definitions, so
+  new anchors and names don't collide with what's already there.
+
+**A builder DSL.** Mike's sketch in Kotlin:
+
+```kt
+val top: LinkTarget
+
+page("/README.md") {
+  h1 {
+    top = allocAnchor(hint = "README-top")
+    text("Hello, ")
+    b {
+      link {
+        text("World")
+      } targetsUrl {
+        wikipediaWorldEntry
+      }
+    }
+    text("!")
+  }
+}
+```
+
+- Temper's trailing blocks, and chained blocks such as
+  `link { … } targetsUrl { … }`, might express this almost directly.
+  Check what the grammar allows before relying on it.
+- Allocating up front reads well in every language and avoids
+  assigning an outer variable from inside a block:
+  `let top = context.allocAnchor("README-top")`, then `h1` takes `top`.
+- People using the library from Python, Java, and the others use its
+  API there, not Temper's syntax. So the tree's constructors and
+  builders need to read well in each language too (as Hrefine's tours
+  check), such as nested constructor calls with lists of children.
 
 ## Lossless, defined
 
