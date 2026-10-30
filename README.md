@@ -1,4 +1,4 @@
-# htmlmd (working name)
+# Kelpto (working name)
 
 Lossless Markdown and a WHATWG HTML parser, written once in Temper, for
 every language Temper supports. Parse a document, change one part, and
