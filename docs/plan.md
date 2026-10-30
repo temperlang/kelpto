@@ -53,9 +53,12 @@ other in a cycle, so the layers go one way:
    Hrefine, so `javascript:` and tricky hosts are caught), HTML subtrees
    inside Markdown nodes, and maybe HTML to Markdown.
 
-Names: the repo's name is a placeholder. These libraries are designed to
-work together, so similar names and an umbrella name for the repo fit
-(the user, 2026-10-30), unlike our other libraries'. Naming waits.
+Names: the working name is Kelpto (2026-10-30; see
+[names.md](names.md)), with `kelpto-md` and `kelpto-html` in
+subdirectories. These libraries are designed to work together, so
+similar names and an umbrella name fit, unlike our other libraries'.
+How each works alone and together is sketched in
+[design.md](design.md).
 
 ## Building documents (Mike's ideas, 2026-10-30)
 
