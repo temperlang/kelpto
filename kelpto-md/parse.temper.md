@@ -6,22 +6,38 @@ parser doesn't understand stays as text.
 
     let {
       GreenElement, GreenNode, GreenNodeBuilder, GreenToken, Kind, SourceText, redRoot,
-      isAsciiAlpha, isAsciiAlphanumeric, isAsciiWhitespace,
     } = import("../kelpto-core");
+
+The character classes this file uses (`isAsciiAlpha` and the like) are
+imported in `blocks.temper.md`: importing a function in two files of
+one library breaks it in Lua (2026-10-30).
 
 ## What it understands so far
 
-A small part of CommonMark, enough to show the shape of the tree:
+- **Blocks:** all of CommonMark's: thematic breaks, ATX and setext
+  headings, indented and fenced code, HTML blocks (all seven kinds),
+  link reference definitions, paragraphs, blank lines, block quotes,
+  and lists, tight and loose, with the spec's rules for containers,
+  lazy lines, and tabs. See `blocks.temper.md`.
+- **Inlines, for now:** text, backslash escapes, code spans, and raw
+  inline HTML (open tags, closing tags, and comments). The rest
+  (emphasis, links, images, autolinks, entity references, and hard line
+  breaks) reads as text, still printed back exactly.
 
-- **Blocks:** ATX headings (`# Title`), paragraphs, blank lines, and
-  fenced code blocks (backticks or tildes).
-- **Inlines:** text, backslash escapes, code spans, and raw inline
-  HTML (open tags, closing tags, and comments, by CommonMark's rules).
+## How the tree holds the text
 
-Not yet, so these read as paragraphs and text: setext headings,
-indented code, block quotes, lists, thematic breaks, HTML blocks, link
-reference definitions, emphasis, links, images, autolinks, entity
-references, hard line breaks, and tabs expanded to tab stops.
+Each block is a node, and its text is in tokens, so nothing is lost:
+
+- **Container prefixes** (`>`, list markers, and indentation) are
+  tokens where they fall in the text: a block quote's `>` on its first
+  line is in the `BlockQuote` node, and on later lines, in whatever
+  node is open there, such as a paragraph running across lines. Views
+  skip them.
+- **Leaf blocks** hold their own markers (`#`, fences, underlines), and
+  paragraphs and headings an `InlineContent` node with their inlines,
+  without the whitespace around them.
+- **Line endings** stay as written, `\n`, `\r\n`, or `\r`, each in a
+  `LineEnding` token.
 
 ## Kinds
 
@@ -34,6 +50,16 @@ Nodes, which typed views wrap:
     export let codeBlockKind = new Kind(104, "CodeBlock");
     export let openingFenceKind = new Kind(105, "OpeningFence");
     export let closingFenceKind = new Kind(106, "ClosingFence");
+    export let blockQuoteKind = new Kind(108, "BlockQuote");
+    export let listKind = new Kind(109, "List");
+    export let listItemKind = new Kind(113, "ListItem");
+    export let thematicBreakKind = new Kind(114, "ThematicBreak");
+    export let setextHeadingKind = new Kind(115, "SetextHeading");
+    export let indentedCodeKind = new Kind(116, "IndentedCode");
+    export let htmlBlockKind = new Kind(117, "HtmlBlock");
+    export let linkReferenceDefinitionKind = new Kind(118, "LinkReferenceDefinition");
+    export let linkLabelKind = new Kind(119, "LinkLabel");
+    export let linkTitleKind = new Kind(140, "LinkTitle");
 
 The inlines of a heading or paragraph, without its markers and the
 whitespace around them, so an edit can swap them as one node:
@@ -58,21 +84,52 @@ Tokens:
     export let backticksKind = new Kind(130, "Backticks");
     export let codeTextKind = new Kind(131, "CodeText");
     export let htmlTextKind = new Kind(132, "OpaqueHtml");
+    export let blockQuoteMarkerKind = new Kind(133, "BlockQuoteMarker");
+    export let listMarkerKind = new Kind(134, "ListMarker");
+    export let thematicBreakMarkerKind = new Kind(135, "ThematicBreakMarker");
+    export let setextMarkerKind = new Kind(136, "SetextMarker");
+    export let colonKind = new Kind(141, "Colon");
+    export let linkDestinationKind = new Kind(142, "LinkDestination");
+    export let labelTextKind = new Kind(143, "LabelText");
+    export let titleTextKind = new Kind(144, "TitleText");
+
+A tab partly used by a prefix, with 1, 2, or 3 columns left for the
+block after it; code blocks show those columns as spaces.
+
+    export let tabRemainder1Kind = new Kind(137, "TabRemainder1");
+    export let tabRemainder2Kind = new Kind(138, "TabRemainder2");
+    export let tabRemainder3Kind = new Kind(139, "TabRemainder3");
+
+    let tabRemainderKind(columns: Int): Kind {
+      if (columns == 1) { tabRemainder1Kind } else if (columns == 2) { tabRemainder2Kind } else { tabRemainder3Kind }
+    }
+
+The columns a `TabRemainder` token stands for, or 0 for other kinds.
+
+    let tabRemainderColumns(kind: Kind): Int {
+      let id = kind.id;
+      if (id == tabRemainder1Kind.id) { 1 } else if (id == tabRemainder2Kind.id) { 2 } else if (id == tabRemainder3Kind.id) { 3 } else { 0 }
+    }
 
 ## Raw HTML: the coordination point
 
-kelpto-md finds raw HTML by CommonMark's own rules, then asks a
-`RawHtmlHandler` what goes inside the `RawHtml` node. The default keeps
-it as one opaque token. The `kelpto` library supplies a handler that
-parses it with kelpto-html, so the HTML becomes a subtree in the same
-green tree. This way kelpto-md never imports kelpto-html, and any other
-parser can plug in too.
+kelpto-md finds raw HTML by CommonMark's own rules, both inline and in
+HTML blocks, then asks a `RawHtmlHandler` what goes inside the node.
+The default keeps it as one opaque token. The `kelpto` library supplies
+a handler that parses it with kelpto-html, so the HTML becomes a
+subtree in the same green tree. This way kelpto-md never imports
+kelpto-html, and any other parser can plug in too.
+
+Raw HTML split by container prefixes, as in an HTML block inside a
+block quote, can't be handed over as one piece; it stays opaque text
+between the prefixes.
 
     export interface RawHtmlHandler {
 
-The children for a `RawHtml` node holding `html`. Their text together
-must be exactly `html`; if not, the parser ignores them and keeps
-`html` as one opaque token, so a faulty handler can't lose text.
+The children for a `RawHtml` or `HtmlBlock` node holding `html`. Their
+text together must be exactly `html`; if not, the parser ignores them
+and keeps `html` as one opaque token, so a faulty handler can't lose
+text.
 
       public parseRawHtml(html: String): List<GreenElement>;
     }
@@ -107,84 +164,206 @@ The green tree alone, for tools working below the typed views.
     export let parseMarkdownGreen(
       text: String, rawHtmlHandler: RawHtmlHandler = opaqueRawHtml,
     ): GreenNode {
-      new MarkdownParser(new SourceText(text), rawHtmlHandler).parseDocument()
+      let source = new SourceText(text);
+      let blocks = new BlockParser(source);
+      blocks.parse();
+      new TreeWriter(source, blocks.lines, rawHtmlHandler).writeDocument(blocks.document)
     }
 
-The inline content node for `text` alone, used by edits that swap a
-heading's inlines, so an edited tree matches what parsing its text
-gives.
+The inline content node for `text` alone, one line, used by edits that
+swap a heading's inlines, so an edited tree matches what parsing its
+text gives.
 
     let inlineContentGreen(text: String): GreenNode {
-      let parser = new MarkdownParser(new SourceText(text), opaqueRawHtml);
-      parser.parseInlinesOnly()
+      let source = new SourceText(text);
+      let line = new LineData(0, source.length, source.length);
+      new TreeWriter(source, [line], opaqueRawHtml).inlinesOnly()
     }
 
-## The parser
+## Writing the tree
 
-Blocks, line by line, then the inlines of each heading and paragraph.
+The second pass: the lines, with what the first gave for each, become
+the green tree. Blocks open where their first token is and close after
+their last line; each leaf writes all of its lines, including the
+prefix tokens on lines after its first.
 
-    class MarkdownParser {
+    class TreeWriter {
       private source: SourceText;
+      private lines: List<LineData>;
       private handler: RawHtmlHandler;
       private builder: GreenNodeBuilder = new GreenNodeBuilder();
-      private var pos: Int = 0;
+      private open: ListBuilder<BlockData> = new ListBuilder<BlockData>();
       private var inText: Boolean = false;
 
-      public constructor(source: SourceText, handler: RawHtmlHandler) {
+      public constructor(source: SourceText, lines: List<LineData>, handler: RawHtmlHandler) {
         this.source = source;
+        this.lines = lines;
         this.handler = handler;
       }
 
-      public parseDocument(): GreenNode {
+      public writeDocument(document: BlockData): GreenNode {
         builder.startNode(documentKind);
-        while (pos < source.length) {
-          parseBlock();
+        open.add(document);
+        var n = 0;
+        while (n < lines.length) {
+          while (open.length > 1 && open[open.length - 1].lastLine < n) {
+            builder.finishNode();
+            open.removeLast();
+          }
+          let line = lines[n];
+          let prefix = line.prefix;
+          for (var i = 0; i < prefix.length; i += 1) {
+            let token = prefix[i];
+            ensureOpen(token.owner);
+            sourceToken(token.kind, token.start, token.end);
+          }
+          let leaf = line.leaf;
+          if (leaf == null) {
+            sourceToken(whitespaceKind, line.leafStart, line.contentEnd);
+            lineEnding(line);
+            n += 1;
+          } else {
+            ensureOpen(leaf.parent ?? document);
+            writeLeaf(leaf);
+            n = leaf.lastLine + 1;
+          }
+        }
+        while (open.length > 1) {
+          builder.finishNode();
+          open.removeLast();
         }
         builder.finishNode();
         builder.finish()
       }
 
-      public parseInlinesOnly(): GreenNode {
-        parseInlines(0, source.length);
+      public inlinesOnly(): GreenNode {
+        let content = rangeContent(source, 0, 0, source.length);
+        parseInlines(content, 0, source.length);
         builder.finish()
       }
 
-      private token(kind: Kind, start: Int, end: Int): Void {
+Opens `block`'s node, and its parents', unless open already.
+
+      private ensureOpen(block: BlockData): Void {
+        for (var i = open.length - 1; i >= 0; i -= 1) {
+          if (open[i].id == block.id) { return; }
+        }
+        ensureOpen(block.parent as BlockData orelse panic());
+        builder.startNode(kindOfBlock(block));
+        open.add(block);
+      }
+
+      private sourceToken(kind: Kind, start: Int, end: Int): Void {
         if (start < end) {
           builder.token(kind, source.slice(start, end));
         }
       }
 
-      private parseBlock(): Void {
-        let end = lineContentEnd(source, pos);
-        if (skipBlanks(source, pos, end) == end) {
-          builder.startNode(blankLineKind);
-          token(whitespaceKind, pos, end);
-          endLine(end);
-          builder.finishNode();
-        } else if (atxMarkerEnd(source, pos, end) >= 0) {
-          parseHeading(end);
-        } else if (openingFenceEnd(source, pos, end) >= 0) {
-          parseCodeBlock(end);
-        } else {
-          parseParagraph(end);
+      private lineEnding(line: LineData): Void {
+        sourceToken(lineEndingKind, line.contentEnd, line.breakEnd);
+      }
+
+The prefix tokens of line `n`, inside a leaf.
+
+      private prefixOf(n: Int): Void {
+        let prefix = lines[n].prefix;
+        for (var i = 0; i < prefix.length; i += 1) {
+          let token = prefix[i];
+          sourceToken(token.kind, token.start, token.end);
         }
       }
 
-Adds the line ending at `end`, if any, and moves to the next line.
+Tokens of `kind` for the range from `start` to `end` of `content`,
+with each line break in it written as the line ending, the next line's
+prefix tokens, and its leading whitespace.
 
-      private endLine(end: Int): Void {
-        let next = lineBreakEnd(source, end);
-        token(lineEndingKind, end, next);
-        pos = next;
+      private emit(content: Content, kind: Kind, start: Int, end: Int): Void {
+        var at = start;
+        while (at < end) {
+          let i = content.lineOf(at);
+          let lineStart = content.starts[i];
+          let lineEnd = lineStart + content.lengths[i];
+          if (at < lineEnd) {
+            let stop = minInt(end, lineEnd);
+            let base = content.sourceStarts[i] - lineStart;
+            sourceToken(kind, base + at, base + stop);
+            at = stop;
+          } else {
+            let n = content.firstLine + i;
+            lineEnding(lines[n]);
+            prefixOf(n + 1);
+            let next = lines[n + 1];
+            sourceToken(whitespaceKind, next.leafStart, content.sourceStarts[i + 1]);
+            at += 1;
+          }
+        }
       }
 
-An ATX heading: up to three spaces, one to six `#`, then the content,
-an optional closing sequence of `#`, and whitespace between.
+      private writeLeaf(leaf: BlockData): Void {
+        builder.startNode(kindOfBlock(leaf));
+        let type = leaf.blockType;
+        if (type == typeParagraph) {
+          writeParagraph(leaf.firstLine, leaf.lastLine + 1);
+        } else if (type == typeSetextHeading) {
+          writeParagraph(leaf.firstLine, leaf.lastLine);
+          prefixOf(leaf.lastLine);
+          let line = lines[leaf.lastLine];
+          let start = skipBlanks(source, line.leafStart, line.contentEnd);
+          let end = trimBlanksBack(source, start, line.contentEnd);
+          sourceToken(indentKind, line.leafStart, start);
+          sourceToken(setextMarkerKind, start, end);
+          sourceToken(whitespaceKind, end, line.contentEnd);
+          lineEnding(line);
+        } else if (type == typeAtxHeading) {
+          writeAtxHeading(lines[leaf.firstLine], leaf.firstLine);
+        } else if (type == typeThematicBreak) {
+          let line = lines[leaf.firstLine];
+          let start = skipBlanks(source, line.leafStart, line.contentEnd);
+          let end = trimBlanksBack(source, start, line.contentEnd);
+          sourceToken(indentKind, line.leafStart, start);
+          sourceToken(thematicBreakMarkerKind, start, end);
+          sourceToken(whitespaceKind, end, line.contentEnd);
+          lineEnding(line);
+        } else if (type == typeFencedCode) {
+          writeFencedCode(leaf);
+        } else if (type == typeIndentedCode) {
+          for (var n = leaf.firstLine; n <= leaf.lastLine; n += 1) {
+            if (n > leaf.firstLine) { prefixOf(n); }
+            codeLine(lines[n]);
+          }
+        } else if (type == typeHtmlBlock) {
+          writeHtmlBlock(leaf);
+        } else if (type == typeDefinition) {
+          writeDefinition(leaf);
+        } else {
+          let line = lines[leaf.firstLine];
+          sourceToken(whitespaceKind, line.leafStart, line.contentEnd);
+          lineEnding(line);
+        }
+        builder.finishNode();
+      }
 
-      private parseHeading(end: Int): Void {
-        let indentEnd = skipSpaces(source, pos, end);
-        let markerEnd = atxMarkerEnd(source, pos, end);
+A paragraph's lines, or a setext heading's before its underline:
+leading whitespace, the inline content, trailing whitespace, and the
+last line ending.
+
+      private writeParagraph(first: Int, end: Int): Void {
+        let content = paragraphContent(source, lines, first, end);
+        sourceToken(whitespaceKind, lines[first].leafStart, content.sourceStarts[0]);
+        let text = content.text;
+        let contentEnd = trimBlanksBack(text, 0, text.length);
+        parseInlines(content, 0, contentEnd);
+        emit(content, whitespaceKind, contentEnd, text.length);
+        lineEnding(lines[end - 1]);
+      }
+
+An ATX heading: indentation, one to six `#`, then the content, an
+optional closing sequence of `#`, and whitespace between.
+
+      private writeAtxHeading(line: LineData, n: Int): Void {
+        let end = line.contentEnd;
+        let indentEnd = skipBlanks(source, line.leafStart, end);
+        let markerEnd = atxHeadingStart(source, indentEnd, end);
         let contentStart = skipBlanks(source, markerEnd, end);
         let trailStart = trimBlanksBack(source, contentStart, end);
         var hashStart = trailStart;
@@ -199,86 +378,144 @@ an optional closing sequence of `#`, and whitespace between.
           closeStart = hashStart;
         }
         let contentEnd = trimBlanksBack(source, contentStart, closeStart);
-        builder.startNode(headingKind);
-        token(indentKind, pos, indentEnd);
-        token(atxMarkerKind, indentEnd, markerEnd);
-        token(whitespaceKind, markerEnd, contentStart);
-        parseInlines(contentStart, contentEnd);
-        token(whitespaceKind, contentEnd, closeStart);
-        token(closingSequenceKind, closeStart, trailStart);
-        token(whitespaceKind, trailStart, end);
-        endLine(end);
-        builder.finishNode();
+        sourceToken(indentKind, line.leafStart, indentEnd);
+        sourceToken(atxMarkerKind, indentEnd, markerEnd);
+        sourceToken(whitespaceKind, markerEnd, contentStart);
+        let content = rangeContent(source, n, contentStart, contentEnd);
+        parseInlines(content, 0, contentEnd - contentStart);
+        sourceToken(whitespaceKind, contentEnd, closeStart);
+        sourceToken(closingSequenceKind, closeStart, trailStart);
+        sourceToken(whitespaceKind, trailStart, end);
+        lineEnding(line);
       }
 
 A fenced code block: an opening fence with an optional info string,
-lines of code, and a closing fence at least as long, or the end of the
-document.
+lines of code, and a closing fence, unless it ran to the end of its
+container.
 
-      private parseCodeBlock(end: Int): Void {
-        let indentEnd = skipSpaces(source, pos, end);
-        let fenceEnd = openingFenceEnd(source, pos, end);
-        let fenceChar = source.codeAt(indentEnd);
-        let fenceLength = fenceEnd - indentEnd;
+      private writeFencedCode(leaf: BlockData): Void {
+        let line = lines[leaf.firstLine];
+        let end = line.contentEnd;
+        let fenceStart = skipBlanks(source, line.leafStart, end);
+        let fenceEnd = openingFenceEnd(source, fenceStart, end);
         let infoStart = skipBlanks(source, fenceEnd, end);
         let infoEnd = trimBlanksBack(source, infoStart, end);
-        builder.startNode(codeBlockKind);
         builder.startNode(openingFenceKind);
-        token(indentKind, pos, indentEnd);
-        token(fenceKind, indentEnd, fenceEnd);
-        token(whitespaceKind, fenceEnd, infoStart);
-        token(infoKind, infoStart, infoEnd);
-        token(whitespaceKind, infoEnd, end);
-        endLine(end);
+        sourceToken(indentKind, line.leafStart, fenceStart);
+        sourceToken(fenceKind, fenceStart, fenceEnd);
+        sourceToken(whitespaceKind, fenceEnd, infoStart);
+        sourceToken(infoKind, infoStart, infoEnd);
+        sourceToken(whitespaceKind, infoEnd, end);
+        lineEnding(line);
         builder.finishNode();
-        while (pos < source.length) {
-          let lineEnd = lineContentEnd(source, pos);
-          let closeIndentEnd = skipSpaces(source, pos, lineEnd);
-          var closeEnd = closeIndentEnd;
-          while (source.codeAt(closeEnd) == fenceChar && closeEnd < lineEnd) {
-            closeEnd += 1;
-          }
-          if (closeEnd - closeIndentEnd >= fenceLength && skipBlanks(source, closeEnd, lineEnd) == lineEnd) {
+        for (var n = leaf.firstLine + 1; n <= leaf.lastLine; n += 1) {
+          prefixOf(n);
+          let row = lines[n];
+          if (n == leaf.lastLine && leaf.closedByFence) {
+            let closeStart = skipBlanks(source, row.leafStart, row.contentEnd);
+            var closeEnd = closeStart;
+            while (closeEnd < row.contentEnd && source.codeAt(closeEnd) == leaf.fenceChar) {
+              closeEnd += 1;
+            }
             builder.startNode(closingFenceKind);
-            token(indentKind, pos, closeIndentEnd);
-            token(fenceKind, closeIndentEnd, closeEnd);
-            token(whitespaceKind, closeEnd, lineEnd);
-            endLine(lineEnd);
+            sourceToken(indentKind, row.leafStart, closeStart);
+            sourceToken(fenceKind, closeStart, closeEnd);
+            sourceToken(whitespaceKind, closeEnd, row.contentEnd);
+            lineEnding(row);
             builder.finishNode();
-            break;
+          } else {
+            codeLine(row);
           }
-          token(codeLineKind, pos, lineEnd);
-          endLine(lineEnd);
         }
-        builder.finishNode();
       }
 
-A paragraph: lines until a blank line, a heading, or a fence. Leading
-and trailing whitespace stays outside its inline content.
+A line of code: the indentation the block strips, any tab remainder,
+the code, and the line ending.
 
-      private parseParagraph(end: Int): Void {
-        var lastEnd = end;
-        var next = lineBreakEnd(source, end);
-        while (next < source.length) {
-          let lineEnd = lineContentEnd(source, next);
-          if (
-            skipBlanks(source, next, lineEnd) == lineEnd ||
-            atxMarkerEnd(source, next, lineEnd) >= 0 ||
-            openingFenceEnd(source, next, lineEnd) >= 0
-          ) {
-            break;
-          }
-          lastEnd = lineEnd;
-          next = lineBreakEnd(source, lineEnd);
+      private codeLine(line: LineData): Void {
+        sourceToken(indentKind, line.leafStart, line.codeStart);
+        var start = line.codeStart;
+        if (line.tabRemainder > 0 && start < line.contentEnd) {
+          sourceToken(tabRemainderKind(line.tabRemainder), start, start + 1);
+          start += 1;
         }
-        let contentStart = skipBlanks(source, pos, end);
-        let contentEnd = trimBlanksBack(source, contentStart, lastEnd);
-        builder.startNode(paragraphKind);
-        token(whitespaceKind, pos, contentStart);
-        parseInlines(contentStart, contentEnd);
-        token(whitespaceKind, contentEnd, lastEnd);
-        endLine(lastEnd);
-        builder.finishNode();
+        sourceToken(codeLineKind, start, line.contentEnd);
+        lineEnding(line);
+      }
+
+An HTML block: its lines go to the handler as one piece, unless
+container prefixes split them; then each line is opaque text.
+
+      private writeHtmlBlock(leaf: BlockData): Void {
+        let first = lines[leaf.firstLine];
+        var whole = first.tabRemainder == 0;
+        for (var n = leaf.firstLine + 1; n <= leaf.lastLine; n += 1) {
+          let line = lines[n];
+          if (!line.prefix.isEmpty || line.leafStart != line.start) { whole = false; }
+        }
+        if (whole) {
+          rawHtmlChildren(source.slice(first.leafStart, lines[leaf.lastLine].breakEnd));
+          return;
+        }
+        for (var n = leaf.firstLine; n <= leaf.lastLine; n += 1) {
+          if (n > leaf.firstLine) { prefixOf(n); }
+          let line = lines[n];
+          sourceToken(indentKind, line.leafStart, line.codeStart);
+          var start = line.codeStart;
+          if (line.tabRemainder > 0 && start < line.contentEnd) {
+            sourceToken(tabRemainderKind(line.tabRemainder), start, start + 1);
+            start += 1;
+          }
+          sourceToken(htmlTextKind, start, line.contentEnd);
+          lineEnding(line);
+        }
+      }
+
+The handler's children for `html`, or one opaque token if they don't
+give back exactly `html`.
+
+      private rawHtmlChildren(html: String): Void {
+        let children = handler.parseRawHtml(html);
+        if (new GreenNode(rawHtmlKind, children).text == html) {
+          for (var k = 0; k < children.length; k += 1) {
+            builder.element(children[k]);
+          }
+        } else {
+          builder.token(htmlTextKind, html);
+        }
+      }
+
+A link reference definition: `[label]: destination "title"`, across
+lines or not.
+
+      private writeDefinition(leaf: BlockData): Void {
+        let content = paragraphContent(source, lines, leaf.firstLine, leaf.lastLine + 1);
+        let text = content.text;
+        sourceToken(whitespaceKind, lines[leaf.firstLine].leafStart, content.sourceStarts[0]);
+        let scan = scanDefinition(text, 0);
+        if (scan == null) {
+
+Not expected, since the first pass found it, but kept as text if so.
+
+          emit(content, plainKind, 0, text.length);
+        } else {
+          builder.startNode(linkLabelKind);
+          emit(content, labelTextKind, 0, scan.labelEnd);
+          builder.finishNode();
+          emit(content, colonKind, scan.labelEnd, scan.labelEnd + 1);
+          emit(content, whitespaceKind, scan.labelEnd + 1, scan.destinationStart);
+          emit(content, linkDestinationKind, scan.destinationStart, scan.destinationEnd);
+          if (scan.titleStart >= 0) {
+            emit(content, whitespaceKind, scan.destinationEnd, scan.titleStart);
+            builder.startNode(linkTitleKind);
+            emit(content, titleTextKind, scan.titleStart, scan.titleEnd);
+            builder.finishNode();
+            emit(content, whitespaceKind, scan.titleEnd, text.length);
+          } else {
+            emit(content, whitespaceKind, scan.destinationEnd, text.length);
+          }
+        }
+        lineEnding(lines[leaf.lastLine]);
       }
 
 ### Inlines
@@ -300,54 +537,52 @@ between code spans and raw HTML.
         }
       }
 
-      private plain(start: Int, end: Int): Void {
+      private plain(content: Content, start: Int, end: Int): Void {
         if (start < end) {
           openText();
-          token(plainKind, start, end);
+          emit(content, plainKind, start, end);
         }
       }
 
-      private parseInlines(start: Int, end: Int): Void {
+      private parseInlines(content: Content, start: Int, end: Int): Void {
+        let text = content.text;
         builder.startNode(inlineContentKind);
         var plainStart = start;
         var i = start;
         while (i < end) {
-          let c = source.codeAt(i);
-          if (c == char'\\' && i + 1 < end && isAsciiPunctuation(source.codeAt(i + 1))) {
-            plain(plainStart, i);
+          let c = text.codeAt(i);
+          if (c == char'\\' && i + 1 < end && isAsciiPunctuation(text.codeAt(i + 1))) {
+            plain(content, plainStart, i);
             openText();
-            token(escapeKind, i, i + 2);
+            emit(content, escapeKind, i, i + 2);
             i += 2;
             plainStart = i;
-          } else if (c == char'\n' || c == char'\r') {
+          } else if (c == char'\n') {
 
-A line ending inside a paragraph: whitespace before and after it is
-layout, not text, as CommonMark strips it.
+A line break inside a paragraph: whitespace before it is layout, not
+text, as CommonMark strips it, and so is the next line's prefix and
+indentation.
 
-            let spaceStart = trimBlanksBack(source, plainStart, i);
-            plain(plainStart, spaceStart);
+            let spaceStart = trimBlanksBack(text, plainStart, i);
+            plain(content, plainStart, spaceStart);
             openText();
-            token(whitespaceKind, spaceStart, i);
-            let breakEnd = lineBreakEnd(source, i);
-            token(lineEndingKind, i, breakEnd);
-            let next = skipBlanks(source, breakEnd, end);
-            token(whitespaceKind, breakEnd, next);
-            i = next;
+            emit(content, whitespaceKind, spaceStart, i + 1);
+            i += 1;
             plainStart = i;
           } else if (c == char'`') {
             var runEnd = i;
-            while (runEnd < end && source.codeAt(runEnd) == char'`') {
+            while (runEnd < end && text.codeAt(runEnd) == char'`') {
               runEnd += 1;
             }
             let count = runEnd - i;
-            let close = closingBackticks(source, runEnd, end, count);
+            let close = closingBackticks(text, runEnd, end, count);
             if (close >= 0) {
-              plain(plainStart, i);
+              plain(content, plainStart, i);
               closeText();
               builder.startNode(codeSpanKind);
-              token(backticksKind, i, runEnd);
-              token(codeTextKind, runEnd, close);
-              token(backticksKind, close, close + count);
+              emit(content, backticksKind, i, runEnd);
+              emit(content, codeTextKind, runEnd, close);
+              emit(content, backticksKind, close, close + count);
               builder.finishNode();
               i = close + count;
               plainStart = i;
@@ -355,11 +590,11 @@ layout, not text, as CommonMark strips it.
               i = runEnd;
             }
           } else if (c == char'<') {
-            let tagEnd = rawHtmlEnd(source, i, end);
+            let tagEnd = rawHtmlEnd(text, i, end);
             if (tagEnd > i) {
-              plain(plainStart, i);
+              plain(content, plainStart, i);
               closeText();
-              rawHtml(source.slice(i, tagEnd));
+              rawHtml(content, i, tagEnd);
               i = tagEnd;
               plainStart = i;
             } else {
@@ -369,26 +604,47 @@ layout, not text, as CommonMark strips it.
             i += 1;
           }
         }
-        plain(plainStart, end);
+        plain(content, plainStart, end);
         closeText();
         builder.finishNode();
       }
 
-Asks the handler for the raw HTML node's children, keeping `html` as
-one token if they don't give back exactly `html`.
+Raw HTML goes to the handler if it's one piece in the source, and
+stays opaque text between line breaks' prefixes if not.
 
-      private rawHtml(html: String): Void {
+      private rawHtml(content: Content, start: Int, end: Int): Void {
         builder.startNode(rawHtmlKind);
-        let children = handler.parseRawHtml(html);
-        if (new GreenNode(rawHtmlKind, children).text == html) {
-          for (var k = 0; k < children.length; k += 1) {
-            builder.element(children[k]);
-          }
+        let first = content.lineOf(start);
+        let last = content.lineOf(end - 1);
+        var whole = true;
+        for (var i = first; i < last; i += 1) {
+          let next = lines[content.firstLine + i + 1];
+          if (!next.prefix.isEmpty || content.sourceStarts[i + 1] != next.start) { whole = false; }
+        }
+        if (whole) {
+          rawHtmlChildren(source.slice(content.sourceAt(start), content.sourceAt(end - 1) + 1));
         } else {
-          builder.token(htmlTextKind, html);
+          emit(content, htmlTextKind, start, end);
         }
         builder.finishNode();
       }
+    }
+
+    let kindOfBlock(block: BlockData): Kind {
+      let type = block.blockType;
+      if (type == typeDocument) { return documentKind; }
+      if (type == typeBlockQuote) { return blockQuoteKind; }
+      if (type == typeList) { return listKind; }
+      if (type == typeListItem) { return listItemKind; }
+      if (type == typeParagraph) { return paragraphKind; }
+      if (type == typeAtxHeading) { return headingKind; }
+      if (type == typeSetextHeading) { return setextHeadingKind; }
+      if (type == typeThematicBreak) { return thematicBreakKind; }
+      if (type == typeFencedCode) { return codeBlockKind; }
+      if (type == typeIndentedCode) { return indentedCodeKind; }
+      if (type == typeHtmlBlock) { return htmlBlockKind; }
+      if (type == typeDefinition) { return linkReferenceDefinitionKind; }
+      blankLineKind
     }
 
 ## Scanning helpers
@@ -428,16 +684,6 @@ After the line ending at `at`: `\n`, `\r\n`, or `\r`.
       }
     }
 
-Past up to three spaces, the indentation a block may have.
-
-    let skipSpaces(source: SourceText, from: Int, end: Int): Int {
-      var i = from;
-      while (i < end && i < from + 3 && source.codeAt(i) == char' ') {
-        i += 1;
-      }
-      i
-    }
-
 Past spaces and tabs.
 
     let skipBlanks(source: SourceText, from: Int, end: Int): Int {
@@ -454,40 +700,6 @@ Back over spaces and tabs before `end`, but not before `start`.
       var i = end;
       while (i > start && isSpaceOrTab(source.codeAt(i - 1))) {
         i -= 1;
-      }
-      i
-    }
-
-The end of an ATX heading's `#` marker on the line from `from` to
-`end`, or -1.
-
-    let atxMarkerEnd(source: SourceText, from: Int, end: Int): Int {
-      let start = skipSpaces(source, from, end);
-      var i = start;
-      while (i < end && source.codeAt(i) == char'#') {
-        i += 1;
-      }
-      let count = i - start;
-      if (count >= 1 && count <= 6 && (i == end || isSpaceOrTab(source.codeAt(i)))) { i } else { -1 }
-    }
-
-The end of an opening code fence (three or more backticks or tildes)
-on the line, or -1. A backtick fence's info string can't hold a
-backtick.
-
-    let openingFenceEnd(source: SourceText, from: Int, end: Int): Int {
-      let start = skipSpaces(source, from, end);
-      let c = source.codeAt(start);
-      if (c != char'`' && c != char'~') { return -1; }
-      var i = start;
-      while (i < end && source.codeAt(i) == c) {
-        i += 1;
-      }
-      if (i - start < 3) { return -1; }
-      if (c == char'`') {
-        for (var j = i; j < end; j += 1) {
-          if (source.codeAt(j) == char'`') { return -1; }
-        }
       }
       i
     }
@@ -522,15 +734,22 @@ ending in a tag's whitespace; this allows any.
     let rawHtmlEnd(source: SourceText, at: Int, end: Int): Int {
       let c = codeIn(source, at + 1, end);
       if (c == char'/') {
-        let nameEnd = tagNameEnd(source, at + 2, end);
-        if (nameEnd < 0) { return at; }
-        let close = skipWhitespace(source, nameEnd, end);
-        if (codeIn(source, close, end) == char'>') { close + 1 } else { at }
+        closingTagEnd(source, at, end)
       } else if (c == char'!') {
         commentEnd(source, at, end)
       } else {
         openTagEnd(source, at, end)
       }
+    }
+
+A closing tag: `</`, a name, optional whitespace, and `>`.
+
+    let closingTagEnd(source: SourceText, at: Int, end: Int): Int {
+      if (codeIn(source, at + 1, end) != char'/') { return at; }
+      let nameEnd = tagNameEnd(source, at + 2, end);
+      if (nameEnd < 0) { return at; }
+      let close = skipWhitespace(source, nameEnd, end);
+      if (codeIn(source, close, end) == char'>') { close + 1 } else { at }
     }
 
 A code point before `end`, or -1.
@@ -653,6 +872,12 @@ odd, and invalid input alike.
         "<!-- comment --> <!--> <!---> <!-- unclosed", "<1> < b> <b <b/> </b > </ b> <a href>",
         "<a\nhref=\"x\">\nmore", "\\`not code\\` \\\\ \\a", "* list\n- item\n> quote\n---\n",
         "é😀\u{0}\u{FEFF}\n", "trailing  \n  spaces  ", "line\rbreaks\r\nmixed\n",
+        "> quote\r\n> > nested\rlazy\n>\n", "- a\n  - b\n\n- c", "1) x\n2) y\n10. z",
+        ">\t\tcode\n-\t\tcode\n \t- x\n", "Title\n===\n\nSub\r\n---\r\n",
+        "    code\n\n\n    more\n\n", "<div>\n<b>\n\n<!--\n\n-->\n<?x?>\n<![CDATA[\n]]>\n",
+        "[a]: /u\n[b]:\n<c d> 'e\nf'\n[bad]: x y\n", "- \n  x\n-\n\n  y", "* * *\n_ _ _\n-\t-\t-",
+        "> ```\n> code\n```\n", "- ```\n  a\n\n  b\n  ```\n", "  > - 1.  > x\n  >   >  y",
+        "<pre>\nx\n</pre>y\n", "\t\t\n\t>\t\n", "[\nlabel\n]: <> (t)\n",
       ]
     }
 
@@ -663,6 +888,45 @@ odd, and invalid input alike.
         let written = parseMarkdown(text).asWritten;
         assert(written == text) { "${i.toString()}: ${written}" };
       }
+    }
+
+Random mixes of block markers, tabs, and line endings, from a fixed
+seed, so a failure repeats. Each must roundtrip, and render without
+failing.
+
+    let fuzzPieces(): List<String> {
+      [
+        "> ", ">", "- ", "-", "* ", "+ ", "1. ", "2) ", "10. ", "#", "# ", "###### ", "```", "~~~",
+        "    ", "  ", " ", "\t", "\n", "\r\n", "\r", "\n\n", "text", "a", "===", "---", "***",
+        "<div>", "</div>", "<!--", "-->", "<?", "?>", "<![CDATA[", "]]>", "<pre>", "</pre>",
+        "<a href='x'>", "[a]:", " /url", " 'title'", "[", "]", "`", "``", "\\", "\u{0}", "é",
+        "😀", "<", ">", "\"",
+      ]
+    }
+
+    test("roundtrip: fuzzing with block markers, tabs, and line endings") {
+      let pieces = fuzzPieces();
+      var state = 12345;
+      var failures = 0;
+      var rendered = 0;
+      var first = "";
+      for (var round = 0; round < 400; round += 1) {
+        let out = new StringBuilder();
+        state = (state * 75 + 74) % 65537;
+        let count = 1 + state % 40;
+        for (var k = 0; k < count; k += 1) {
+          state = (state * 75 + 74) % 65537;
+          out.append(pieces[state % pieces.length]);
+        }
+        let text = out.toString();
+        let doc = parseMarkdown(text);
+        if (!doc.toHtml().isEmpty || !doc.blocks.isEmpty) { rendered += 1; }
+        if (doc.asWritten != text) {
+          failures += 1;
+          if (first == "") { first = text; }
+        }
+      }
+      assert(failures == 0 && rendered > 0) { "${failures.toString()} failed, such as ${first}" };
     }
 
 Every block's span starts where the last one ended, so the blocks tile

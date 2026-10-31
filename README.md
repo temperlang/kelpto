@@ -5,8 +5,9 @@ every language Temper supports. Parse a document, change one part, and
 write it back with everything else exactly as it was. Render it safely,
 with raw HTML parsed as browsers parse it and links checked by Hrefine.
 
-**A first skeleton is built** (2026-10-30): real, tested, and small,
-with a tiny subset of Markdown and HTML, so the shape is easy to see.
+**Status** (2026-10-30): every CommonMark block parses losslessly and
+renders as the spec's examples expect, with a few inlines so far; the
+HTML side is still a small skeleton.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 
@@ -94,6 +95,14 @@ renderSafe(both).html;
 
 `renderSafe` is a sketch, not a sanitizer yet; see
 [kelpto/README.md](kelpto/README.md).
+
+## Tests and licensing
+
+Each library has its own tests. kelpto-md's tests against CommonMark's
+spec examples are in [tests/commonmark](tests/commonmark/README.md), a
+test-only library, since the examples are CC-BY-SA 4.0; see
+[NOTICE](NOTICE). `scripts/commonmark_spec.py` (run with `uv run`)
+regenerates them.
 
 ## Building
 

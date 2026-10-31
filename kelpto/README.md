@@ -2,9 +2,10 @@
 
 kelpto-md and kelpto-html together, so neither imports the other:
 
-- **`parseMarkdownWithHtml`** parses raw HTML in Markdown with
-  kelpto-html, as subtrees of the same lossless tree.
-- **`htmlOf`** views a `RawHtml` node through kelpto-html's types.
+- **`parseMarkdownWithHtml`** parses raw HTML in Markdown, inline and
+  HTML blocks, with kelpto-html, as subtrees of the same lossless tree.
+- **`htmlOf`** views a `RawHtml` node or `HtmlBlock` through
+  kelpto-html's types.
 - **`renderSafe`** renders Markdown keeping only a few allowlisted
   elements, without attributes, as `SafeHtml`.
 

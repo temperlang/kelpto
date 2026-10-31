@@ -157,8 +157,10 @@ page("/README.md") {
 | web-platform-tests, `html/syntax/parsing/resources/` | tree-construction `.dat` files, maintained there now, not in html5lib-tests | BSD-3-Clause |
 
 The CommonMark examples come from a CC-BY-SA document, so the extracted
-tests likely carry CC-BY-SA. Keep them in `tests/` with attribution in
-NOTICE, apart from the library's own code; decide before vendoring.
+tests carry CC-BY-SA. They're vendored (2026-10-30) in
+`tests/commonmark/`, a test-only library apart from the libraries'
+code, which nothing imports and which isn't published, with
+attribution and both licenses in NOTICE.
 GitHub Flavored Markdown's extensions (tables, strikethrough, task
 lists, and autolinks) have their spec in github/cmark-gfm, which isn't
 in the allowed GitHub orgs yet.
@@ -166,10 +168,11 @@ in the allowed GitHub orgs yet.
 ## Steps
 
 1. **Core and CommonMark blocks,** lossless, with the spec's block
-   examples.
-2. **CommonMark inlines,** all of `spec.txt`, HTML rendering included.
-3. **Edits:** a small, consistent API for changing parts, with
-   roundtrip fuzzing.
+   examples. Done (2026-10-30), with roundtrip fuzzing.
+2. **CommonMark inlines,** all of `spec.txt`, HTML rendering included,
+   with character references in core. Next, then GFM.
+3. **Edits:** a small, consistent API for changing parts, batches, and
+   insert and remove; roundtrip fuzzing is in place.
 4. **HTML tokenizer,** then tree construction, against html5lib-tests
    and WPT's `.dat` files.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface

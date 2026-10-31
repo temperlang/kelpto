@@ -16,11 +16,10 @@ goals and tests.
 - **Red-green trees from the start,** as in "Edits without heavy
   copying", below, since retrofitting positions is hard.
 
-## The skeleton (2026-10-30)
+## Status (2026-10-30)
 
-A first skeleton is built: real, tested Temper in all four libraries,
-small enough to read in one sitting. Each library's README shows it in
-use, and the top README shows them alone and together.
+Real, tested Temper in all four libraries. Each library's README shows
+it in use, and the top README shows them alone and together.
 
 - **kelpto-core:** red-green trees (`GreenNode`, `GreenToken`,
   `GreenNodeBuilder`, `RedNode`, and `RedToken`), `Span`, `Kind`, and
@@ -29,12 +28,17 @@ use, and the top README shows them alone and together.
   nodes into dumps and test failures; they compare by id, since
   Temper has no `==` on class instances. Each library takes a range of
   ids (core 0 to 99, md 100 to 199, html 200 to 299).
-- **kelpto-md:** ATX headings, paragraphs, blank lines, fenced code,
-  text, backslash escapes, code spans, and raw inline HTML (open tags,
-  closing tags, and comments). Typed views by where a node may go
-  (`DocumentChild`, `ParagraphChild`); edits `Heading.withText` and
-  `CodeBlock.withInfo`; rendering with raw HTML escaped unless
-  `withRawHtmlTrusted()`.
+- **kelpto-md:** every CommonMark block, lossless, by the spec's
+  two-phase algorithm (see "kelpto-md's blocks", below), with the
+  skeleton's inlines for now: text, backslash escapes, code spans, and
+  raw inline HTML. Typed views by where a node may go (`BlockChild`,
+  `ListChild`, and `ParagraphChild`); edits `Heading.withText` and
+  `withLevel`, `CodeBlock.withInfo`, and
+  `LinkReferenceDefinition.withDestination`; rendering with raw HTML
+  escaped unless `withRawHtmlTrusted()`. Tested against the spec's
+  examples, in `tests/commonmark/`: 265 of the 296 in block sections
+  pass, and the other 31 need inlines (emphasis, links, and hard
+  breaks); 139 of the 356 in inline sections pass.
 - **kelpto-html:** a simplified tokenizer (start tags with attributes,
   end tags, comments, and text), typed views (`StartTag`, `EndTag`,
   `Comment`, `Text`, and `Attribute`), and `Attribute.withValue`.
@@ -45,14 +49,16 @@ use, and the top README shows them alone and together.
 **How they coordinate:** kelpto-md defines two interfaces and never
 imports kelpto-html.
 
-- **`RawHtmlHandler`** gives the children of each `RawHtml` node. The
-  default, `OpaqueRawHtml`, keeps one token; kelpto's `ParsedRawHtml`
-  gives kelpto-html's green subtree, so the HTML sits in the Markdown
-  tree, lossless. kelpto-md checks the children's text matches and
-  falls back to opaque if not, so a faulty handler can't lose text.
-- **`RawHtmlRenderer`** renders each `RawHtml` node: escaped by
-  default, as written with `withRawHtmlTrusted()`, or kelpto's
-  allowlist for `renderSafe`.
+- **`RawHtmlHandler`** gives the children of each `RawHtml` node and
+  `HtmlBlock`. The default, `OpaqueRawHtml`, keeps one token; kelpto's
+  `ParsedRawHtml` gives kelpto-html's green subtree, so the HTML sits
+  in the Markdown tree, lossless. kelpto-md checks the children's text
+  matches and falls back to opaque if not, so a faulty handler can't
+  lose text. HTML split by container prefixes (an HTML block in a
+  block quote, say) stays opaque text between them for now.
+- **`RawHtmlRenderer`** renders each `RawHtmlContent` (inline or a
+  block): escaped by default, as written with `withRawHtmlTrusted()`,
+  or kelpto's allowlist for `renderSafe`.
 - **Shared red nodes:** kelpto-html's views wrap any red node of its
   kinds, so `htmlOf(rawHtml)` views the subtree in place, and an HTML
   edit there gives a new root that `new MarkdownDocument(top.node)`
@@ -63,12 +69,31 @@ stays text. Tests in each library check roundtrips on ordinary, odd,
 and invalid input, the typed views, that edits change only their span,
 and rendering defaults.
 
+### kelpto-md's blocks
+
+- **Two passes:** the first follows cmark's block algorithm line by
+  line, recording for each line its container prefixes (each `>`, list
+  marker, and indentation, with the block it belongs to) and which
+  leaf takes the rest. The second writes the green tree from that, so
+  every code point lands in one token.
+- **Prefixes where they fall:** a container's prefix on its first line
+  is in its own node; on later lines it's a token in whatever node is
+  open there, such as a paragraph spanning lines. Views skip them.
+- **Tabs:** kept as written, with columns counted as the spec says. A
+  tab partly used by a prefix goes to the block after it as a
+  `TabRemainder1` to `3` token, which code shows as that many spaces.
+- **Blank lines and definitions** are nodes, so they keep their text;
+  a list's tightness is computed from where blank lines are, so it
+  follows edits.
+
 **Next,** roughly in order:
 
-1. CommonMark's remaining blocks, then inlines, against `spec.txt`;
-   HTML blocks through the same `RawHtmlHandler`.
-2. Character references in kelpto-core, used by both parsers.
-3. Edit batches (`doc.edit`), insert and remove, and roundtrip fuzzing.
+1. CommonMark inlines in full (emphasis, links and images with
+   reference definitions, autolinks, and hard line breaks), with
+   character references in kelpto-core, used by both parsers.
+2. GitHub Flavored Markdown's extensions, once its spec's org is
+   allowed.
+3. Edit batches (`doc.edit`), insert and remove, and more edits.
 4. The WHATWG tokenizer in full, then tree construction, against
    html5lib-tests and WPT.
 5. A real sanitizer on the built tree, with links checked, replacing

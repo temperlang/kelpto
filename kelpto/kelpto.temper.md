@@ -5,8 +5,9 @@ kelpto-html tokenizes HTML. This library joins them, so neither needs
 the other:
 
 - **Parsing:** `ParsedRawHtml` fills in kelpto-md's `RawHtmlHandler`
-  with kelpto-html, so each raw HTML span in a Markdown document holds
-  an HTML subtree, in the same green tree, still lossless.
+  with kelpto-html, so each raw HTML span and HTML block in a Markdown
+  document holds an HTML subtree, in the same green tree, still
+  lossless.
 - **Rendering:** `renderSafe` fills in kelpto-md's `RawHtmlRenderer`,
   keeping only a few allowlisted elements.
 
@@ -18,7 +19,7 @@ renderSafe(doc).html;                     // "<p>Hi <b>there</b>alert(1)</p>\n"
 
     let { GreenElement, RedNode, escapeHtml } = import("../kelpto-core");
     let {
-      MarkdownDocument, MarkdownRenderer, RawHtml, RawHtmlHandler, RawHtmlRenderer,
+      MarkdownDocument, MarkdownRenderer, RawHtmlContent, RawHtmlHandler, RawHtmlRenderer,
       parseMarkdown,
     } = import("../kelpto-md");
     let {
@@ -47,10 +48,11 @@ Parses `text` as Markdown, with raw HTML parsed as HTML.
       parseMarkdown(text, new ParsedRawHtml())
     }
 
-The HTML in `rawHtml`, through kelpto-html's views: its subtree if
-parsed with `parseMarkdownWithHtml`, or else tokenized now.
+The HTML in `rawHtml`, inline or an HTML block, through kelpto-html's
+views: its subtree if parsed with `parseMarkdownWithHtml`, or else
+tokenized now.
 
-    export let htmlOf(rawHtml: RawHtml): HtmlTokens {
+    export let htmlOf(rawHtml: RawHtmlContent): HtmlTokens {
       let node = rawHtml.htmlNode;
       if (node != null) {
         if (node.hasKind(htmlTokensKind)) { return new HtmlTokens(node); }
@@ -97,7 +99,7 @@ an allowlist of elements and attributes and every URL checked.
     class AllowlistRawHtml extends RawHtmlRenderer {
       public constructor() {}
 
-      public renderRawHtml(rawHtml: RawHtml): String {
+      public renderRawHtml(rawHtml: RawHtmlContent): String {
         let out = new StringBuilder();
         let tokens = htmlOf(rawHtml).children;
         for (var i = 0; i < tokens.length; i += 1) {
@@ -167,4 +169,20 @@ An edit through kelpto-html's views, inside a Markdown document.
       assert(html == "<p>Hi <b>there</b>alert(1) <em>ok</em> </p>\n") { html };
       let fromPlain = renderSafe(parseMarkdown("<i>x</i><script>")).html;
       assert(fromPlain == "<p><i>x</i></p>\n") { fromPlain };
+    }
+
+HTML blocks get HTML subtrees too, unless container prefixes split
+their lines.
+
+    test("HTML blocks become HTML nodes") {
+      let doc = parseMarkdownWithHtml("<div class=x>\n<b>hi</b>\n</div>\n\n> <p>\n> quoted\n");
+      assert(doc.asWritten == "<div class=x>\n<b>hi</b>\n</div>\n\n> <p>\n> quoted\n") { "roundtrip" };
+      let blocks = doc.htmlBlocks;
+      assert(blocks.length == 2) { blocks.length.toString() };
+      let div = htmlOf(blocks[0]).startTags[0];
+      assert(div.name == "div" && blocks[0].htmlNode != null) { div.name };
+      assert(blocks[1].htmlNode == null) { "split by `>`, so opaque" };
+      assert(htmlOf(blocks[1]).startTags[0].name == "p") { "tokenized on demand" };
+      let html = renderSafe(doc).html;
+      assert(html == "\n<b>hi</b>\n\n<blockquote>\n\nquoted\n</blockquote>\n") { html };
     }
