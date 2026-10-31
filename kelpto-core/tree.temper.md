@@ -44,13 +44,16 @@ Each node and token has a `Kind`: a small class with an `id` and a
   `Heading`, not `102`, with no table to keep in step across libraries.
 - **It translates plainly:** a small immutable class in every backend,
   and each green element holds one shared reference to it.
-- **Comparisons go by `id`,** through `hasKind`, since Temper has no
-  `==` on class instances. Each library takes its own range of ids:
-  kelpto-core 0 to 99, kelpto-md 100 to 199, kelpto-html 200 to 299.
+- **Comparisons go by `id`.** `==` works on kinds (`@auto("==")`
+  compares `id` and `name`), but `hasKind` and the parsers compare ids
+  alone, a single integer check. Each library takes its own range of
+  ids: kelpto-core 0 to 99, kelpto-md 100 to 199, kelpto-html 200 to
+  299.
 
 Typed views (`Heading`, `StartTag`, and the rest) do the matching, so
 most code never compares kinds.
 
+    @auto("==")
     export class Kind(public id: Int, public name: String) {
       public toString(): String { name }
     }
@@ -387,6 +390,8 @@ own parent, up to a new root.
       assert(inner.span.toString() == "1+3") { inner.span.toString() };
       assert(inner.asWritten == "béc") { inner.asWritten };
       assert(inner.hasKind(nodeKind)) { "kind" };
+      assert(new Kind(nodeKind.id, nodeKind.name) == nodeKind) { "kind ==" };
+      assert(nodeKind != tokenKind) { "kind !=" };
       let last = inner.children[1];
       assert(last.span.toString() == "3+1") { last.span.toString() };
       assert(last.parent?.span?.toString() == "1+3") { "parent" };
