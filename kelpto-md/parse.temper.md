@@ -19,10 +19,11 @@ one library breaks it in Lua (2026-10-30).
   link reference definitions, paragraphs, blank lines, block quotes,
   and lists, tight and loose, with the spec's rules for containers,
   lazy lines, and tabs. See `blocks.temper.md`.
-- **Inlines, for now:** text, backslash escapes, code spans, and raw
-  inline HTML (open tags, closing tags, and comments). The rest
-  (emphasis, links, images, autolinks, entity references, and hard line
-  breaks) reads as text, still printed back exactly.
+- **Inlines:** all of CommonMark's: backslash escapes, character
+  references, code spans, emphasis and strong emphasis, links and
+  images (inline, and full, collapsed, and shortcut references),
+  autolinks, raw HTML, and hard and soft line breaks. See
+  `inlines.temper.md`.
 
 ## How the tree holds the text
 
@@ -68,6 +69,13 @@ whitespace around them, so an edit can swap them as one node:
     export let textKind = new Kind(110, "Text");
     export let codeSpanKind = new Kind(111, "CodeSpan");
     export let rawHtmlKind = new Kind(112, "RawHtml");
+    export let emphasisKind = new Kind(145, "Emphasis");
+    export let strongKind = new Kind(146, "Strong");
+    export let linkKind = new Kind(147, "Link");
+    export let imageKind = new Kind(148, "Image");
+    export let autolinkKind = new Kind(149, "Autolink");
+    export let hardBreakKind = new Kind(150, "HardBreak");
+    export let characterReferenceKind = new Kind(151, "CharacterReference");
 
 Tokens:
 
@@ -92,6 +100,23 @@ Tokens:
     export let linkDestinationKind = new Kind(142, "LinkDestination");
     export let labelTextKind = new Kind(143, "LabelText");
     export let titleTextKind = new Kind(144, "TitleText");
+
+Inline markup, all kept as written: emphasis's `*` or `_` (only those
+used; the rest of a run is text), a link's `[`, an image's `![`, `]`,
+and the parentheses around a destination and title, an autolink's `<`
+and `>`, a hard break's backslash or spaces, and a character
+reference from `&` to `;`.
+
+    export let emphasisMarkerKind = new Kind(152, "EmphasisMarker");
+    export let linkOpenKind = new Kind(153, "LinkOpen");
+    export let imageOpenKind = new Kind(154, "ImageOpen");
+    export let linkCloseKind = new Kind(155, "LinkClose");
+    export let openParenKind = new Kind(156, "OpenParen");
+    export let closeParenKind = new Kind(157, "CloseParen");
+    export let angleBracketKind = new Kind(158, "AngleBracket");
+    export let autolinkTextKind = new Kind(159, "AutolinkText");
+    export let hardBreakMarkerKind = new Kind(160, "HardBreakMarker");
+    export let referenceTextKind = new Kind(161, "ReferenceText");
 
 A tab partly used by a prefix, with 1, 2, or 3 columns left for the
 block after it; code blocks show those columns as spaces.
@@ -167,7 +192,28 @@ The green tree alone, for tools working below the typed views.
       let source = new SourceText(text);
       let blocks = new BlockParser(source);
       blocks.parse();
-      new TreeWriter(source, blocks.lines, rawHtmlHandler).writeDocument(blocks.document)
+      let labels = definitionLabels(source, blocks.lines);
+      new TreeWriter(source, blocks.lines, rawHtmlHandler, labels).writeDocument(blocks.document)
+    }
+
+The labels of the document's link reference definitions, normalized,
+so the inline parser knows which `[text]` are links.
+
+    let definitionLabels(source: SourceText, lines: List<LineData>): Mapped<String, Boolean> {
+      let labels = new MapBuilder<String, Boolean>();
+      for (var n = 0; n < lines.length; n += 1) {
+        let leaf = lines[n].leaf;
+        if (leaf != null) {
+          if (leaf.blockType == typeDefinition && leaf.firstLine == n) {
+            let text = paragraphContent(source, lines, n, leaf.lastLine + 1).text;
+            let scan = scanDefinition(text, 0);
+            if (scan != null) {
+              labels[normalizeLabel(text.slice(1, scan.labelEnd - 1))] = true;
+            }
+          }
+        }
+      }
+      labels
     }
 
 The inline content node for `text` alone, one line, used by edits that
@@ -177,7 +223,7 @@ text gives.
     let inlineContentGreen(text: String): GreenNode {
       let source = new SourceText(text);
       let line = new LineData(0, source.length, source.length);
-      new TreeWriter(source, [line], opaqueRawHtml).inlinesOnly()
+      new TreeWriter(source, [line], opaqueRawHtml, new Map<String, Boolean>([])).inlinesOnly()
     }
 
 ## Writing the tree
@@ -191,14 +237,19 @@ prefix tokens on lines after its first.
       private source: SourceText;
       private lines: List<LineData>;
       private handler: RawHtmlHandler;
+      private labels: Mapped<String, Boolean>;
       private builder: GreenNodeBuilder = new GreenNodeBuilder();
       private open: ListBuilder<BlockData> = new ListBuilder<BlockData>();
       private var inText: Boolean = false;
 
-      public constructor(source: SourceText, lines: List<LineData>, handler: RawHtmlHandler) {
+      public constructor(
+        source: SourceText, lines: List<LineData>, handler: RawHtmlHandler,
+        labels: Mapped<String, Boolean>,
+      ) {
         this.source = source;
         this.lines = lines;
         this.handler = handler;
+        this.labels = labels;
       }
 
       public writeDocument(document: BlockData): GreenNode {
@@ -537,76 +588,55 @@ between code spans and raw HTML.
         }
       }
 
-      private plain(content: Content, start: Int, end: Int): Void {
-        if (start < end) {
-          openText();
-          emit(content, plainKind, start, end);
-        }
-      }
+The inlines of `content` from `start` to `end`, in an `InlineContent`
+node: parsed by `InlineParser` (see `inlines.temper.md`), then written
+here, so each range becomes tokens with the line breaks between lines
+written as `emit` writes them.
 
       private parseInlines(content: Content, start: Int, end: Int): Void {
-        let text = content.text;
+        let parser = new InlineParser(content.text, start, end, labels);
+        parser.parse();
         builder.startNode(inlineContentKind);
-        var plainStart = start;
-        var i = start;
-        while (i < end) {
-          let c = text.codeAt(i);
-          if (c == char'\\' && i + 1 < end && isAsciiPunctuation(text.codeAt(i + 1))) {
-            plain(content, plainStart, i);
-            openText();
-            emit(content, escapeKind, i, i + 2);
-            i += 2;
-            plainStart = i;
-          } else if (c == char'\n') {
-
-A line break inside a paragraph: whitespace before it is layout, not
-text, as CommonMark strips it, and so is the next line's prefix and
-indentation.
-
-            let spaceStart = trimBlanksBack(text, plainStart, i);
-            plain(content, plainStart, spaceStart);
-            openText();
-            emit(content, whitespaceKind, spaceStart, i + 1);
-            i += 1;
-            plainStart = i;
-          } else if (c == char'`') {
-            var runEnd = i;
-            while (runEnd < end && text.codeAt(runEnd) == char'`') {
-              runEnd += 1;
-            }
-            let count = runEnd - i;
-            let close = closingBackticks(text, runEnd, end, count);
-            if (close >= 0) {
-              plain(content, plainStart, i);
-              closeText();
-              builder.startNode(codeSpanKind);
-              emit(content, backticksKind, i, runEnd);
-              emit(content, codeTextKind, runEnd, close);
-              emit(content, backticksKind, close, close + count);
-              builder.finishNode();
-              i = close + count;
-              plainStart = i;
-            } else {
-              i = runEnd;
-            }
-          } else if (c == char'<') {
-            let tagEnd = rawHtmlEnd(text, i, end);
-            if (tagEnd > i) {
-              plain(content, plainStart, i);
-              closeText();
-              rawHtml(content, i, tagEnd);
-              i = tagEnd;
-              plainStart = i;
-            } else {
-              i += 1;
-            }
-          } else {
-            i += 1;
-          }
-        }
-        plain(content, plainStart, end);
+        writeItems(content, parser, 0);
         closeText();
         builder.finishNode();
+      }
+
+The children of `parent`, an item of `parser`. Text items group into
+`Text` nodes; contiguous plain text becomes one token.
+
+      private writeItems(content: Content, parser: InlineParser, parent: Int): Void {
+        var item = parser.firsts[parent];
+        while (item >= 0) {
+          let kind = parser.kinds[item];
+          let start = parser.starts[item];
+          var end = parser.ends[item];
+          if (start < 0) {
+            closeText();
+            builder.startNode(kind);
+            writeItems(content, parser, item);
+            closeText();
+            builder.finishNode();
+          } else if (start == end) {
+            // Emptied by emphasis: nothing to write.
+          } else if (kind.id == rawHtmlKind.id) {
+            closeText();
+            rawHtml(content, start, end);
+          } else if (parser.textual[item]) {
+            openText();
+            if (kind.id == plainKind.id) {
+              while (parser.nexts[item] >= 0 && parser.isContiguousPlain(parser.nexts[item], end)) {
+                item = parser.nexts[item];
+                end = parser.ends[item];
+              }
+            }
+            emit(content, kind, start, end);
+          } else {
+            closeText();
+            emit(content, kind, start, end);
+          }
+          item = parser.nexts[item];
+        }
       }
 
 Raw HTML goes to the handler if it's one piece in the source, and
@@ -725,22 +755,12 @@ Where a run of exactly `count` backticks starts, from `from`, or -1.
 
 ### Raw HTML, by CommonMark's rules
 
-The end of the raw HTML starting with the `<` at `at`, or `at` if none
-starts there. It knows open tags with attributes, closing tags, and
-comments. Not yet: processing instructions, declarations, and CDATA
-sections, which stay text for now. CommonMark allows at most one line
-ending in a tag's whitespace; this allows any.
-
-    let rawHtmlEnd(source: SourceText, at: Int, end: Int): Int {
-      let c = codeIn(source, at + 1, end);
-      if (c == char'/') {
-        closingTagEnd(source, at, end)
-      } else if (c == char'!') {
-        commentEnd(source, at, end)
-      } else {
-        openTagEnd(source, at, end)
-      }
-    }
+Scanners for tags, used by HTML blocks and by `InlineParser`'s
+`rawHtmlEnd`, which also finds comments, processing instructions,
+declarations, and CDATA sections. Each gives the end of what starts
+with the `<` at `at`, or `at` if none starts there. A paragraph has no
+blank lines, so a tag's whitespace holds at most one line ending, as
+CommonMark allows, without checking.
 
 A closing tag: `</`, a name, optional whitespace, and `>`.
 
@@ -775,25 +795,6 @@ A tag name: an ASCII letter, then letters, digits, and `-`.
         i += 1;
       }
       i
-    }
-
-`<!-->`, `<!--->`, or `<!--`, text, then `-->`.
-
-    let commentEnd(source: SourceText, at: Int, end: Int): Int {
-      if (source.slice(at, minInt(at + 4, end)) != "<!--") { return at; }
-      if (codeIn(source, at + 4, end) == char'>') { return at + 5; }
-      if (codeIn(source, at + 4, end) == char'-' && codeIn(source, at + 5, end) == char'>') {
-        return at + 6;
-      }
-      for (var i = at + 4; i + 2 < end; i += 1) {
-        if (
-          source.codeAt(i) == char'-' && source.codeAt(i + 1) == char'-' &&
-          source.codeAt(i + 2) == char'>'
-        ) {
-          return i + 3;
-        }
-      }
-      at
     }
 
     let minInt(a: Int, b: Int): Int { if (a < b) { a } else { b } }

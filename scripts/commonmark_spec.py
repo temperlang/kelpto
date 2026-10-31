@@ -12,10 +12,7 @@ apart from the libraries' own code, with attribution in NOTICE.
 
 Each example has its markdown input and expected HTML, with `→` standing
 for a tab, as the spec's own test tools read them, and the section it's
-in. Examples that need inlines beyond what kelpto-md parses so far
-(emphasis, links, images, autolinks, entity references, and hard line
-breaks) are marked, so the tests can hold the rest to passing. The mark
-is a heuristic on the example's text, checked by hand when it changes.
+in, and whether that section is about blocks.
 """
 
 import json
@@ -40,10 +37,6 @@ BLOCK_SECTIONS = {
     "Indented code blocks", "Fenced code blocks", "HTML blocks", "Link reference definitions",
     "Paragraphs", "Blank lines", "Block quotes", "List items", "Lists",
 }
-
-ENTITY = re.compile(r"&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*);")
-INLINE_HTML = re.compile(r"<(em|strong|a |img |br />)")
-AUTOLINK = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[^\s<>@]+@[^\s<>]+>")
 
 
 def extract(spec: str) -> list[dict]:
@@ -78,14 +71,6 @@ def extract(spec: str) -> list[dict]:
     return examples
 
 
-def needs_inlines(example: dict) -> bool:
-    return bool(
-        INLINE_HTML.search(example["html"])
-        or ENTITY.search(example["markdown"])
-        or AUTOLINK.search(example["markdown"])
-    )
-
-
 def literal(s: str) -> str:
     """A Temper string literal for `s`, escaping anything but plain ASCII."""
     out = []
@@ -106,8 +91,7 @@ def temper(examples: list[dict]) -> str:
         "top of the repo). Don't edit by hand.",
         "",
         "Each example: its number, its section, the Markdown, the expected",
-        "HTML, whether it's about block structure, and whether it needs",
-        "inlines kelpto-md doesn't parse yet.",
+        "HTML, and whether it's about block structure.",
         "",
         "    export class SpecExample(",
         "      public number: Int,",
@@ -115,7 +99,6 @@ def temper(examples: list[dict]) -> str:
         "      public markdown: String,",
         "      public html: String,",
         "      public isBlock: Boolean,",
-        "      public needsInlines: Boolean,",
         "    ) {}",
         "",
         "In functions rather than a module-level list, and in chunks, so each",
@@ -132,7 +115,6 @@ def temper(examples: list[dict]) -> str:
             args = ", ".join([
                 str(ex["example"]), literal(ex["section"]), literal(ex["markdown"]),
                 literal(ex["html"]), "true" if ex["section"] in BLOCK_SECTIONS else "false",
-                "true" if needs_inlines(ex) else "false",
             ])
             out.append(f"        new SpecExample({args}),")
         out.append("      ]")
@@ -159,8 +141,7 @@ def main() -> None:
     examples = json.loads(JSON.read_text(encoding="utf-8"))
     OUT.write_text(temper(examples), encoding="utf-8")
     blocks = [ex for ex in examples if ex["section"] in BLOCK_SECTIONS]
-    print(f"{len(examples)} examples, {len(blocks)} in block sections, "
-          f"{sum(needs_inlines(ex) for ex in blocks)} of those needing inlines")
+    print(f"{len(examples)} examples, {len(blocks)} in block sections")
 
 
 if __name__ == "__main__":

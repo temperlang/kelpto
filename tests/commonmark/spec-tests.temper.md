@@ -55,29 +55,18 @@ Counts by section, as `Section: passed/total`, blocks first.
 
 ## Tests
 
-Every example in a block section passes, except those needing inlines
-kelpto-md doesn't parse yet, such as emphasis and links. Logs the
-counts for every section.
+Every example passes. Logs the counts for every section.
 
-    test("CommonMark spec: block sections") {
+    test("CommonMark spec: every example renders as the spec says") {
       let examples = specExamples();
       console.log(report(examples));
       let failures = new ListBuilder<String>();
-      var waiting = 0;
       for (var i = 0; i < examples.length; i += 1) {
         let example = examples[i];
-        if (example.isBlock) {
-          if (!passes(example)) {
-            if (example.needsInlines) {
-              waiting += 1;
-            } else {
-              failures.add(example.number.toString());
-            }
-          }
-        }
+        if (!passes(example)) { failures.add(example.number.toString()); }
       }
       assert(failures.isEmpty) {
-        "examples failing: ${failures.toList().join(", ") { (s: String): String => s }}; ${waiting.toString()} more wait for inlines"
+        "examples failing: ${failures.toList().join(", ") { (s: String): String => s }}"
       };
     }
 

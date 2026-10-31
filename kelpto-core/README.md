@@ -29,5 +29,16 @@ second.span.toString();      // "5+6"
 second.asWritten;            // " world"
 ```
 
-Planned: chunked children for wide parents, interning small green
-elements, and HTML's named character references.
+Also what both parsers need of text:
+
+- **Character references:** `namedCharacterReference("ouml;")` gives
+  `"ö"`, from HTML's 2,125 names; HTML's 106 forms without `;` also
+  work (`"amp"`), which CommonMark doesn't use. `characterReferenceEnd`
+  finds one by CommonMark's rules, numeric ones included, and
+  `decodeCharacterReference` gives its value.
+- **Unicode 18:** `isUnicodePunctuation` (P and S),
+  `isUnicodeWhitespace` (Zs, tab, line feed, form feed, and carriage
+  return), and `caseFold` (full: `"ẞ"` gives `"ss"`).
+
+Planned: chunked children for wide parents, and interning small green
+elements.

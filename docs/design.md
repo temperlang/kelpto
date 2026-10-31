@@ -16,7 +16,7 @@ goals and tests.
 - **Red-green trees from the start,** as in "Edits without heavy
   copying", below, since retrofitting positions is hard.
 
-## Status (2026-10-30)
+## Status (2026-10-31)
 
 Real, tested Temper in all four libraries. Each library's README shows
 it in use, and the top README shows them alone and together.
@@ -24,21 +24,23 @@ it in use, and the top README shows them alone and together.
 - **kelpto-core:** red-green trees (`GreenNode`, `GreenToken`,
   `GreenNodeBuilder`, `RedNode`, and `RedToken`), `Span`, `Kind`, and
   `SourceText`, with `replaceWith` copying only the path to the root.
+  Also HTML's character references (named ones from html5lib-tests,
+  each with a flag for HTML's forms without `;`, and numeric ones), and
+  Unicode 18's punctuation, whitespace, and full case folding, as small
+  generated tables read in place (see "Generated tables", below).
   Kinds are small classes with an id and a name, so names travel with
   nodes into dumps and test failures; they compare by id, since
   Temper has no `==` on class instances. Each library takes a range of
   ids (core 0 to 99, md 100 to 199, html 200 to 299).
-- **kelpto-md:** every CommonMark block, lossless, by the spec's
-  two-phase algorithm (see "kelpto-md's blocks", below), with the
-  skeleton's inlines for now: text, backslash escapes, code spans, and
-  raw inline HTML. Typed views by where a node may go (`BlockChild`,
-  `ListChild`, and `ParagraphChild`); edits `Heading.withText` and
-  `withLevel`, `CodeBlock.withInfo`, and
-  `LinkReferenceDefinition.withDestination`; rendering with raw HTML
-  escaped unless `withRawHtmlTrusted()`. Tested against the spec's
-  examples, in `tests/commonmark/`: 265 of the 296 in block sections
-  pass, and the other 31 need inlines (emphasis, links, and hard
-  breaks); 139 of the 356 in inline sections pass.
+- **kelpto-md:** all of CommonMark 0.31.2, lossless: blocks by the
+  spec's two-phase algorithm (see "kelpto-md's blocks", below), and
+  inlines by its delimiter algorithm (see "kelpto-md's inlines").
+  Typed views by where a node may go (`BlockChild`, `ListChild`,
+  `ParagraphChild`, and `LinkTextChild`); edits `Heading.withText` and
+  `withLevel`, `CodeBlock.withInfo`, and `withDestination` on
+  definitions, inline links, and images; rendering with raw HTML
+  escaped unless `withRawHtmlTrusted()`. All 652 of the spec's
+  examples pass, in `tests/commonmark/`.
 - **kelpto-html:** a simplified tokenizer (start tags with attributes,
   end tags, comments, and text), typed views (`StartTag`, `EndTag`,
   `Comment`, `Text`, and `Attribute`), and `Attribute.withValue`.
@@ -86,20 +88,56 @@ and rendering defaults.
   a list's tightness is computed from where blank lines are, so it
   follows edits.
 
+### kelpto-md's inlines
+
+- **One pass, then emphasis,** as cmark does: a left-to-right scan
+  making items (ranges of the paragraph's text, or nodes holding
+  items), with stacks of delimiter runs and brackets, then the spec's
+  "process emphasis". `TreeWriter` writes the items as tokens, so line
+  breaks and prefixes inside them land as in blocks.
+- **Lossless:** delimiter runs are text, with only the `*` or `_` that
+  emphasis uses in `EmphasisMarker` tokens; links keep their
+  brackets, parentheses, whitespace, destination, title, and label as
+  tokens; a character reference keeps its text, with its value a view.
+- **References** resolve when the tree is read: the parser needs only
+  which labels the document defines, and a reference link's
+  destination is its definition's, so it follows edits to the
+  definition. `LinkTarget` stays as written (escapes and references
+  resolved); the renderer percent-encodes only when it writes HTML.
+- **Linear,** checked on cmark's pathological shapes: `openers_bottom`
+  for emphasis, link openers deactivated by a mark rather than one by
+  one, and failed searches for closing backticks or HTML ends not
+  repeated.
+
+### Generated tables
+
+Scripts in `scripts/` write them into kelpto-core from pinned sources,
+checking every entry as the Temper code reads it:
+
+- **`unicode-tables.temper.md`** (`unicode_tables.py`): punctuation
+  (P and S, 359 ranges) and full case folding (C and F, 313 entries
+  for 1,606 code points) as base-32 strings in chunks of 16, found by
+  binary search over a short list of chunk starts, then read in
+  place; whitespace as 9 ranges. 2,947 characters of strings, 4.8 KB
+  of source.
+- **`entities.temper.md`** (`character_references.py`): the 2,125
+  named references, sorted and front-coded, 14,263 characters, read
+  into a map when the library loads.
+
 **Next,** roughly in order:
 
-1. CommonMark inlines in full (emphasis, links and images with
-   reference definitions, autolinks, and hard line breaks), with
-   character references in kelpto-core, used by both parsers.
-2. GitHub Flavored Markdown's extensions, once its spec's org is
+1. GitHub Flavored Markdown's extensions, once its spec's org is
    allowed.
-3. Edit batches (`doc.edit`), insert and remove, and more edits.
-4. The WHATWG tokenizer in full, then tree construction, against
-   html5lib-tests and WPT.
-5. A real sanitizer on the built tree, with links checked, replacing
+2. Edit batches (`doc.edit`), insert and remove, and more edits (link
+   text, titles, and emphasis).
+3. The WHATWG tokenizer in full, with kelpto-core's character
+   references (and HTML's forms without `;`), then tree construction,
+   against html5lib-tests and WPT.
+4. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
-6. Chunked children and interning, once documents are big enough to
-   measure.
+5. Chunked children and interning, once documents are big enough to
+   measure; deep nesting (thousands of block quotes or emphasis
+   levels) without deep recursion.
 
 ## Libraries and layout
 

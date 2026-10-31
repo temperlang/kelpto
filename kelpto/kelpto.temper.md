@@ -79,8 +79,9 @@ attributes, and dropping all other raw HTML. Text stays escaped.
 **This is a sketch, not a real sanitizer, so don't rely on it yet.**
 It judges each raw HTML tag alone, not the tree a browser would
 build, so the text between `<script>` and `</script>` stays (escaped,
-as harmless text), unbalanced tags pass through, and there are no
-links to check yet. The real one sanitizes the built HTML tree, with
+as harmless text), unbalanced tags pass through, and Markdown's own
+links aren't checked yet, so `[x](javascript:alert(1))` stays a live
+link. The real one sanitizes the built HTML tree, with
 an allowlist of elements and attributes and every URL checked.
 
     export let renderSafe(doc: MarkdownDocument): SafeHtml {

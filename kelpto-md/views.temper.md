@@ -9,12 +9,11 @@ where each node may go, after Mike's idea of nesting in the types:
   `ThematicBreak`, `HtmlBlock`, `LinkReferenceDefinition`,
   `BlockQuote`, `ListBlock`, and `BlankLine`.
 - **`ListChild`:** what a list holds, `ListItem` and `BlankLine`.
-- **`ParagraphChild`:** inlines, `Text`, `CodeSpan`, and `RawHtml`,
-  which headings hold too.
-
-Later, `LinkTextChild` would be implemented by the inlines a link's
-text may hold, every `ParagraphChild` but links, since links can't
-nest.
+- **`ParagraphChild`:** inlines, which headings hold too: `Text`,
+  `CodeSpan`, `RawHtml`, `Emphasis`, `Strong`, `Link`, `Image`,
+  `Autolink`, `HardBreak`, and `CharacterReference`.
+- **`LinkTextChild`:** what a link's text may hold: every
+  `ParagraphChild` but `Link`, since links can't nest.
 
 Edits give a new `MarkdownDocument`, changing only the edited node's
 text and sharing every untouched green node; the old document stays as
@@ -39,6 +38,7 @@ The text exactly as written, and where.
     export sealed interface BlockChild extends MarkdownNode {}
     export sealed interface ListChild extends MarkdownNode {}
     export sealed interface ParagraphChild extends MarkdownNode {}
+    export sealed interface LinkTextChild extends MarkdownNode {}
 
 Raw HTML, inline or a block: what a `RawHtmlRenderer` renders, and
 what the `kelpto` library views as HTML.
@@ -60,8 +60,10 @@ Whether this is an HTML block, rather than inline.
       public get isBlock(): Boolean;
     }
 
-A link destination, as written in the Markdown but with escapes
-resolved. A wrapper on `String` for now, with no URL processing.
+A link destination, as written in the Markdown but with escapes and
+character references resolved. A wrapper on `String` for now, with no
+URL processing; the renderer percent-encodes it only when it writes
+HTML.
 
     export class LinkTarget(public url: String) {
       public toString(): String { url }
@@ -200,36 +202,71 @@ since container prefixes are tokens.
       result.toList()
     }
 
-    let paragraphChildrenOf(content: RedNode): List<ParagraphChild> {
-      let result = new ListBuilder<ParagraphChild>();
-      let nodes = content.childNodes;
-      for (var i = 0; i < nodes.length; i += 1) {
-        let child = nodes[i];
-        if (child.hasKind(codeSpanKind)) {
-          result.add(new CodeSpan(child));
-        } else if (child.hasKind(rawHtmlKind)) {
-          result.add(new RawHtml(child));
-        } else {
-          result.add(new Text(child));
-        }
+The typed view of an inline node.
+
+    let inlineOf(node: RedNode): MarkdownNode {
+      if (node.hasKind(codeSpanKind)) { return new CodeSpan(node); }
+      if (node.hasKind(rawHtmlKind)) { return new RawHtml(node); }
+      if (node.hasKind(emphasisKind)) { return new Emphasis(node); }
+      if (node.hasKind(strongKind)) { return new Strong(node); }
+      if (node.hasKind(linkKind)) { return new Link(node); }
+      if (node.hasKind(imageKind)) { return new Image(node); }
+      if (node.hasKind(autolinkKind)) { return new Autolink(node); }
+      if (node.hasKind(hardBreakKind)) { return new HardBreak(node); }
+      if (node.hasKind(characterReferenceKind)) { return new CharacterReference(node); }
+      new Text(node)
+    }
+
+The inlines in `node`, an inline content node or emphasis, or a link
+or image, whose text ends at its `]`.
+
+    let inlinesOf(node: RedNode): List<MarkdownNode> {
+      let result = new ListBuilder<MarkdownNode>();
+      var at = node.offset;
+      let kids = node.green.children;
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        if (kid.kind.id == linkCloseKind.id) { break; }
+        if (kid is GreenNode) { result.add(inlineOf(new RedNode(kid, node, at, i))); }
+        at += kid.width;
       }
       result.toList()
     }
 
-The text of inlines without markup: code spans' code, and raw HTML as
-written.
+    let paragraphChildrenOf(node: RedNode): List<ParagraphChild> {
+      let result = new ListBuilder<ParagraphChild>();
+      let kids = inlinesOf(node);
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        if (kid is ParagraphChild) { result.add(kid); }
+      }
+      result.toList()
+    }
+
+The text of inlines without markup: code spans' code, raw HTML as
+written, character references' values, and hard breaks as `\n`.
 
     let plainTextOf(children: List<ParagraphChild>): String {
       let out = new StringBuilder();
       for (var i = 0; i < children.length; i += 1) {
-        let child = children[i];
-        when (child) {
-          is Text -> out.append(child.text);
-          is CodeSpan -> out.append(child.code);
-          is RawHtml -> out.append(child.html);
-        }
+        addPlainText(children[i], out);
       }
       out.toString()
+    }
+
+    let addPlainText(child: MarkdownNode, out: StringBuilder): Void {
+      when (child) {
+        is Text -> out.append(child.text);
+        is CodeSpan -> out.append(child.code);
+        is RawHtml -> out.append(child.html);
+        is CharacterReference -> out.append(child.value);
+        is HardBreak -> out.append("\n");
+        is Autolink -> out.append(child.text);
+        else -> do {
+          let kids = paragraphChildrenOf(child.node);
+          for (var i = 0; i < kids.length; i += 1) { addPlainText(kids[i], out); }
+        };
+      }
     }
 
     let contentOf(node: RedNode): RedNode {
@@ -320,7 +357,7 @@ out container prefixes.
       if (nodes.isEmpty) { null } else { nodes[0] }
     }
 
-`text` with backslash escapes resolved.
+`text` with backslash escapes resolved, but not character references.
 
     let unescape(text: String): String {
       let source = new SourceText(text);
@@ -446,11 +483,11 @@ fn main() {}
       private get openingFence(): RedNode { node.childNodes[0] }
 
 The info string after the opening fence, such as `rust`, or empty,
-with backslash escapes resolved. Not yet: entity references.
+with backslash escapes and character references resolved.
 
       public get info(): String {
         let info = openingFence.childOfKind(infoKind);
-        if (info == null) { "" } else { unescape(info.asWritten) }
+        if (info == null) { "" } else { resolveText(info.asWritten) }
       }
 
 The info string's first word, which CommonMark uses for the language.
@@ -562,8 +599,8 @@ A link reference definition, such as `[home]: https://example.com/
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
 
-The label between the brackets, as written, line breaks included. Not
-yet: matching labels as CommonMark does, ignoring case and runs of
+The label between the brackets, as written, line breaks included.
+Links match it by `normalizeLabel`, ignoring case and runs of
 whitespace.
 
       public get label(): String {
@@ -572,38 +609,77 @@ whitespace.
         written.slice(1, written.length - 1)
       }
 
-The destination, without angle brackets and with escapes resolved.
+The destination, without angle brackets, with escapes and character
+references resolved.
 
-      public get destination(): LinkTarget {
-        let written = node.childOfKind(linkDestinationKind)?.asWritten ?? "";
-        let source = new SourceText(written);
-        let inner = if (source.codeAt(0) == char'<') {
-          source.slice(1, source.length - 1)
-        } else {
-          written
-        };
-        new LinkTarget(unescape(inner))
-      }
+      public get destination(): LinkTarget { destinationOf(node) }
 
-The title without its quotes or parentheses, with escapes resolved,
-or null.
+The title without its quotes or parentheses, with escapes and
+character references resolved, or null.
 
-      public get title(): String? {
-        let title = node.childOfKind(linkTitleKind);
-        if (title == null) { return null; }
-        let written = new SourceText(tokenTextOf(title as RedNode orelse panic(), titleTextKind));
-        unescape(written.slice(1, written.length - 1))
-      }
+      public get title(): String? { titleOf(node) }
 
 A new document with the destination replaced by `target`, written in
 angle brackets if it needs them. Only the destination changes.
 Bubbles if `target` has a line break, which a destination can't hold.
 
       public withDestination(target: LinkTarget): MarkdownDocument throws Bubble {
-        let destination = node.childOfKind(linkDestinationKind) as RedToken orelse panic();
-        let written = writeDestination(target.url);
-        new MarkdownDocument(destination.replaceWith(new GreenToken(linkDestinationKind, written)))
+        withDestinationIn(node, target)
       }
+    }
+
+The destination token of a definition or inline link, resolved, or
+empty if there's none, as in `[a]()`.
+
+    let destinationOf(node: RedNode): LinkTarget {
+      let written = node.childOfKind(linkDestinationKind)?.asWritten ?? "";
+      let source = new SourceText(written);
+      let inner = if (source.codeAt(0) == char'<') {
+        source.slice(1, source.length - 1)
+      } else {
+        written
+      };
+      new LinkTarget(resolveText(inner))
+    }
+
+    let titleOf(node: RedNode): String? {
+      let title = node.childOfKind(linkTitleKind);
+      if (title == null) { return null; }
+      let written = new SourceText(lineTextOf(title as RedNode orelse panic(), titleTextKind));
+      resolveText(written.slice(1, written.length - 1))
+    }
+
+Like `tokenTextOf`, but with each line ending as `\n`.
+
+    let lineTextOf(node: RedNode, kind: Kind): String {
+      let out = new StringBuilder();
+      let kids = node.green.children;
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        if (kid is GreenToken) {
+          if (kid.kind.id == kind.id) { out.append(kid.text); }
+          if (kid.kind.id == lineEndingKind.id) { out.append("\n"); }
+        }
+      }
+      out.toString()
+    }
+
+Replaces the destination of a definition or inline link with `target`,
+or puts one in after `(` and any whitespace if there was none.
+
+    let withDestinationIn(node: RedNode, target: LinkTarget): MarkdownDocument throws Bubble {
+      let written = new GreenToken(linkDestinationKind, writeDestination(target.url));
+      let old = node.childOfKind(linkDestinationKind);
+      if (old != null) {
+        return new MarkdownDocument((old as RedToken orelse panic()).replaceWith(written));
+      }
+      let kids = node.green.children.toListBuilder();
+      let paren = node.childOfKind(openParenKind);
+      if (paren == null) { bubble(); }
+      var at = (paren as RedElement orelse panic()).index + 1;
+      if (at < kids.length && kids[at].kind.id == whitespaceKind.id) { at += 1; }
+      kids.add(written, at);
+      new MarkdownDocument(node.replaceWith(new GreenNode(node.kind, kids.toList())))
     }
 
 `url` as a link destination: as is if it can be, or else in angle
@@ -802,7 +878,7 @@ One or more blank lines' worth: a line of only spaces and tabs.
 
 A run of text, which may hold backslash escapes and line breaks.
 
-    export class Text extends ParagraphChild {
+    export class Text extends ParagraphChild & LinkTextChild {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
@@ -831,7 +907,7 @@ whitespace and container prefixes around line breaks left out.
 
 A code span, such as `` `x` ``.
 
-    export class CodeSpan extends ParagraphChild {
+    export class CodeSpan extends ParagraphChild & LinkTextChild {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
@@ -879,7 +955,7 @@ Raw HTML, such as `<b>` or `<!-- note -->`, found by CommonMark's
 rules. Its children are whatever the `RawHtmlHandler` gave: one opaque
 token by default, or an HTML subtree with the `kelpto` library.
 
-    export class RawHtml extends ParagraphChild & RawHtmlContent {
+    export class RawHtml extends ParagraphChild & LinkTextChild & RawHtmlContent {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
@@ -887,6 +963,250 @@ token by default, or an HTML subtree with the `kelpto` library.
       public get html(): String { rawHtmlTextOf(node) }
       public get htmlNode(): RedNode? { htmlNodeOf(node) }
       public get isBlock(): Boolean { false }
+    }
+
+Emphasis, such as `*word*` or `_word_`.
+
+    export class Emphasis extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get children(): List<ParagraphChild> { paragraphChildrenOf(node) }
+      public get text(): String { plainTextOf(children) }
+
+`*` or `_`.
+
+      public get marker(): String { node.childOfKind(emphasisMarkerKind)?.asWritten ?? "" }
+    }
+
+Strong emphasis, such as `**word**` or `__word__`.
+
+    export class Strong extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get children(): List<ParagraphChild> { paragraphChildrenOf(node) }
+      public get text(): String { plainTextOf(children) }
+
+`**` or `__`.
+
+      public get marker(): String { node.childOfKind(emphasisMarkerKind)?.asWritten ?? "" }
+    }
+
+A link: its text in brackets, then a destination and title in
+parentheses, as in `[text](/url "title")`, or a reference to a
+definition: full, `[text][label]`, collapsed, `[text][]`, or shortcut,
+`[text]`. Its text can hold any inline but another link.
+
+    export class Link extends ParagraphChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+      public get children(): List<LinkTextChild> {
+        let result = new ListBuilder<LinkTextChild>();
+        let kids = inlinesOf(node);
+        for (var i = 0; i < kids.length; i += 1) {
+          let kid = kids[i];
+          if (kid is LinkTextChild) { result.add(kid); }
+        }
+        result.toList()
+      }
+
+      public get text(): String { plainTextOf(paragraphChildrenOf(node)) }
+
+`"inline"`, `"full"`, `"collapsed"`, or `"shortcut"`.
+
+      public get style(): String { linkStyleOf(node) }
+
+The destination: an inline link's own, or else its definition's, or
+null if no definition in the document has its label (after an edit
+removed it, say).
+
+      public get destination(): LinkTarget? { linkDestinationOf(node, null) }
+
+The title, its own or its definition's, or null if none.
+
+      public get title(): String? { linkTitleOf(node, null) }
+
+The label a reference link matches by: the label in its second
+brackets, or its text as written for a collapsed or shortcut
+reference. Null for an inline link.
+
+      public get label(): String? { linkLabelOf(node) }
+
+A new document with an inline link's destination replaced by `target`,
+written in angle brackets if it needs them. Only the destination
+changes. Bubbles if `target` has a line break, or for a reference
+link, whose destination is its definition's: edit that instead.
+
+      public withDestination(target: LinkTarget): MarkdownDocument throws Bubble {
+        if (linkStyleOf(node) != "inline") { bubble(); }
+        withDestinationIn(node, target)
+      }
+    }
+
+An image, written as a link with `!` before it: `![alt](/src "title")`
+or a reference. Its description can hold any inline, links included,
+and renders as plain text, its `alt`.
+
+    export class Image extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get children(): List<ParagraphChild> { paragraphChildrenOf(node) }
+
+The description as plain text, as `alt` gets it.
+
+      public get alt(): String { plainTextOf(children) }
+      public get style(): String { linkStyleOf(node) }
+      public get destination(): LinkTarget? { linkDestinationOf(node, null) }
+      public get title(): String? { linkTitleOf(node, null) }
+      public get label(): String? { linkLabelOf(node) }
+
+As `Link.withDestination`.
+
+      public withDestination(target: LinkTarget): MarkdownDocument throws Bubble {
+        if (linkStyleOf(node) != "inline") { bubble(); }
+        withDestinationIn(node, target)
+      }
+    }
+
+    let linkStyleOf(node: RedNode): String {
+      if (node.childOfKind(openParenKind) != null) { return "inline"; }
+      let label = node.childOfKind(linkLabelKind);
+      if (label != null) {
+        return if (label.span.length == 2) { "collapsed" } else { "full" };
+      }
+      "shortcut"
+    }
+
+    let linkLabelOf(node: RedNode): String? {
+      let style = linkStyleOf(node);
+      if (style == "inline") { return null; }
+      if (style == "full") {
+        let label = new SourceText(lineTextOf(node.childOfKind(linkLabelKind) as RedNode orelse panic(), labelTextKind));
+        return label.slice(1, label.length - 1);
+      }
+      let out = new StringBuilder();
+      let kids = node.green.children;
+      for (var i = 1; i < kids.length; i += 1) {
+        if (kids[i].kind.id == linkCloseKind.id) { break; }
+        addLabelText(kids[i], out);
+      }
+      out.toString()
+    }
+
+A link's text as the parser read it for its label: as written, but
+without container prefixes, and with line endings as `\n`.
+
+    let addLabelText(green: GreenElement, out: StringBuilder): Void {
+      when (green) {
+        is GreenNode -> do {
+          let kids = green.children;
+          for (var i = 0; i < kids.length; i += 1) { addLabelText(kids[i], out); }
+        };
+        is GreenToken -> do {
+          let id = green.kind.id;
+          if (id == lineEndingKind.id) {
+            out.append("\n");
+          } else if (id != indentKind.id && id != blockQuoteMarkerKind.id && id != listMarkerKind.id) {
+            out.append(green.text);
+          }
+        };
+      }
+    }
+
+The definition a reference link uses: from `definitions`, the
+renderer's map of them by normalized label, or else the first in the
+document with its label.
+
+    let definitionOf(
+      node: RedNode, definitions: Mapped<String, LinkReferenceDefinition>?,
+    ): LinkReferenceDefinition? {
+      let label = normalizeLabel(linkLabelOf(node) ?? "");
+      if (definitions != null) {
+        if (!definitions.has(label)) { return null; }
+        return definitions[label] orelse panic();
+      }
+      let all = new MarkdownDocument(node.root).linkReferenceDefinitions;
+      for (var i = 0; i < all.length; i += 1) {
+        if (normalizeLabel(all[i].label) == label) { return all[i]; }
+      }
+      null
+    }
+
+    let linkDestinationOf(
+      node: RedNode, definitions: Mapped<String, LinkReferenceDefinition>?,
+    ): LinkTarget? {
+      if (linkStyleOf(node) == "inline") { return destinationOf(node); }
+      definitionOf(node, definitions)?.destination
+    }
+
+    let linkTitleOf(node: RedNode, definitions: Mapped<String, LinkReferenceDefinition>?): String? {
+      if (linkStyleOf(node) == "inline") { return titleOf(node); }
+      definitionOf(node, definitions)?.title
+    }
+
+An autolink, such as `<https://example.com>` or `<me@example.com>`.
+
+    export class Autolink extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+The text between the angle brackets, exactly as written: autolinks
+have no escapes or references.
+
+      public get text(): String { node.childOfKind(autolinkTextKind)?.asWritten ?? "" }
+
+Whether it's an email address rather than a URI.
+
+      public get isEmail(): Boolean {
+        let source = new SourceText("${text}>");
+        uriAutolinkEnd(source, 0, source.length) < 0
+      }
+
+Where it links: the text, with `mailto:` before an email address.
+
+      public get destination(): LinkTarget {
+        new LinkTarget(if (isEmail) { "mailto:${text}" } else { text })
+      }
+    }
+
+A hard line break: a backslash, or two or more spaces, at the end of a
+line in a paragraph.
+
+    export class HardBreak extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+`"backslash"` or `"spaces"`.
+
+      public get style(): String {
+        if (node.childOfKind(hardBreakMarkerKind)?.asWritten == "\\") { "backslash" } else { "spaces" }
+      }
+    }
+
+A character reference, such as `&amp;`, `&#35;`, or `&#x22;`, kept as
+written, with its value a view.
+
+    export class CharacterReference extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+What it stands for, such as `&` for `&amp;`.
+
+      public get value(): String { referenceValue(node.asWritten) }
     }
 
 ## Escaping for edits

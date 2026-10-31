@@ -1,3 +1,5 @@
 temper.out/
 temper.keep/
 __pycache__/
+/data/unicode-*/
+/data/html5lib-tests-*/

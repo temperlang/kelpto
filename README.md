@@ -5,9 +5,9 @@ every language Temper supports. Parse a document, change one part, and
 write it back with everything else exactly as it was. Render it safely,
 with raw HTML parsed as browsers parse it and links checked by Hrefine.
 
-**Status** (2026-10-30): every CommonMark block parses losslessly and
-renders as the spec's examples expect, with a few inlines so far; the
-HTML side is still a small skeleton.
+**Status** (2026-10-31): all of CommonMark parses losslessly and
+renders as every one of the spec's 652 examples expects; the HTML side
+is still a small skeleton.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 

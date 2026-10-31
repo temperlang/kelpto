@@ -170,7 +170,8 @@ in the allowed GitHub orgs yet.
 1. **Core and CommonMark blocks,** lossless, with the spec's block
    examples. Done (2026-10-30), with roundtrip fuzzing.
 2. **CommonMark inlines,** all of `spec.txt`, HTML rendering included,
-   with character references in core. Next, then GFM.
+   with character references in core. Done (2026-10-31): all 652
+   examples pass. GFM next, once its spec's org is allowed.
 3. **Edits:** a small, consistent API for changing parts, batches, and
    insert and remove; roundtrip fuzzing is in place.
 4. **HTML tokenizer,** then tree construction, against html5lib-tests
@@ -184,8 +185,5 @@ in the allowed GitHub orgs yet.
 - Names, for the set and each library.
 - Whether GFM's extensions come in step 2 or later.
 - HTML to Markdown: in the bridge, or not at all.
-- Where the character reference table comes from: WHATWG's
-  `entities.json` (whatwg org, not allowed yet) or html5lib-tests'
-  `namedEntities.test`.
 - How a lossless node API reads in each language (immutable values with
   `with` methods, as Hrefine's `Url`, or a mutable tree).
