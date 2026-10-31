@@ -6,3 +6,4 @@ for start tags, end tags, text, and comments (see the README). The
 WHATWG tree construction comes later.
 
     export let name = "kelpto-html";
+    export let license = "Apache-2.0 OR MIT";

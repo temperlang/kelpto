@@ -19,7 +19,8 @@ spec.txt is:
     Released under the Creative Commons CC-BY-SA 4.0 license:
     <https://creativecommons.org/licenses/by-sa/4.0/>.
 
-so the extracted examples, adapted from it, are also under CC-BY-SA 4.0.
+so the extracted examples, adapted from it, are also under CC-BY-SA 4.0,
+not under Kelpto's Apache-2.0 OR MIT license.
 
 The spec's test software, in its test/ and tools/ directories, is under
 the following license:
@@ -115,8 +116,8 @@ scripts/character_references.py from html5lib-tests
 (https://github.com/html5lib/html5lib-tests), tokenizer/namedEntities.test
 at commit c777c408b61078ea2eb4acefc2535f54dbc8b28a: each name and what it
 stands for. The file itself isn't included; the script downloads it. It is
-under the MIT license, below: permissive, so compatible with whatever
-license Kelpto takes, asking only that this notice be kept with copies.
+under the MIT license, below: permissive, so compatible with Kelpto's
+Apache-2.0 OR MIT, asking only that this notice be kept with copies.
 
 Copyright (c) 2006-2013 James Graham, Geoffrey Sneddon, and
 other contributors

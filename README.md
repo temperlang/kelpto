@@ -109,3 +109,7 @@ regenerates them.
 One Temper worktree with a library in each directory; run `temper test`
 at the top. Libraries import each other by path, as
 `import("../kelpto-core")`.
+
+## License
+
+Apache-2.0 OR MIT, at your option, as Temper is; see [COPYRIGHT](COPYRIGHT). Third-party material, with its notices, is in [NOTICE](NOTICE). The CommonMark spec examples in [tests/commonmark](tests/commonmark/README.md) stay under CC-BY-SA 4.0, apart from the libraries' code, and aren't published.
