@@ -5,7 +5,7 @@ Parses Markdown into a green tree that keeps every code point, so
 parser doesn't understand stays as text.
 
     let {
-      GreenElement, GreenNode, GreenNodeBuilder, GreenToken, Kind, SourceText, redRoot,
+      GreenElement, GreenNode, GreenNodeBuilder, GreenToken, Kind, RedNode, SourceText, redRoot,
     } = import("../kelpto-core");
 
 The character classes this file uses (`isAsciiAlpha` and the like) are
@@ -118,6 +118,51 @@ reference from `&` to `;`.
     export let hardBreakMarkerKind = new Kind(160, "HardBreakMarker");
     export let referenceTextKind = new Kind(161, "ReferenceText");
 
+GitHub Flavored Markdown's extensions, when on (see `MarkdownParser`):
+tables, each row a node, its cells nodes holding their inlines, with
+every `|` a `Pipe` token and each delimiter (`:--`) a `TableDelimiter`
+token; a task list item's `[ ]` or `[x]`, a `TaskMarker` token in its
+item; strikethrough, its `~` runs `StrikethroughMarker` tokens; and
+extended autolinks, written without angle brackets, a node for each
+style, holding `AutolinkText` and any `Escape` tokens. In a table cell,
+a backslash before `|` is a `PipeEscape` token, since GFM drops it
+before reading the cell's inlines.
+
+    export let tableKind = new Kind(162, "Table");
+    export let tableHeaderRowKind = new Kind(163, "TableHeaderRow");
+    export let tableDelimiterRowKind = new Kind(164, "TableDelimiterRow");
+    export let tableRowKind = new Kind(165, "TableRow");
+    export let tableCellKind = new Kind(166, "TableCell");
+    export let pipeKind = new Kind(167, "Pipe");
+    export let tableDelimiterKind = new Kind(168, "TableDelimiter");
+    export let pipeEscapeKind = new Kind(169, "PipeEscape");
+    export let taskMarkerKind = new Kind(170, "TaskMarker");
+    export let strikethroughKind = new Kind(171, "Strikethrough");
+    export let strikethroughMarkerKind = new Kind(172, "StrikethroughMarker");
+    export let urlAutolinkKind = new Kind(173, "UrlAutolink");
+    export let wwwAutolinkKind = new Kind(174, "WwwAutolink");
+    export let emailAutolinkKind = new Kind(175, "EmailAutolink");
+
+A document parsed with strikethrough or extended autolinks on has a
+root kind saying so, so edits that reparse inlines (`Heading.withText`,
+`TableCell.withText`) read them as the parser did. Every one is named
+`Document`.
+
+    let documentKindFor(extensions: Extensions): Kind {
+      if (extensions.strikethrough && extensions.autolinks) { return new Kind(178, "Document"); }
+      if (extensions.strikethrough) { return new Kind(176, "Document"); }
+      if (extensions.autolinks) { return new Kind(177, "Document"); }
+      documentKind
+    }
+
+The inline extensions of the document holding `node`, from its root's
+kind.
+
+    let inlineExtensionsOf(node: RedNode): Extensions {
+      let id = node.root.green.kind.id;
+      new Extensions(false, false, id == 176 || id == 178, id == 177 || id == 178)
+    }
+
 A tab partly used by a prefix, with 1, 2, or 3 columns left for the
 block after it; code blocks show those columns as spaces.
 
@@ -175,13 +220,13 @@ The default: raw HTML stays one `OpaqueHtml` token.
 
 ## The entry point
 
-Parses `text` as Markdown, with raw HTML handled by `rawHtmlHandler`.
+Parses `text` as CommonMark, with raw HTML handled by `rawHtmlHandler`.
 Never fails: any text is some document.
 
     export let parseMarkdown(
       text: String, rawHtmlHandler: RawHtmlHandler = opaqueRawHtml,
     ): MarkdownDocument {
-      new MarkdownDocument(redRoot(parseMarkdownGreen(text, rawHtmlHandler)))
+      new MarkdownDocument(redRoot(parseWith(text, rawHtmlHandler, noExtensions)))
     }
 
 The green tree alone, for tools working below the typed views.
@@ -189,11 +234,130 @@ The green tree alone, for tools working below the typed views.
     export let parseMarkdownGreen(
       text: String, rawHtmlHandler: RawHtmlHandler = opaqueRawHtml,
     ): GreenNode {
+      parseWith(text, rawHtmlHandler, noExtensions)
+    }
+
+## Parsers with options
+
+A `MarkdownParser` says which of GitHub Flavored Markdown's extensions
+to read, and how to handle raw HTML. Start from `MarkdownParser.gfm`,
+with all four, or `MarkdownParser.commonMark`, with none, as
+`parseMarkdown` reads, and change one option per `with` method; each
+gives a new parser, so one can be shared.
+
+```temper inert
+let doc = MarkdownParser.gfm.parse("| a | b |\n| - | -: |\n| ~~c~~ | www.example.com |\n");
+doc.tables[0].rows[0].cells[1].alignment;     // "right"
+doc.toHtml();                                 // "<table>\n<thead>\n<tr>\n<th>a</th>…"
+MarkdownParser.commonMark.withTables(true).parse(text);
+```
+
+The extensions, as GFM's spec and its reference implementation,
+cmark-gfm, define them:
+
+- **Tables:** a header row, a delimiter row (`| --- | :-: |`) setting
+  each column's alignment, and rows, with cells between `|`, until a
+  blank line or another block. A table can't interrupt a paragraph,
+  but takes its last line as the header row.
+- **Task list items:** a list item starting `[ ]`, `[x]`, or `[X]`
+  then a space or tab.
+- **Strikethrough:** text between runs of one or two `~`, the same on
+  each side, by emphasis's rules.
+- **Extended autolinks:** `www.` domains, `http://`, `https://`, and
+  `ftp://` URLs, and email addresses (with `mailto:` or `xmpp:` or
+  not), linked without angle brackets.
+
+GFM's fifth extension, the filter for disallowed raw HTML, is on
+rendering: see `MarkdownRenderer.withDisallowedRawHtmlFiltered`. With
+every extension off, parsing is exactly `parseMarkdown`'s, and costs
+the same.
+
+    export class MarkdownParser {
+      private rawHtmlHandler: RawHtmlHandler;
+      private tables: Boolean;
+      private taskListItems: Boolean;
+      private strikethrough: Boolean;
+      private autolinks: Boolean;
+
+The constructor is private, so parsers start from `commonMark` or
+`gfm`. Its parameters are plain types, since Temper's C# backend makes
+private constructors public.
+
+      private constructor(
+        rawHtmlHandler: RawHtmlHandler, tables: Boolean, taskListItems: Boolean,
+        strikethrough: Boolean, autolinks: Boolean,
+      ) {
+        this.rawHtmlHandler = rawHtmlHandler;
+        this.tables = tables;
+        this.taskListItems = taskListItems;
+        this.strikethrough = strikethrough;
+        this.autolinks = autolinks;
+      }
+
+CommonMark alone, as `parseMarkdown` reads it.
+
+      public static commonMark: MarkdownParser = new MarkdownParser(
+        new OpaqueRawHtml(), false, false, false, false,
+      );
+
+All four of GFM's syntax extensions: tables, task list items,
+strikethrough, and extended autolinks.
+
+      public static gfm: MarkdownParser = new MarkdownParser(
+        new OpaqueRawHtml(), true, true, true, true,
+      );
+
+      public withRawHtmlHandler(handler: RawHtmlHandler): MarkdownParser {
+        new MarkdownParser(handler, tables, taskListItems, strikethrough, autolinks)
+      }
+
+      public withTables(on: Boolean): MarkdownParser {
+        new MarkdownParser(rawHtmlHandler, on, taskListItems, strikethrough, autolinks)
+      }
+
+      public withTaskListItems(on: Boolean): MarkdownParser {
+        new MarkdownParser(rawHtmlHandler, tables, on, strikethrough, autolinks)
+      }
+
+      public withStrikethrough(on: Boolean): MarkdownParser {
+        new MarkdownParser(rawHtmlHandler, tables, taskListItems, on, autolinks)
+      }
+
+      public withExtendedAutolinks(on: Boolean): MarkdownParser {
+        new MarkdownParser(rawHtmlHandler, tables, taskListItems, strikethrough, on)
+      }
+
+Parses `text`. Never fails: any text is some document.
+
+      public parse(text: String): MarkdownDocument { new MarkdownDocument(redRoot(parseGreen(text))) }
+
+The green tree alone.
+
+      public parseGreen(text: String): GreenNode {
+        parseWith(
+          text, rawHtmlHandler, new Extensions(tables, taskListItems, strikethrough, autolinks),
+        )
+      }
+    }
+
+Which extensions a parse reads, inside the library.
+
+    class Extensions(
+      public tables: Boolean,
+      public taskListItems: Boolean,
+      public strikethrough: Boolean,
+      public autolinks: Boolean,
+    ) {}
+
+    let noExtensions = new Extensions(false, false, false, false);
+
+    let parseWith(text: String, rawHtmlHandler: RawHtmlHandler, extensions: Extensions): GreenNode {
       let source = new SourceText(text);
-      let blocks = new BlockParser(source);
+      let blocks = new BlockParser(source, extensions);
       blocks.parse();
       let labels = definitionLabels(source, blocks.lines);
-      new TreeWriter(source, blocks.lines, rawHtmlHandler, labels).writeDocument(blocks.document)
+      new TreeWriter(source, blocks.lines, rawHtmlHandler, labels, extensions)
+        .writeDocument(blocks.document)
     }
 
 The labels of the document's link reference definitions, normalized,
@@ -217,13 +381,15 @@ so the inline parser knows which `[text]` are links.
     }
 
 The inline content node for `text` alone, one line, used by edits that
-swap a heading's inlines, so an edited tree matches what parsing its
-text gives.
+swap inlines, so an edited tree matches what parsing its text gives:
+with the inline extensions of `extensions`, and in a table cell if
+`inCell`.
 
-    let inlineContentGreen(text: String): GreenNode {
+    let inlineContentGreen(text: String, extensions: Extensions, inCell: Boolean): GreenNode {
       let source = new SourceText(text);
       let line = new LineData(0, source.length, source.length);
-      new TreeWriter(source, [line], opaqueRawHtml, new Map<String, Boolean>([])).inlinesOnly()
+      new TreeWriter(source, [line], opaqueRawHtml, new Map<String, Boolean>([]), extensions)
+        .inlinesOnly(inCell)
     }
 
 ## Writing the tree
@@ -238,22 +404,24 @@ prefix tokens on lines after its first.
       private lines: List<LineData>;
       private handler: RawHtmlHandler;
       private labels: Mapped<String, Boolean>;
+      private extensions: Extensions;
       private builder: GreenNodeBuilder = new GreenNodeBuilder();
       private open: ListBuilder<BlockData> = new ListBuilder<BlockData>();
       private var inText: Boolean = false;
 
       public constructor(
         source: SourceText, lines: List<LineData>, handler: RawHtmlHandler,
-        labels: Mapped<String, Boolean>,
+        labels: Mapped<String, Boolean>, extensions: Extensions,
       ) {
         this.source = source;
         this.lines = lines;
         this.handler = handler;
         this.labels = labels;
+        this.extensions = extensions;
       }
 
       public writeDocument(document: BlockData): GreenNode {
-        builder.startNode(documentKind);
+        builder.startNode(documentKindFor(extensions));
         open.add(document);
         var n = 0;
         while (n < lines.length) {
@@ -287,9 +455,9 @@ prefix tokens on lines after its first.
         builder.finish()
       }
 
-      public inlinesOnly(): GreenNode {
+      public inlinesOnly(inCell: Boolean): GreenNode {
         let content = rangeContent(source, 0, 0, source.length);
-        parseInlines(content, 0, source.length);
+        parseInlines(content, 0, source.length, inCell);
         builder.finish()
       }
 
@@ -386,6 +554,8 @@ prefix tokens, and its leading whitespace.
           writeHtmlBlock(leaf);
         } else if (type == typeDefinition) {
           writeDefinition(leaf);
+        } else if (type == typeTable) {
+          writeTable(leaf);
         } else {
           let line = lines[leaf.firstLine];
           sourceToken(whitespaceKind, line.leafStart, line.contentEnd);
@@ -403,7 +573,7 @@ last line ending.
         sourceToken(whitespaceKind, lines[first].leafStart, content.sourceStarts[0]);
         let text = content.text;
         let contentEnd = trimBlanksBack(text, 0, text.length);
-        parseInlines(content, 0, contentEnd);
+        parseInlines(content, 0, contentEnd, false);
         emit(content, whitespaceKind, contentEnd, text.length);
         lineEnding(lines[end - 1]);
       }
@@ -433,7 +603,7 @@ optional closing sequence of `#`, and whitespace between.
         sourceToken(atxMarkerKind, indentEnd, markerEnd);
         sourceToken(whitespaceKind, markerEnd, contentStart);
         let content = rangeContent(source, n, contentStart, contentEnd);
-        parseInlines(content, 0, contentEnd - contentStart);
+        parseInlines(content, 0, contentEnd - contentStart, false);
         sourceToken(whitespaceKind, contentEnd, closeStart);
         sourceToken(closingSequenceKind, closeStart, trailStart);
         sourceToken(whitespaceKind, trailStart, end);
@@ -536,6 +706,97 @@ give back exactly `html`.
         }
       }
 
+A table: its header row, its delimiter row, and its other rows, each a
+node, with container prefixes between them.
+
+      private writeTable(leaf: BlockData): Void {
+        for (var n = leaf.firstLine; n <= leaf.lastLine; n += 1) {
+          if (n > leaf.firstLine) { prefixOf(n); }
+          let line = lines[n];
+          let start = skipBlanks(source, line.leafStart, line.contentEnd);
+          let kind = if (n == leaf.firstLine) {
+            tableHeaderRowKind
+          } else if (n == leaf.firstLine + 1) {
+            tableDelimiterRowKind
+          } else {
+            tableRowKind
+          };
+          builder.startNode(kind);
+          sourceToken(indentKind, line.leafStart, start);
+          if (n == leaf.firstLine + 1) {
+            writeDelimiters(start, line.contentEnd);
+          } else {
+            writeCells(n, start, line.contentEnd);
+          }
+          lineEnding(line);
+          builder.finishNode();
+        }
+      }
+
+A delimiter row's tokens: pipes, whitespace, and delimiters such as
+`:--`.
+
+      private writeDelimiters(start: Int, end: Int): Void {
+        var i = start;
+        while (i < end) {
+          let c = source.codeAt(i);
+          var next = i + 1;
+          if (c == char'|') {
+            sourceToken(pipeKind, i, next);
+          } else if (isTableSpace(c)) {
+            next = skipTableSpaces(source, i, end);
+            sourceToken(whitespaceKind, i, next);
+          } else {
+            while (next < end && (source.codeAt(next) == char'-' || source.codeAt(next) == char':')) {
+              next += 1;
+            }
+            sourceToken(tableDelimiterKind, i, next);
+          }
+          i = next;
+        }
+      }
+
+A row's cells, between pipes, as `tableRowCells` counts them: after
+the last pipe, only spaces are no cell.
+
+      private writeCells(n: Int, start: Int, end: Int): Void {
+        var i = start;
+        if (i < end && source.codeAt(i) == char'|') {
+          sourceToken(pipeKind, i, i + 1);
+          i += 1;
+        }
+        while (true) {
+          let pipe = nextPipe(source, i, end);
+          if (pipe >= end) {
+            if (skipTableSpaces(source, i, end) < end) {
+              writeCell(n, i, end, i > start);
+            } else {
+              sourceToken(whitespaceKind, i, end);
+            }
+            break;
+          }
+          writeCell(n, i, pipe, i > start);
+          sourceToken(pipeKind, pipe, pipe + 1);
+          i = pipe + 1;
+        }
+      }
+
+A cell: the whitespace around its content, and its inlines. After a
+pipe, cmark-gfm skips vertical tabs and form feeds too; then it trims
+spaces and tabs.
+
+      private writeCell(n: Int, start: Int, end: Int, afterPipe: Boolean): Void {
+        builder.startNode(tableCellKind);
+        let from = if (afterPipe) { skipTableSpaces(source, start, end) } else { start };
+        let contentStart = skipBlanks(source, from, end);
+        let contentEnd = trimBlanksBack(source, contentStart, end);
+        sourceToken(whitespaceKind, start, contentStart);
+        let content = rangeContent(source, n, contentStart, contentEnd);
+        parseInlines(content, 0, contentEnd - contentStart, true);
+        sourceToken(whitespaceKind, contentEnd, end);
+        builder.finishNode();
+      }
+
 A link reference definition: `[label]: destination "title"`, across
 lines or not.
 
@@ -593,8 +854,10 @@ node: parsed by `InlineParser` (see `inlines.temper.md`), then written
 here, so each range becomes tokens with the line breaks between lines
 written as `emit` writes them.
 
-      private parseInlines(content: Content, start: Int, end: Int): Void {
-        let parser = new InlineParser(content.text, start, end, labels);
+      private parseInlines(content: Content, start: Int, end: Int, inCell: Boolean): Void {
+        let parser = new InlineParser(
+          content.text, start, end, labels, extensions.strikethrough, extensions.autolinks, inCell,
+        );
         parser.parse();
         builder.startNode(inlineContentKind);
         writeItems(content, parser, 0);
@@ -674,6 +937,7 @@ stays opaque text between line breaks' prefixes if not.
       if (type == typeIndentedCode) { return indentedCodeKind; }
       if (type == typeHtmlBlock) { return htmlBlockKind; }
       if (type == typeDefinition) { return linkReferenceDefinitionKind; }
+      if (type == typeTable) { return tableKind; }
       blankLineKind
     }
 
@@ -962,4 +1226,98 @@ A handler that loses text is ignored, so the tree stays lossless.
     test("a lossy RawHtmlHandler can't lose text") {
       let doc = parseMarkdown("a <b> c", new LossyHandler());
       assert(doc.asWritten == "a <b> c") { doc.asWritten };
+    }
+
+### GFM's extensions
+
+Off, as in `parseMarkdown`, GFM's syntax is plain CommonMark.
+
+    test("GFM extensions are off unless asked for") {
+      let text = "~~a~~ www.x.test a@b.test\n| a |\n|-|\n- [ ] x\n";
+      let html = parseMarkdown(text).toHtml();
+      let expected = "<p>~~a~~ www.x.test a@b.test\n| a |\n|-|</p>\n<ul>\n<li>[ ] x</li>\n</ul>\n";
+      assert(html == expected) { html };
+      assert(MarkdownParser.commonMark.parse(text).toHtml() == expected) { "commonMark is parseMarkdown" };
+      let tables = MarkdownParser.commonMark.withTables(true).parse(text).toHtml();
+      let tablesOnly = "<p>~~a~~ www.x.test a@b.test</p>\n<table>\n<thead>\n<tr>\n<th>a</th>\n</tr>\n</thead>\n</table>\n<ul>\n<li>[ ] x</li>\n</ul>\n";
+      assert(tables == tablesOnly) { tables };
+    }
+
+Each extension alone, and the parser keeps its raw HTML handler.
+
+    test("MarkdownParser options, one at a time") {
+      let c = MarkdownParser.commonMark;
+      let strike = c.withStrikethrough(true).parse("~~a~~ ~b~ ~~~c~~~").toHtml();
+      assert(strike == "<p><del>a</del> <del>b</del> ~~~c~~~</p>\n") { strike };
+      let links = c.withExtendedAutolinks(true).parse("www.a.test, https://b.test/x). c@d.test").toHtml();
+      let expectedLinks = "<p><a href=\"http://www.a.test\">www.a.test</a>, <a href=\"https://b.test/x\">https://b.test/x</a>). <a href=\"mailto:c@d.test\">c@d.test</a></p>\n";
+      assert(links == expectedLinks) { links };
+      let tasks = c.withTaskListItems(true).parse("- [x] a\n- [y] b\n").toHtml();
+      assert(tasks == "<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> a</li>\n<li>[y] b</li>\n</ul>\n") { tasks };
+      let lossy = MarkdownParser.gfm.withRawHtmlHandler(new LossyHandler()).parse("a <b> c");
+      assert(lossy.asWritten == "a <b> c") { lossy.asWritten };
+      let off = MarkdownParser.gfm.withTables(false).withTaskListItems(false).withStrikethrough(false)
+        .withExtendedAutolinks(false).parse("~~a~~").toHtml();
+      assert(off == "<p>~~a~~</p>\n") { off };
+    }
+
+Where kelpto-md follows GFM's spec rather than cmark-gfm: task list
+items in block quotes and nested on one line are task items (cmark-gfm
+looks for the marker from the start of the line only).
+
+    test("GFM: task list items inside containers") {
+      let html = MarkdownParser.gfm.parse("> - [ ] a\n- - [x] b\n").toHtml();
+      let expected = "<blockquote>\n<ul>\n<li><input type=\"checkbox\" disabled=\"\" /> a</li>\n</ul>\n</blockquote>\n<ul>\n<li>\n<ul>\n<li><input type=\"checkbox\" checked=\"\" disabled=\"\" /> b</li>\n</ul>\n</li>\n</ul>\n";
+      assert(html == expected) { html };
+    }
+
+    test("GFM: tables end at a blank line or another block, and take paragraphs' last lines") {
+      let doc = MarkdownParser.gfm.parse("[r]: /u\nintro\n| a |\n| - |\n| [r] |\n    code\n");
+      let kinds = new ListBuilder<String>();
+      let blocks = doc.children;
+      for (var i = 0; i < blocks.length; i += 1) { kinds.add(blocks[i].node.kind.name); }
+      let names = kinds.join(" ") { (s: String): String => s };
+      assert(names == "LinkReferenceDefinition Paragraph Table IndentedCode") { names };
+      let html = doc.toHtml();
+      assert(html.split("<td><a href=\"/u\">r</a></td>").length == 2) { html };
+      let mismatch = MarkdownParser.gfm.parse("a | b\n|-|\nc\n|-|\n").toHtml();
+      assert(mismatch == "<p>a | b\n|-|\nc\n|-|</p>\n") { mismatch };
+    }
+
+Random mixes of GFM's markup, from a fixed seed. Each must roundtrip,
+and render without failing, with all of GFM on.
+
+    let gfmPieces(): List<String> {
+      [
+        "|", " | ", "\\|", "\\\\|", "---", ":-", "-:", ":-:", "|-|", "\n", "\r\n", "\r", "\n\n", "a",
+        "~", "~~", "~~~", " ", "\t", "www.", "x.test", "http://", "https://a.b", "ftp:", "@", "a@b.c",
+        "mailto:", "xmpp:", "_", "*", "(", ")", "&amp;", ";", "<", ">", "- ", "1. ", "[ ] ", "[x] ",
+        "[X]", "> ", "    ", "`", "[", "]", "é", "😀", "\u{B}",
+      ]
+    }
+
+    test("roundtrip: fuzzing with GFM's markup") {
+      let pieces = gfmPieces();
+      var state = 777;
+      var failures = 0;
+      var rendered = 0;
+      var first = "";
+      for (var round = 0; round < 600; round += 1) {
+        let out = new StringBuilder();
+        state = (state * 75 + 74) % 65537;
+        let count = 1 + state % 50;
+        for (var k = 0; k < count; k += 1) {
+          state = (state * 75 + 74) % 65537;
+          out.append(pieces[state % pieces.length]);
+        }
+        let text = out.toString();
+        let doc = MarkdownParser.gfm.parse(text);
+        let html = new MarkdownRenderer().withRawHtmlTrusted().withDisallowedRawHtmlFiltered().render(doc);
+        if (!html.isEmpty || !doc.blocks.isEmpty) { rendered += 1; }
+        if (doc.asWritten != text) {
+          failures += 1;
+          if (first == "") { first = text; }
+        }
+      }
+      assert(failures == 0 && rendered > 0) { "${failures.toString()} failed, such as ${first}" };
     }

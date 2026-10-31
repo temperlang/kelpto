@@ -99,6 +99,12 @@ has to manage cycles. Item 0 is the root, the `InlineContent` node.
       private end: Int;
       private labels: Mapped<String, Boolean>;
 
+GFM's inline extensions, and whether this is a table cell's content.
+
+      private strikethrough: Boolean;
+      private autolinks: Boolean;
+      private inCell: Boolean;
+
 Each item's kind; its range, or -1 for a node; whether it groups into
 a `Text` node; its first and last children; and its siblings.
 
@@ -154,11 +160,17 @@ The start of plain text not yet in an item.
 
       private var pending: Int;
 
-      public constructor(text: SourceText, start: Int, end: Int, labels: Mapped<String, Boolean>) {
+      public constructor(
+        text: SourceText, start: Int, end: Int, labels: Mapped<String, Boolean>,
+        strikethrough: Boolean, autolinks: Boolean, inCell: Boolean,
+      ) {
         this.text = text;
         this.start = start;
         this.end = end;
         this.labels = labels;
+        this.strikethrough = strikethrough;
+        this.autolinks = autolinks;
+        this.inCell = inCell;
         this.pending = start;
         newNode(inlineContentKind);
       }
@@ -241,12 +253,16 @@ Plain text from `pending` to `at` becomes an item.
             char'[' -> openBracket(i, i + 1, false);
             char'!' -> if (codeAt(i + 1) == char'[') { openBracket(i, i + 2, true) } else { i + 1 };
             char']' -> closeBracket(i);
+            char'~' -> if (strikethrough) { tildeRun(i) } else { i + 1 };
+            char':' -> if (autolinks) { urlAutolink(i) } else { i + 1 };
+            char'w' -> if (autolinks) { wwwAutolink(i) } else { i + 1 };
             else -> i + 1;
           };
           i = next;
         }
         flush(end);
         processEmphasis(-1);
+        if (autolinks) { emailAutolinks(0); }
       }
 
 A backslash escapes ASCII punctuation, and before a line ending makes a
@@ -254,6 +270,18 @@ hard break. Otherwise it's text.
 
       private backslash(i: Int): Int {
         let c = codeAt(i + 1);
+        if (inCell && (c == char'|' || (c == char'\\' && codeAt(i + 2) == char'|'))) {
+
+In a table cell, GFM drops a backslash before `|` before reading
+inlines, so `\|` is a `|`, and `\\|` an escaped `|`. Either way the
+backslashes are a `PipeEscape` and the `|` is text.
+
+          let close = if (c == char'|') { i + 1 } else { i + 2 };
+          flush(i);
+          token(0, pipeEscapeKind, i, close, true);
+          pending = close;
+          return close;
+        }
         if (c == char'\n') {
           flush(i);
           let node = newNode(hardBreakKind);
@@ -309,10 +337,27 @@ run is text.
         let node = newNode(codeSpanKind);
         append(0, node);
         token(node, backticksKind, i, runEnd, false);
-        token(node, codeTextKind, runEnd, close, false);
+        codeText(node, runEnd, close);
         token(node, backticksKind, close, close + count, false);
         pending = close + count;
         close + count
+      }
+
+A code span's code: one token, but in a table cell, each backslash
+before `|` is a `PipeEscape`, which the code leaves out.
+
+      private codeText(node: Int, from: Int, to: Int): Void {
+        var at = from;
+        if (inCell) {
+          for (var k = from; k + 1 < to; k += 1) {
+            if (text.codeAt(k) == char'\\' && text.codeAt(k + 1) == char'|') {
+              token(node, codeTextKind, at, k, false);
+              token(node, pipeEscapeKind, k, k + 1, false);
+              at = k + 1;
+            }
+          }
+        }
+        token(node, codeTextKind, at, to, false);
       }
 
 Whether a run of exactly `count` backticks starts at or after `from`,
@@ -450,18 +495,42 @@ whitespace.
         flush(i);
         let item = token(0, plainKind, i, runEnd, true);
         pending = runEnd;
-        if (opens || closes) {
-          let d = delimiterItems.length;
-          delimiterItems.add(item);
-          delimiterChars.add(c);
-          delimiterLengths.add(runEnd - i);
-          canOpen.add(opens);
-          canClose.add(closes);
-          delimiterPrevs.add(lastDelimiter);
-          delimiterNexts.add(-1);
-          if (lastDelimiter >= 0) { delimiterNexts.set(lastDelimiter, d); }
-          lastDelimiter = d;
-        }
+        if (opens || closes) { pushDelimiter(item, c, runEnd - i, opens, closes); }
+        runEnd
+      }
+
+      private pushDelimiter(item: Int, c: Int, length: Int, opens: Boolean, closes: Boolean): Void {
+        let d = delimiterItems.length;
+        delimiterItems.add(item);
+        delimiterChars.add(c);
+        delimiterLengths.add(length);
+        canOpen.add(opens);
+        canClose.add(closes);
+        delimiterPrevs.add(lastDelimiter);
+        delimiterNexts.add(-1);
+        if (lastDelimiter >= 0) { delimiterNexts.set(lastDelimiter, d); }
+        lastDelimiter = d;
+      }
+
+GFM's strikethrough: a run of `~`, read 100 at a time as cmark-gfm
+does, flanking as `*` is, goes on the delimiter stack if it's one or
+two long.
+
+      private tildeRun(i: Int): Int {
+        var runEnd = i;
+        while (runEnd < end && runEnd - i < 100 && text.codeAt(runEnd) == char'~') { runEnd += 1; }
+        let before = if (i > 0) { text.codeAt(i - 1) } else { char'\n' };
+        let after = if (runEnd < end) { text.codeAt(runEnd) } else { char'\n' };
+        let beforeSpace = isUnicodeWhitespace(before);
+        let afterSpace = isUnicodeWhitespace(after);
+        let beforePunctuation = isUnicodePunctuation(before);
+        let afterPunctuation = isUnicodePunctuation(after);
+        let opens = !afterSpace && (!afterPunctuation || beforeSpace || beforePunctuation);
+        let closes = !beforeSpace && (!beforePunctuation || afterSpace || afterPunctuation);
+        flush(i);
+        let item = token(0, plainKind, i, runEnd, true);
+        pending = runEnd;
+        if ((opens || closes) && runEnd - i <= 2) { pushDelimiter(item, char'~', runEnd - i, opens, closes); }
         runEnd
       }
 
@@ -482,11 +551,12 @@ delimiter's number, or -1 for all). For each closer, the nearest
 opener that matches; `openersBottom` remembers, for each kind of
 closer, where a search found none, so no search covers the same
 openers twice. Kinds of closer: its character, whether it can also
-open, and its length mod 3.
+open, and its length mod 3. Strikethrough's `~` runs match by the same
+rules.
 
       private processEmphasis(bottom: Int): Void {
         let openersBottom = new ListBuilder<Int>();
-        for (var k = 0; k < 12; k += 1) { openersBottom.add(bottom + 1); }
+        for (var k = 0; k < 18; k += 1) { openersBottom.add(bottom + 1); }
         var closer = -1;
         var candidate = lastDelimiter;
         while (candidate > bottom) {
@@ -496,8 +566,8 @@ open, and its length mod 3.
         while (closer >= 0) {
           if (canClose[closer]) {
             let c = delimiterChars[closer];
-            let index = (if (c == char'*') { 0 } else { 6 }) + (if (canOpen[closer]) { 3 } else { 0 }) +
-              delimiterLengths[closer] % 3;
+            let index = (if (c == char'*') { 0 } else if (c == char'_') { 6 } else { 12 }) +
+              (if (canOpen[closer]) { 3 } else { 0 }) + delimiterLengths[closer] % 3;
             var opener = delimiterPrevs[closer];
             var found = false;
             while (opener >= openersBottom[index]) {
@@ -512,7 +582,9 @@ open, and its length mod 3.
               opener = delimiterPrevs[opener];
             }
             let oldCloser = closer;
-            if (found) {
+            if (found && c == char'~') {
+              closer = insertStrikethrough(opener, closer);
+            } else if (found) {
               closer = insertEmphasis(opener, closer);
             } else {
               closer = delimiterNexts[closer];
@@ -531,22 +603,49 @@ have two or more left, with markers taken from the inner end of each
 run. Gives the closer to look at next.
 
       private insertEmphasis(opener: Int, closer: Int): Int {
+        let use = if (delimiterLeft(opener) >= 2 && delimiterLeft(closer) >= 2) { 2 } else { 1 };
+        wrap(opener, closer, use, if (use == 2) { strongKind } else { emphasisKind }, emphasisMarkerKind)
+      }
+
+Strikethrough, if the runs are the same length, taking all of each as
+markers; if not, neither makes anything, as in cmark-gfm. Either way
+they and the delimiters between them go.
+
+      private insertStrikethrough(opener: Int, closer: Int): Int {
+        let length = delimiterLengths[closer];
+        if (delimiterLengths[opener] == length) {
+          return wrap(opener, closer, length, strikethroughKind, strikethroughMarkerKind);
+        }
+        let next = delimiterNexts[closer];
+        var d = closer;
+        while (d >= 0 && d != opener) {
+          let prev = delimiterPrevs[d];
+          removeDelimiter(d);
+          d = prev;
+        }
+        removeDelimiter(opener);
+        next
+      }
+
+Wraps what's between `opener` and `closer` in a node of `kind`, with
+`use` of each run as markers of `markerKind`.
+
+      private wrap(opener: Int, closer: Int, use: Int, kind: Kind, markerKind: Kind): Int {
         let openItem = delimiterItems[opener];
         let closeItem = delimiterItems[closer];
-        let use = if (delimiterLeft(opener) >= 2 && delimiterLeft(closer) >= 2) { 2 } else { 1 };
         var between = delimiterPrevs[closer];
         while (between >= 0 && between != opener) {
           let prev = delimiterPrevs[between];
           removeDelimiter(between);
           between = prev;
         }
-        let node = newNode(if (use == 2) { strongKind } else { emphasisKind });
+        let node = newNode(kind);
         let openEnd = ends[openItem];
         ends.set(openItem, openEnd - use);
         let closeStart = starts[closeItem];
         starts.set(closeItem, closeStart + use);
-        let openMarker = newItem(emphasisMarkerKind, openEnd - use, openEnd, false);
-        let closeMarker = newItem(emphasisMarkerKind, closeStart, closeStart + use, false);
+        let openMarker = newItem(markerKind, openEnd - use, openEnd, false);
+        let closeMarker = newItem(markerKind, closeStart, closeStart + use, false);
         let first = nexts[openItem];
         let last = prevs[closeItem];
         firsts.set(node, openMarker);
@@ -571,6 +670,183 @@ run. Gives the closer to look at next.
           return next;
         }
         closer
+      }
+
+### Extended autolinks
+
+GFM's extended autolinks, as cmark-gfm finds them. At `:`, a URL: its
+scheme, the letters just before, `http`, `https`, or `ftp`, then `//`
+and a character that can start a host. At `w`, a domain starting
+`www.`, at the start or after whitespace, `*`, `_`, `~`, or `(`, with
+at least one dot. Neither inside brackets, which could still make a
+link. Each runs to the next whitespace or `<`, less trailing
+punctuation (see `autolinkTrim`), and is written as is: its scheme
+letters, `*`, backslashes, and the rest are all link text. Email
+addresses are found later, in text (see `emailAutolinks`).
+
+      private urlAutolink(i: Int): Int {
+        if (!bracketItems.isEmpty || end - i < 4 || codeAt(i + 1) != char'/' || codeAt(i + 2) != char'/') {
+          return i + 1;
+        }
+        var schemeStart = i;
+        while (schemeStart > start && isAsciiAlpha(text.codeAt(schemeStart - 1))) { schemeStart -= 1; }
+        let scheme = asciiLowercase(text.slice(schemeStart, i));
+        if (
+          schemeStart < pending || !(scheme == "http" || scheme == "https" || scheme == "ftp") ||
+          !isHostChar(text.codeAt(i + 3))
+        ) {
+          return i + 1;
+        }
+        let domain = domainEnd(text, i + 3, end, true);
+        if (domain < 0) { return i + 1; }
+        let linkEnd = autolinkTrim(text, i, linkRunEnd(domain));
+        if (linkEnd <= i) { return i + 1; }
+        extendedAutolink(urlAutolinkKind, schemeStart, linkEnd)
+      }
+
+      private wwwAutolink(i: Int): Int {
+        if (!bracketItems.isEmpty || end - i < 4 || text.slice(i, i + 4) != "www.") { return i + 1; }
+        if (i > start) {
+          let before = text.codeAt(i - 1);
+          if (
+            !(before == char'*' || before == char'_' || before == char'~' || before == char'(' ||
+              before == 0 || isCmarkSpace(before))
+          ) {
+            return i + 1;
+          }
+        }
+        let domain = domainEnd(text, i, end, false);
+        if (domain < 0) { return i + 1; }
+        let linkEnd = autolinkTrim(text, i, linkRunEnd(domain));
+        if (linkEnd <= i) { return i + 1; }
+        extendedAutolink(wwwAutolinkKind, i, linkEnd)
+      }
+
+From `from` to the next whitespace or `<`.
+
+      private linkRunEnd(from: Int): Int {
+        var i = from;
+        while (i < end && !isCmarkSpace(text.codeAt(i)) && text.codeAt(i) != char'<') { i += 1; }
+        i
+      }
+
+      private extendedAutolink(kind: Kind, from: Int, to: Int): Int {
+        flush(from);
+        let node = newNode(kind);
+        append(0, node);
+        token(node, autolinkTextKind, from, to, false);
+        pending = to;
+        to
+      }
+
+Email addresses, after the rest, in each run of text outside links and
+images, as cmark-gfm finds them once a paragraph is parsed (see
+`findEmails`). A run is plain text and backslash escapes, as GFM reads
+them, so `a\_b@example.com` is one address. Each becomes an
+`EmailAutolink` holding the run's tokens.
+
+      private emailAutolinks(parent: Int): Void {
+        var item = firsts[parent];
+        while (item >= 0) {
+          var next = nexts[item];
+          if (starts[item] < 0) {
+            let id = kinds[item].id;
+            if (id == emphasisKind.id || id == strongKind.id || id == strikethroughKind.id) {
+              emailAutolinks(item);
+            }
+          } else if (isRunText(item)) {
+            var last = item;
+            while (nexts[last] >= 0 && isRunText(nexts[last])) { last = nexts[last]; }
+            next = nexts[last];
+            linkEmails(parent, item, last);
+          }
+          item = next;
+        }
+      }
+
+      private isRunText(item: Int): Boolean {
+        let id = kinds[item].id;
+        starts[item] >= 0 && textual[item] && (id == plainKind.id || id == escapeKind.id)
+      }
+
+The emails in the run of items from `first` to `last`, as nodes in
+their place.
+
+      private linkEmails(parent: Int, first: Int, last: Int): Void {
+        var any = false;
+        for (var k = starts[first]; k < ends[last]; k += 1) {
+          if (text.codeAt(k) == char'@') { any = true; break; }
+        }
+        if (!any) { return; }
+
+The run as GFM reads it, escapes resolved, with where each code point
+starts.
+
+        let read = new StringBuilder();
+        let positions = new ListBuilder<Int>();
+        var item = first;
+        while (true) {
+          let s = starts[item];
+          if (kinds[item].id == escapeKind.id) {
+            read.append(text.slice(s + 1, s + 2));
+            positions.add(s);
+          } else {
+            read.append(text.slice(s, ends[item]));
+            for (var k = s; k < ends[item]; k += 1) { positions.add(k); }
+          }
+          if (item == last) { break; }
+          item = nexts[item];
+        }
+        let found = findEmails(new SourceText(read.toString()));
+        if (found.isEmpty) { return; }
+        let linkStarts = new ListBuilder<Int>();
+        let linkEnds = new ListBuilder<Int>();
+        for (var k = 0; k < found.length; k += 2) {
+          linkStarts.add(positions[found[k]]);
+          linkEnds.add(if (found[k + 1] < positions.length) { positions[found[k + 1]] } else { ends[last] });
+        }
+
+The new items: text outside the links, and a node for each.
+
+        let out = new ListBuilder<Int>();
+        var j = 0;
+        var node = -1;
+        item = first;
+        while (true) {
+          let s = starts[item];
+          let e = ends[item];
+          let escape = kinds[item].id == escapeKind.id;
+          var at = s;
+          while (at < e) {
+            if (j < linkStarts.length && at >= linkStarts[j]) {
+              let stop = if (escape) { e } else { minInt(e, linkEnds[j]) };
+              if (node < 0) {
+                node = newNode(emailAutolinkKind);
+                out.add(node);
+              }
+              append(node, newItem(if (escape) { escapeKind } else { autolinkTextKind }, at, stop, false));
+              at = stop;
+              if (at >= linkEnds[j]) {
+                node = -1;
+                j += 1;
+              }
+            } else {
+              let stop = if (escape || j >= linkStarts.length) { e } else { minInt(e, linkStarts[j]) };
+              out.add(newItem(if (escape) { escapeKind } else { plainKind }, at, stop, true));
+              at = stop;
+            }
+          }
+          if (item == last) { break; }
+          item = nexts[item];
+        }
+        let before = prevs[first];
+        let after = nexts[last];
+        for (var k = 0; k < out.length; k += 1) {
+          prevs.set(out[k], if (k > 0) { out[k - 1] } else { before });
+          nexts.set(out[k], if (k + 1 < out.length) { out[k + 1] } else { after });
+        }
+        if (before >= 0) { nexts.set(before, out[0]); } else { firsts.set(parent, out[0]); }
+        if (after >= 0) { prevs.set(after, out[out.length - 1]); } else { lasts.set(parent, out[out.length - 1]); }
       }
 
 ### Links and images
@@ -799,6 +1075,221 @@ for its length limits).
       )
     }
 
+## Extended autolinks
+
+cmark-gfm's rules, kept exactly, odd corners and all, since GitHub
+renders by them.
+
+Whitespace as cmark's `cmark_isspace` reads it: space, tab, and line
+endings.
+
+    let isCmarkSpace(c: Int): Boolean {
+      c == char' ' || c == char'\t' || c == char'\n' || c == char'\r'
+    }
+
+Whether `c` can be in a host: not whitespace or punctuation. cmark-gfm
+counts only Unicode's punctuation (P), not its symbols (S), as
+punctuation beyond ASCII; kelpto-core's table has both, so the common
+symbol blocks (currency, letterlike, arrows, math, technical, shapes,
+dingbats, and emoji) and Latin-1's symbols count as host characters
+here.
+
+    let isHostChar(c: Int): Boolean {
+      if (c < 0x80) { return !isAsciiWhitespace(c) && !isAsciiPunctuation(c); }
+      if (isUnicodeWhitespace(c)) { return false; }
+      !isUnicodePunctuation(c) || isSymbolish(c)
+    }
+
+    let isSymbolish(c: Int): Boolean {
+      (c >= 0x20A0 && c <= 0x20CF) || (c >= 0x2100 && c <= 0x2BFF) || (c >= 0x1F000 && c <= 0x1FBFF) ||
+        (c >= 0xA2 && c <= 0xA6) || c == 0xA8 || c == 0xA9 || c == 0xAC || (c >= 0xAE && c <= 0xB1) ||
+        c == 0xB4 || c == 0xB8 || c == 0xD7 || c == 0xF7
+    }
+
+The end of a domain starting at `at`, or -1, as cmark-gfm's
+`check_domain` finds it: host characters, `-`, `_`, and `.`, with a
+backslash skipping what follows, stopping before the last code point
+of the content, or at any beyond ASCII. Underscores in the last two
+parts make it no domain, unless it has more than 10 dots (so the check
+stays linear). Unless `allowShort`, it needs a dot.
+
+    let domainEnd(text: SourceText, at: Int, end: Int, allowShort: Boolean): Int {
+      var dots = 0;
+      var underscoresBefore = 0;
+      var underscores = 0;
+      let size = end - at;
+      var i = 1;
+      while (i < size - 1) {
+        if (text.codeAt(at + i) == char'\\' && i < size - 2) { i += 1; }
+        let c = text.codeAt(at + i);
+        if (c == char'_') {
+          underscores += 1;
+        } else if (c == char'.') {
+          underscoresBefore = underscores;
+          underscores = 0;
+          dots += 1;
+        } else if (c >= 0x80 || (!isHostChar(c) && c != char'-')) {
+          break;
+        }
+        i += 1;
+      }
+      if ((underscoresBefore > 0 || underscores > 0) && dots <= 10) { return -1; }
+      if (allowShort || dots > 0) { at + i } else { -1 }
+    }
+
+The end of a link from `from` to `to` without what cmark-gfm's
+`autolink_delim` trims: anything from a `<`, then from the end, `?`,
+`!`, `.`, `,`, `:`, `*`, `_`, `~`, `'`, `"`, a `)` without a `(` to
+match, or what looks like a character reference (`&amp;`).
+
+    let autolinkTrim(text: SourceText, from: Int, to: Int): Int {
+      var linkEnd = to;
+      var opening = 0;
+      var closing = 0;
+      for (var i = from; i < linkEnd; i += 1) {
+        let c = text.codeAt(i);
+        if (c == char'<') {
+          linkEnd = i;
+          break;
+        }
+        if (c == char'(') { opening += 1; }
+        if (c == char')') { closing += 1; }
+      }
+      while (linkEnd > from) {
+        let c = text.codeAt(linkEnd - 1);
+        if (c == char')') {
+          if (closing <= opening) { return linkEnd; }
+          closing -= 1;
+          linkEnd -= 1;
+        } else if (
+          c == char'?' || c == char'!' || c == char'.' || c == char',' || c == char':' ||
+          c == char'*' || c == char'_' || c == char'~' || c == char'\'' || c == char'"'
+        ) {
+          linkEnd -= 1;
+        } else if (c == char';') {
+          var reference = linkEnd - 2;
+          while (reference > from && isAsciiAlpha(text.codeAt(reference))) { reference -= 1; }
+          if (reference >= from && reference < linkEnd - 2 && text.codeAt(reference) == char'&') {
+            linkEnd = reference;
+          } else {
+            linkEnd -= 1;
+          }
+        } else {
+          return linkEnd;
+        }
+      }
+      linkEnd
+    }
+
+The email addresses in `text`, a run of text as GFM reads it, as
+pairs of start and end, by cmark-gfm's `postprocess_text`: at each
+`@`, back over letters, digits, `.`, `+`, `-`, and `_` (and a
+`mailto:` or `xmpp:` not right after a letter or digit), and on over
+letters, digits, `-`, `_`, and `.` before a letter or digit (and `/`
+after `xmpp:`), with at least one such dot, ending in a letter; a
+second `@` starts again from it. Linear: each search starts past the
+last.
+
+    let findEmails(text: SourceText): List<Int> {
+      let found = new ListBuilder<Int>();
+      var begin = 0;
+      var offset = 0;
+      var remaining = text.length;
+      while (offset < remaining) {
+        var at = -1;
+        for (var k = begin + offset; k < begin + remaining; k += 1) {
+          if (text.codeAt(k) == char'@') {
+            at = k;
+            break;
+          }
+        }
+        if (at < 0) { break; }
+        var maxRewind = at - (begin + offset);
+        var autoMailto = true;
+        var isXmpp = false;
+        var dots = 0;
+        var rewind = 0;
+        var linkEnd = 0;
+        var retry = true;
+        var skip = false;
+        while (retry) {
+          retry = false;
+          let atPos = begin + offset + maxRewind;
+          rewind = 0;
+          while (rewind < maxRewind) {
+            let c = text.codeAt(atPos - rewind - 1);
+            if (isAsciiAlphanumeric(c) || c == char'.' || c == char'+' || c == char'-' || c == char'_') {
+              rewind += 1;
+            } else if (c == char':' && validProtocol(text, "mailto:", atPos, rewind, maxRewind)) {
+              autoMailto = false;
+              rewind += 1;
+            } else if (c == char':' && validProtocol(text, "xmpp:", atPos, rewind, maxRewind)) {
+              autoMailto = false;
+              isXmpp = true;
+              rewind += 1;
+            } else {
+              break;
+            }
+          }
+          if (rewind == 0) {
+            offset += maxRewind + 1;
+            skip = true;
+          } else {
+            let limit = remaining - offset - maxRewind;
+            linkEnd = 1;
+            while (linkEnd < limit) {
+              let c = text.codeAt(atPos + linkEnd);
+              if (c == char'@') {
+                offset += maxRewind + 1;
+                maxRewind = linkEnd - 1;
+                retry = true;
+                break;
+              }
+              if (c == char'.' && linkEnd < limit - 1 && isAsciiAlphanumeric(text.codeAt(atPos + linkEnd + 1))) {
+                dots += 1;
+              } else if (
+                !isAsciiAlphanumeric(c) && !(c == char'/' && isXmpp) && c != char'-' && c != char'_'
+              ) {
+                break;
+              }
+              linkEnd += 1;
+            }
+          }
+        }
+        if (!skip) {
+          let atPos = begin + offset + maxRewind;
+          let lastCode = text.codeAt(atPos + linkEnd - 1);
+          if (linkEnd < 2 || dots == 0 || (!isAsciiAlpha(lastCode) && lastCode != char'.')) {
+            offset += maxRewind + linkEnd;
+          } else {
+            linkEnd = autolinkTrim(text, atPos, atPos + linkEnd) - atPos;
+            if (linkEnd == 0) {
+              offset += maxRewind + 1;
+            } else {
+              found.add(atPos - rewind);
+              found.add(atPos + linkEnd);
+              begin += offset + maxRewind + linkEnd;
+              remaining -= offset + maxRewind + linkEnd;
+              offset = 0;
+            }
+          }
+        }
+      }
+      found.toList()
+    }
+
+Whether `protocol` ends at the `:` before the address's part read so
+far, at the start of what's searched or after something not a letter
+or digit.
+
+    let validProtocol(text: SourceText, protocol: String, at: Int, rewind: Int, maxRewind: Int): Boolean {
+      let length = protocol.countBetween(String.begin, protocol.end);
+      if (length > maxRewind - rewind) { return false; }
+      let from = at - rewind - length;
+      if (text.slice(from, from + length) != protocol) { return false; }
+      length == maxRewind - rewind || !isAsciiAlphanumeric(text.codeAt(from - 1))
+    }
+
 ## Tests
 
     test("inline views: emphasis, links, images, and the rest") {
@@ -963,14 +1454,31 @@ compiler, folding many big constant strings, gives up (2026-10-31).
         13 -> "</${repeated("<!--", n)}";
         14 -> repeated("<![CDATA[", n);
         15 -> "${repeated("*a **a ", 100)}b${repeated(" a** a*", 100)}";
+        16 -> repeated("aaa\rbbb\n-\u{B}\n", n);
+        17 -> "|${repeated("a|", n)}\n|${repeated("-|", n)}\n${repeated("b\n", n)}";
+        18 -> "${repeated("a|", n)}\n${repeated("-|", n)}\n";
+        19 -> repeated("www._", n);
+        20 -> repeated("www.a_", n);
+        21 -> repeated("http://a_.", n);
+        22 -> repeated("a@", n);
+        23 -> "${repeated("a.", n)}@";
+        24 -> "${repeated("mailto:", n)}a@b.c";
+        25 -> "${repeated("(", n)}www.a.b${repeated(")", n)}";
+        26 -> repeated("~a ~~a ", n);
+        27 -> repeated("[www.a.b ", n);
         else -> "";
       }
     }
 
+Cases 16 and on are GFM's: cmark-gfm's pathological table, a wide
+header over many short rows (stopped by `maxFilledCells`), and
+autolinks with underscores, many `@`, protocols, and parentheses. They
+parse with all of GFM on.
+
     test("pathological inputs stay linear") {
-      for (var k = 0; k < 16; k += 1) {
+      for (var k = 0; k < 28; k += 1) {
         let text = pathological(k, 10000);
-        let doc = parseMarkdown(text);
+        let doc = if (k < 16) { parseMarkdown(text) } else { MarkdownParser.gfm.parse(text) };
         assert(doc.asWritten == text) { "case ${k.toString()} roundtrips" };
         assert(!doc.toHtml().isEmpty) { "case ${k.toString()} renders" };
       }

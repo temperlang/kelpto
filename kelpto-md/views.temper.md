@@ -7,11 +7,12 @@ where each node may go, after Mike's idea of nesting in the types:
 - **`BlockChild`:** blocks, which go in a document, a block quote, or a
   list item: `Heading`, `Paragraph`, `CodeBlock`, `IndentedCode`,
   `ThematicBreak`, `HtmlBlock`, `LinkReferenceDefinition`,
-  `BlockQuote`, `ListBlock`, and `BlankLine`.
+  `BlockQuote`, `ListBlock`, `Table`, and `BlankLine`.
 - **`ListChild`:** what a list holds, `ListItem` and `BlankLine`.
-- **`ParagraphChild`:** inlines, which headings hold too: `Text`,
-  `CodeSpan`, `RawHtml`, `Emphasis`, `Strong`, `Link`, `Image`,
-  `Autolink`, `HardBreak`, and `CharacterReference`.
+- **`ParagraphChild`:** inlines, which headings and table cells hold
+  too: `Text`, `CodeSpan`, `RawHtml`, `Emphasis`, `Strong`,
+  `Strikethrough`, `Link`, `Image`, `Autolink`, `HardBreak`, and
+  `CharacterReference`.
 - **`LinkTextChild`:** what a link's text may hold: every
   `ParagraphChild` but `Link`, since links can't nest.
 
@@ -96,6 +97,36 @@ list items' blocks, but not the items themselves.
         for (var i = 0; i < all.length; i += 1) {
           let block = all[i];
           if (block is Heading) { result.add(block); }
+        }
+        result.toList()
+      }
+
+GFM tables, in order, inside containers too.
+
+      public get tables(): List<Table> {
+        let result = new ListBuilder<Table>();
+        let all = blocks;
+        for (var i = 0; i < all.length; i += 1) {
+          let block = all[i];
+          if (block is Table) { result.add(block); }
+        }
+        result.toList()
+      }
+
+GFM task list items, in order, nested ones too.
+
+      public get taskListItems(): List<TaskListItem> {
+        let result = new ListBuilder<TaskListItem>();
+        let all = blocks;
+        for (var i = 0; i < all.length; i += 1) {
+          let block = all[i];
+          if (block is ListBlock) {
+            let items = block.items;
+            for (var j = 0; j < items.length; j += 1) {
+              let task = items[j].task;
+              if (task != null) { result.add(task); }
+            }
+          }
         }
         result.toList()
       }
@@ -187,6 +218,7 @@ The typed view of a block node.
       if (node.hasKind(linkReferenceDefinitionKind)) { return new LinkReferenceDefinition(node); }
       if (node.hasKind(blockQuoteKind)) { return new BlockQuote(node); }
       if (node.hasKind(listKind)) { return new ListBlock(node); }
+      if (node.hasKind(tableKind)) { return new Table(node); }
       new BlankLine(node)
     }
 
@@ -211,7 +243,13 @@ The typed view of an inline node.
       if (node.hasKind(strongKind)) { return new Strong(node); }
       if (node.hasKind(linkKind)) { return new Link(node); }
       if (node.hasKind(imageKind)) { return new Image(node); }
-      if (node.hasKind(autolinkKind)) { return new Autolink(node); }
+      if (node.hasKind(strikethroughKind)) { return new Strikethrough(node); }
+      if (
+        node.hasKind(autolinkKind) || node.hasKind(urlAutolinkKind) || node.hasKind(wwwAutolinkKind) ||
+        node.hasKind(emailAutolinkKind)
+      ) {
+        return new Autolink(node);
+      }
       if (node.hasKind(hardBreakKind)) { return new HardBreak(node); }
       if (node.hasKind(characterReferenceKind)) { return new CharacterReference(node); }
       new Text(node)
@@ -407,13 +445,17 @@ The text without markup, such as `Usage`.
       public get text(): String { plainTextOf(children) }
 
 A new document with this heading's text replaced by `text`, escaped
-so it reads as plain text. Only the heading's content changes; its
+so it reads as plain text (though with GFM's extended autolinks on, a
+URL in it still links, as GitHub shows it). Only the heading's content changes; its
 markers, closing sequence, and whitespace stay as written. Line breaks
 in `text` become spaces, so a setext heading becomes one line.
 
       public withText(text: String): MarkdownDocument {
         let content = contentOf(node);
-        let newContent = inlineContentGreen(escapeInline(text));
+        let extensions = inlineExtensionsOf(node);
+        let newContent = inlineContentGreen(
+          escapeInline(text, extensions.strikethrough, false), extensions, false,
+        );
         let kids = node.green.children.toListBuilder();
         kids.set(content.index, newContent);
         if (newContent.width > 0) {
@@ -863,6 +905,42 @@ The number of an ordered item, or null.
         }
         value
       }
+
+The item as a GFM task list item, if it starts with `[ ]`, `[x]`, or
+`[X]`, or null.
+
+      public get task(): TaskListItem? {
+        if (node.childOfKind(taskMarkerKind) == null) { null } else { new TaskListItem(node) }
+      }
+    }
+
+A GFM task list item, such as `- [x] Done`: a list item whose
+paragraph starts with a checkbox. It views the same node as its
+`ListItem`.
+
+    export class TaskListItem {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get item(): ListItem { new ListItem(node) }
+
+The checkbox as written: `[ ]`, `[x]`, or `[X]`.
+
+      public get marker(): String { node.childOfKind(taskMarkerKind)?.asWritten ?? "" }
+
+      public get checked(): Boolean { marker != "[ ]" }
+
+A new document with the box checked (`[x]`) or not (`[ ]`), changing
+only the marker. An `[X]` stays as written if `checked`.
+
+      public withChecked(checked: Boolean): MarkdownDocument {
+        if (checked == this.checked) { return new MarkdownDocument(node.root); }
+        let marker = node.childOfKind(taskMarkerKind) as RedToken orelse panic();
+        new MarkdownDocument(
+          marker.replaceWith(new GreenToken(taskMarkerKind, if (checked) { "[x]" } else { "[ ]" })),
+        )
+      }
     }
 
 One or more blank lines' worth: a line of only spaces and tabs.
@@ -872,6 +950,128 @@ One or more blank lines' worth: a line of only spaces and tabs.
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
+    }
+
+### GFM tables
+
+A table: a header row, a delimiter row such as `| --- | :-: |`, and
+rows.
+
+    export class Table extends BlockChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+      public get header(): TableRow { new TableRow(node.childOfKind(tableHeaderRowKind) as RedNode orelse panic()) }
+
+The rows after the delimiter row, each with the cells as written, more
+or fewer than the header's.
+
+      public get rows(): List<TableRow> {
+        let result = new ListBuilder<TableRow>();
+        let nodes = node.childNodes;
+        for (var i = 0; i < nodes.length; i += 1) {
+          if (nodes[i].hasKind(tableRowKind)) { result.add(new TableRow(nodes[i])); }
+        }
+        result.toList()
+      }
+
+The number of columns: the header's cells.
+
+      public get columns(): Int { alignmentsOf(node).length }
+
+Each column's alignment, from the delimiter row: `"left"` for `:--`,
+`"right"` for `--:`, `"center"` for `:-:`, or `"none"`.
+
+      public get alignments(): List<String> { alignmentsOf(node) }
+    }
+
+    let alignmentsOf(table: RedNode): List<String> {
+      let result = new ListBuilder<String>();
+      let row = table.childOfKind(tableDelimiterRowKind) as RedNode orelse panic();
+      let kids = row.green.children;
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        if (kid is GreenToken) {
+          if (kid.kind.id == tableDelimiterKind.id) {
+            let marker = new SourceText(kid.text);
+            let left = marker.codeAt(0) == char':';
+            let right = marker.codeAt(marker.length - 1) == char':';
+            result.add(
+              if (left && right) { "center" } else if (left) { "left" } else if (right) { "right" } else { "none" },
+            );
+          }
+        }
+      }
+      result.toList()
+    }
+
+A row of a table, the header or another.
+
+    export class TableRow {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get isHeader(): Boolean { node.hasKind(tableHeaderRowKind) }
+
+The cells as written. GFM renders as many as the header has, filling
+in empty ones.
+
+      public get cells(): List<TableCell> {
+        let result = new ListBuilder<TableCell>();
+        let nodes = node.childNodes;
+        for (var i = 0; i < nodes.length; i += 1) { result.add(new TableCell(nodes[i])); }
+        result.toList()
+      }
+    }
+
+A table cell: inlines between pipes, without the whitespace around
+them.
+
+    export class TableCell {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get children(): List<ParagraphChild> { paragraphChildrenOf(contentOf(node)) }
+      public get text(): String { plainTextOf(children) }
+
+Which column it's in, from 0.
+
+      public get column(): Int {
+        var column = 0;
+        let row = node.parent as RedNode orelse panic();
+        let kids = row.green.children;
+        for (var i = 0; i < node.index; i += 1) {
+          if (kids[i].kind.id == tableCellKind.id) { column += 1; }
+        }
+        column
+      }
+
+Its column's alignment, as `Table.alignments` gives it, or `"none"`
+for a cell past the header's.
+
+      public get alignment(): String {
+        let table = (node.parent as RedNode orelse panic()).parent as RedNode orelse panic();
+        let alignments = alignmentsOf(table);
+        let i = column;
+        if (i < alignments.length) { alignments[i] } else { "none" }
+      }
+
+A new document with this cell's text replaced by `text`, escaped so it
+reads as plain text, `|` included, as for `Heading.withText`. Only the
+cell's content changes; its whitespace and pipes stay as written.
+
+      public withText(text: String): MarkdownDocument {
+        let content = contentOf(node);
+        let extensions = inlineExtensionsOf(node);
+        let newContent = inlineContentGreen(
+          escapeInline(text, extensions.strikethrough, true), extensions, true,
+        );
+        new MarkdownDocument(content.replaceWith(newContent))
+      }
     }
 
 ## Inlines
@@ -978,6 +1178,21 @@ Emphasis, such as `*word*` or `_word_`.
 `*` or `_`.
 
       public get marker(): String { node.childOfKind(emphasisMarkerKind)?.asWritten ?? "" }
+    }
+
+GFM strikethrough, such as `~~word~~` or `~word~`.
+
+    export class Strikethrough extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get children(): List<ParagraphChild> { paragraphChildrenOf(node) }
+      public get text(): String { plainTextOf(children) }
+
+`~~` or `~`.
+
+      public get marker(): String { node.childOfKind(strikethroughMarkerKind)?.asWritten ?? "" }
     }
 
 Strong emphasis, such as `**word**` or `__word__`.
@@ -1152,7 +1367,9 @@ document with its label.
       definitionOf(node, definitions)?.title
     }
 
-An autolink, such as `<https://example.com>` or `<me@example.com>`.
+An autolink, such as `<https://example.com>` or `<me@example.com>`,
+or, with GFM's extended autolinks, written without angle brackets:
+`https://example.com`, `www.example.com`, or `me@example.com`.
 
     export class Autolink extends ParagraphChild & LinkTextChild {
       public node: RedNode;
@@ -1160,22 +1377,66 @@ An autolink, such as `<https://example.com>` or `<me@example.com>`.
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
 
-The text between the angle brackets, exactly as written: autolinks
-have no escapes or references.
+`"angle"` for `<…>`, or for GFM's extended autolinks, `"url"`,
+`"www"`, or `"email"`.
 
-      public get text(): String { node.childOfKind(autolinkTextKind)?.asWritten ?? "" }
+      public get style(): String {
+        if (node.hasKind(urlAutolinkKind)) {
+          "url"
+        } else if (node.hasKind(wwwAutolinkKind)) {
+          "www"
+        } else if (node.hasKind(emailAutolinkKind)) {
+          "email"
+        } else {
+          "angle"
+        }
+      }
+
+The link's text: what's between the angle brackets, exactly as
+written, since autolinks have no escapes or references; or an extended
+autolink's text, with any backslash escapes in an email address
+resolved, as GFM reads it.
+
+      public get text(): String {
+        let out = new StringBuilder();
+        let kids = node.green.children;
+        for (var i = 0; i < kids.length; i += 1) {
+          let kid = kids[i];
+          if (kid is GreenToken) {
+            if (kid.kind.id == autolinkTextKind.id) {
+              out.append(kid.text);
+            } else if (kid.kind.id == escapeKind.id) {
+              out.append(kid.text.slice(kid.text.next(String.begin), kid.text.end));
+            }
+          }
+        }
+        out.toString()
+      }
 
 Whether it's an email address rather than a URI.
 
       public get isEmail(): Boolean {
+        if (node.hasKind(emailAutolinkKind)) { return true; }
+        if (!node.hasKind(autolinkKind)) { return false; }
         let source = new SourceText("${text}>");
         uriAutolinkEnd(source, 0, source.length) < 0
       }
 
-Where it links: the text, with `mailto:` before an email address.
+Where it links: the text, with `mailto:` before an email address
+(unless written with `mailto:` or `xmpp:`, the only way an extended
+one can hold a `:`), and `http://` before a `www.` domain.
 
       public get destination(): LinkTarget {
-        new LinkTarget(if (isEmail) { "mailto:${text}" } else { text })
+        let written = text;
+        if (node.hasKind(wwwAutolinkKind)) { return new LinkTarget("http://${written}"); }
+        if (node.hasKind(emailAutolinkKind)) {
+          let source = new SourceText(written);
+          for (var i = 0; i < source.length; i += 1) {
+            if (source.codeAt(i) == char':') { return new LinkTarget(written); }
+          }
+          return new LinkTarget("mailto:${written}");
+        }
+        new LinkTarget(if (isEmail) { "mailto:${written}" } else { written })
       }
     }
 
@@ -1215,8 +1476,10 @@ What it stands for, such as `&` for `&amp;`.
 otherwise start markup, and line breaks as spaces. Leading and
 trailing spaces and tabs are trimmed, as a heading's are. A trailing
 run of `#` gets a backslash, so it can't read as a closing sequence.
+With `tilde`, so does each `~`, for strikethrough, and with `pipe`,
+each `|`, for a table cell.
 
-    let escapeInline(text: String): String {
+    let escapeInline(text: String, tilde: Boolean, pipe: Boolean): String {
       let source = new SourceText(text);
       var start = 0;
       while (start < source.length && isSpaceOrTab(source.codeAt(start))) { start += 1; }
@@ -1232,7 +1495,8 @@ run of `#` gets a backslash, so it can't read as a closing sequence.
         if (!isBreak) {
           if (
             c == char'\\' || c == char'`' || c == char'*' || c == char'_' || c == char'[' ||
-            c == char']' || c == char'<' || c == char'&' || (c == char'#' && i == hashes)
+            c == char']' || c == char'<' || c == char'&' || (c == char'#' && i == hashes) ||
+            (c == char'~' && tilde) || (c == char'|' && pipe)
           ) {
             out.append("\\");
           }
@@ -1400,4 +1664,71 @@ Edits change only their own span: the text before and after it stays.
       let setext = doc.headings[1].withText("One line");
       assert(setext.asWritten == "- # Old\n- item\n\nOne line\n===\n") { setext.asWritten };
       assert(setext.headings[1].text == "One line") { setext.headings[1].text };
+    }
+
+### GFM views and edits
+
+    test("GFM views: tables, task list items, strikethrough, and autolinks") {
+      let text = "| a | b \\| c | `x\\|y` |\n|:-|-:|:-:|\n| ~~s~~ | www.ex.com | me@x.io |\n| only\n\n- [ ] todo\n- [X] done\n";
+      let doc = MarkdownParser.gfm.parse(text);
+      assert(doc.asWritten == text) { doc.asWritten };
+      let table = doc.tables[0];
+      assert(table.columns == 3) { table.columns.toString() };
+      let alignments = table.alignments.join(" ") { (s: String): String => s };
+      assert(alignments == "left right center") { alignments };
+      let header = table.header;
+      assert(header.isHeader && header.cells[1].text == "b | c") { header.cells[1].text };
+      assert(header.cells[2].text == "x|y") { header.cells[2].text };
+      let rows = table.rows;
+      assert(rows.length == 2 && !rows[0].isHeader) { rows.length.toString() };
+      let cells = rows[0].cells;
+      let strike = cells[0].children[0] as Strikethrough orelse panic();
+      assert(strike.marker == "~~" && strike.text == "s") { strike.text };
+      let www = cells[1].children[0] as Autolink orelse panic();
+      assert(www.style == "www" && www.destination.url == "http://www.ex.com") { www.destination.url };
+      let email = cells[2].children[0] as Autolink orelse panic();
+      assert(email.style == "email" && email.isEmail && email.destination.url == "mailto:me@x.io") { email.text };
+      assert(cells[2].column == 2 && cells[2].alignment == "center") { cells[2].alignment };
+      assert(rows[1].cells.length == 1) { "short rows keep the cells written" };
+      let tasks = doc.taskListItems;
+      assert(tasks.length == 2 && !tasks[0].checked && tasks[1].checked) { tasks.length.toString() };
+      assert(tasks[1].marker == "[X]" && tasks[0].item.marker == "-") { tasks[1].marker };
+      let paragraph = tasks[0].item.children[0] as Paragraph orelse panic();
+      assert(paragraph.text == "todo") { paragraph.text };
+      let url = (MarkdownParser.gfm.parse("See https://x.test/a.").children[0] as Paragraph orelse panic()).children[1] as Autolink orelse panic();
+      assert(url.style == "url" && url.text == "https://x.test/a") { url.text };
+      let angle = (parseMarkdown("<https://x.test>").children[0] as Paragraph orelse panic()).children[0] as Autolink orelse panic();
+      assert(angle.style == "angle") { angle.style };
+    }
+
+    test("TableCell.withText and TaskListItem.withChecked change only their span") {
+      let text = "Intro\n\n> | a | b |\n> |---|---|\n> | old | x |\n\n- [ ] one\n- [X] two\n";
+      let doc = MarkdownParser.gfm.parse(text);
+      let cell = doc.tables[0].rows[0].cells[0];
+      let edited = cell.withText("new | ~~not~~");
+      let expected = "Intro\n\n> | a | b |\n> |---|---|\n> | new \\| \\~\\~not\\~\\~ | x |\n\n- [ ] one\n- [X] two\n";
+      assert(edited.asWritten == expected) { edited.asWritten };
+      let again = edited.tables[0].rows[0].cells;
+      assert(again.length == 2 && again[0].text == "new | ~~not~~") { again[0].text };
+      let reparsed = MarkdownParser.gfm.parse(edited.asWritten);
+      assert(reparsed.tables[0].rows[0].cells[0].text == "new | ~~not~~") { "reparses the same" };
+      let checked = doc.taskListItems[0].withChecked(true);
+      assert(checked.asWritten == "Intro\n\n> | a | b |\n> |---|---|\n> | old | x |\n\n- [x] one\n- [X] two\n") { checked.asWritten };
+      let same = doc.taskListItems[1].withChecked(true);
+      assert(same.asWritten == text) { "already checked: [X] stays" };
+      let unchecked = doc.taskListItems[1].withChecked(false);
+      assert(!unchecked.taskListItems[1].checked) { unchecked.asWritten };
+      assert(doc.asWritten == text) { "the old document is unchanged" };
+    }
+
+Edits reparse inlines as the document was parsed: `~` is escaped only
+where strikethrough is on, and a URL links where extended autolinks
+are.
+
+    test("withText follows the document's extensions") {
+      let gfm = MarkdownParser.gfm.parse("# T\n").headings[0].withText("a~b~ www.x.test");
+      assert(gfm.asWritten == "# a\\~b\\~ www.x.test\n") { gfm.asWritten };
+      assert(gfm.toHtml() == "<h1>a~b~ <a href=\"http://www.x.test\">www.x.test</a></h1>\n") { gfm.toHtml() };
+      let plain = parseMarkdown("# T\n").headings[0].withText("a~b~ www.x.test");
+      assert(plain.asWritten == "# a~b~ www.x.test\n") { plain.asWritten };
     }

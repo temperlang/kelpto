@@ -44,6 +44,7 @@ Block types, as plain numbers, since they're internal.
     let typeHtmlBlock = 10;
     let typeDefinition = 11;
     let typeBlankLine = 12;
+    let typeTable = 13;
 
 A block while parsing: mutable, with what the algorithm needs. Blank
 lines and link reference definitions are kept as blocks too, so they
@@ -83,6 +84,17 @@ Code blocks, HTML blocks, and headings:
       public var fenceOffset: Int = 0;
       public var closedByFence: Boolean = false;
       public var htmlType: Int = 0;
+
+Tables, and the paragraphs that might become them. A paragraph whose
+last line didn't match a delimiter row's columns never becomes a
+table, as in cmark-gfm. A table counts its columns, rows, and the cells
+written in them (up to its columns), to stop adding rows once too many
+cells would be filled in empty (see `maxFilledCells`).
+
+      public var tableVisited: Boolean = false;
+      public var tableColumns: Int = 0;
+      public var tableRows: Int = 0;
+      public var tableCells: Int = 0;
 
       public constructor(id: Int, type: Int, parent: BlockData?, firstLine: Int) {
         this.id = id;
@@ -178,6 +190,7 @@ a line; text after the last one is a last line without one.
       public source: SourceText;
       public lines: List<LineData>;
       public document: BlockData;
+      private extensions: Extensions;
       private var nextId: Int = 1;
       private var current: BlockData;
 
@@ -200,8 +213,9 @@ prefix matched or opened.
 
       private var containerOffset: Int = 0;
 
-      public constructor(source: SourceText) {
+      public constructor(source: SourceText, extensions: Extensions) {
         this.source = source;
+        this.extensions = extensions;
         this.lines = splitLines(source);
         let document = new BlockData(0, typeDocument, null, 0);
         this.document = document;
@@ -399,6 +413,9 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
         if (type == typeParagraph) {
           return if (blank) { 0 } else { 1 };
         }
+        if (type == typeTable) {
+          return if (!blank && continuesTable(block)) { 1 } else { 0 };
+        }
         if (
           type == typeAtxHeading || type == typeSetextHeading || type == typeThematicBreak ||
           type == typeBlankLine || type == typeDefinition
@@ -489,6 +506,27 @@ Opens the blocks that start on this line, giving the innermost.
           } else if (indented && !maybeLazy && !blank) {
             advanceOffset(4, true);
             container = addChild(container, typeIndentedCode);
+          } else if (
+            !indented && containerType == typeParagraph && extensions.tables &&
+            !container.tableVisited && toTable(container)
+          ) {
+            // The paragraph's last line is the header row; this line,
+            // the delimiter row, joins it below.
+          } else if (
+            !indented && containerType == typeListItem && extensions.taskListItems &&
+            container.firstLine == lineNumber && !container.hasRealChild &&
+            taskMarkerEnd(source, firstNonspace, lineEnd) > 0
+          ) {
+
+A task list item's marker. The rest of the line is the item's
+paragraph, whatever it holds, as in cmark-gfm.
+
+            let markerEnd = firstNonspace + 3;
+            prefixToken(container, whitespaceKind, offset, firstNonspace);
+            prefixToken(container, taskMarkerKind, firstNonspace, markerEnd);
+            advanceOffset(markerEnd - offset, false);
+            containerOffset = offset;
+            break;
           } else {
             break;
           }
@@ -497,6 +535,48 @@ Opens the blocks that start on this line, giving the innermost.
           maybeLazy = false;
         }
         container
+      }
+
+If this line is a delimiter row with as many columns as the cells of
+the paragraph's last line, that line becomes a table's header row, and
+the lines before it stay a paragraph. Gives whether it did.
+
+      private toTable(paragraph: BlockData): Boolean {
+        let columns = delimiterRowColumns(source, firstNonspace, lineEnd);
+        if (columns == 0) { return false; }
+        let headerLine = paragraph.endLine - 1;
+        let header = lines[headerLine];
+        let cells = tableRowCells(source, skipBlanks(source, header.leafStart, header.contentEnd), header.contentEnd);
+        if (cells != columns) {
+          paragraph.tableVisited = true;
+          return false;
+        }
+        if (paragraph.firstLine < headerLine) {
+          let parent = paragraph.parent as BlockData orelse panic();
+          let before = new BlockData(nextId, typeParagraph, parent, paragraph.firstLine);
+          nextId += 1;
+          before.open = false;
+          before.endLine = headerLine;
+          for (var n = before.firstLine; n < headerLine; n += 1) {
+            lines[n].leaf = before;
+          }
+          parent.children.add(before, indexOfChild(parent, paragraph));
+          if (!splitDefinitions(before)) { removeChild(before); }
+        }
+        paragraph.blockType = typeTable;
+        paragraph.firstLine = headerLine;
+        paragraph.tableColumns = columns;
+        paragraph.tableRows = 1;
+        paragraph.tableCells = columns;
+        true
+      }
+
+Whether this line is another row of `table`: a row with cells, unless
+the table has filled in too many empty cells already.
+
+      private continuesTable(table: BlockData): Boolean {
+        let cells = tableRowCells(source, firstNonspace, lineEnd);
+        cells > 0 && table.tableColumns * table.tableRows - table.tableCells <= maxFilledCells
       }
 
 A paragraph becomes a setext heading, unless it was all link
@@ -607,6 +687,13 @@ goes to the container itself.
             container.children.add(blankLine);
             addLine(blankLine);
           }
+        } else if (type == typeTable) {
+          if (lineNumber > container.firstLine + 1) {
+            let cells = tableRowCells(source, firstNonspace, lineEnd);
+            container.tableRows += 1;
+            container.tableCells += if (cells < container.tableColumns) { cells } else { container.tableColumns };
+          }
+          addLine(container);
         } else if (acceptsLines(type)) {
           addLine(container);
         } else {
@@ -775,7 +862,7 @@ Where the definition at `at` ends, or -1.
 
     let acceptsLines(type: Int): Boolean {
       type == typeParagraph || type == typeAtxHeading || type == typeSetextHeading ||
-        type == typeFencedCode || type == typeIndentedCode
+        type == typeFencedCode || type == typeIndentedCode || type == typeTable
     }
 
     let isBlankText(source: SourceText, start: Int, end: Int): Boolean {
@@ -1102,6 +1189,94 @@ ordered, must start at 1.
       if (i < end && !isSpaceOrTab(source.codeAt(i))) { return 0; }
       if (interruptsParagraph && skipBlanks(source, i, end) == end) { return 0; }
       i
+    }
+
+### GFM: tables and task list items
+
+How many cells a table needs filled in empty, for rows shorter than its
+header, before it takes no more rows, as cmark-gfm limits it, so a wide
+header and many short rows can't make output quadratic in the input.
+
+    let maxFilledCells = 0x80000;
+
+Spaces, tabs, vertical tabs, and form feeds, which cmark-gfm's table
+scanners skip.
+
+    let isTableSpace(c: Int): Boolean {
+      c == char' ' || c == char'\t' || c == 0x0B || c == 0x0C
+    }
+
+    let skipTableSpaces(source: SourceText, from: Int, end: Int): Int {
+      var i = from;
+      while (i < end && isTableSpace(source.codeAt(i))) { i += 1; }
+      i
+    }
+
+The columns of a delimiter row from `at` to `end`, or 0 if it isn't
+one: delimiters of `-`, each with an optional `:` before and after,
+between `|`, with spaces around, and optional `|` at each end.
+
+    let delimiterRowColumns(source: SourceText, at: Int, end: Int): Int {
+      var i = at;
+      var count = 0;
+      if (codeIn(source, i, end) == char'|') { i += 1; }
+      while (true) {
+        i = skipTableSpaces(source, i, end);
+        if (codeIn(source, i, end) == char':') { i += 1; }
+        if (codeIn(source, i, end) != char'-') { return 0; }
+        while (codeIn(source, i, end) == char'-') { i += 1; }
+        if (codeIn(source, i, end) == char':') { i += 1; }
+        i = skipTableSpaces(source, i, end);
+        count += 1;
+        if (i >= end) { return count; }
+        if (source.codeAt(i) != char'|') { return 0; }
+        i += 1;
+        if (skipTableSpaces(source, i, end) >= end) { return count; }
+      }
+      0
+    }
+
+The first `|` from `from` not right after a backslash, or `end`. A
+backslash before `|` keeps it in the cell, as in cmark-gfm, even if
+that backslash is escaped itself.
+
+    let nextPipe(source: SourceText, from: Int, end: Int): Int {
+      for (var i = from; i < end; i += 1) {
+        if (source.codeAt(i) == char'|' && (i == 0 || source.codeAt(i - 1) != char'\\')) { return i; }
+      }
+      end
+    }
+
+The cells of a table row from `at`, its first nonspace, to `end`, as
+cmark-gfm counts them, or 0 if it isn't a row: cells between `|`,
+empty ones too, but after the last `|`, only if it holds more than
+spaces. At most 65,535.
+
+    let tableRowCells(source: SourceText, at: Int, end: Int): Int {
+      var count = 0;
+      var i = at;
+      if (codeIn(source, i, end) == char'|') { i += 1; }
+      while (true) {
+        let pipe = nextPipe(source, i, end);
+        if (pipe >= end) {
+          if (skipTableSpaces(source, i, end) < end) { count += 1; }
+          break;
+        }
+        count += 1;
+        i = pipe + 1;
+      }
+      if (count > 65535) { 0 } else { count }
+    }
+
+The end of a task list item's marker at `at`, or 0: `[`, a space, `x`,
+or `X`, and `]`, then a space or tab before anything else.
+
+    let taskMarkerEnd(source: SourceText, at: Int, end: Int): Int {
+      if (at + 3 >= end || source.codeAt(at) != char'[' || source.codeAt(at + 2) != char']') { return 0; }
+      let mark = source.codeAt(at + 1);
+      if (mark != char' ' && mark != char'x' && mark != char'X') { return 0; }
+      if (!isTableSpace(source.codeAt(at + 3))) { return 0; }
+      at + 3
     }
 
 ### HTML blocks

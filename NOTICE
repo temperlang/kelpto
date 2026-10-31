@@ -55,6 +55,62 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==============================================================================
+cmark-gfm (GitHub Flavored Markdown)
+==============================================================================
+
+Kelpto's tests include examples extracted from cmark-gfm
+(https://github.com/github/cmark-gfm), GitHub's reference implementation
+of GitHub Flavored Markdown, at tag 0.29.0.gfm.13 (commit
+587a12bb54d95ac37241377e6ddc93ea0e45439b): test/spec.txt, the GFM spec
+(SHA-256 7d8e5814befec287ac116786d81ff14e0adc9b13295b4494649e995408fd871c),
+and test/extensions.txt, cmark-gfm's tests of the extensions, by Yuki
+Izumi (SHA-256
+a2a45e98be9fca95f564f927265a0f63beea6cae5369d1cf4bde44caa51b2a3a),
+without its footnote examples: each example's Markdown and expected HTML,
+its section, and the extension it needs. They are in tests/gfm/spec.json
+and tests/gfm/examples.temper.md, a test-only library kept apart from
+Kelpto's own code, which nothing imports and which isn't published.
+scripts/gfm_spec.py extracts them the way cmark-gfm's test tools
+(test/spec_tests.py) read them.
+
+spec.txt and extensions.txt are released under the Creative Commons
+CC-BY-SA 4.0 license <https://creativecommons.org/licenses/by-sa/4.0/>
+(spec.txt is based on the CommonMark spec, Copyright (C) 2014-16 John
+MacFarlane), so the extracted examples, adapted from them, are also
+under CC-BY-SA 4.0, not under Kelpto's Apache-2.0 OR MIT license.
+
+kelpto-md's GFM extensions follow cmark-gfm's behavior, as its source
+describes it; no code is copied. cmark-gfm's code and test software are
+under the following license:
+
+Copyright (c) 2014, John MacFarlane
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+==============================================================================
 Unicode Character Database
 ==============================================================================
 

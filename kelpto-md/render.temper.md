@@ -40,6 +40,65 @@ The default: raw HTML as text, so `<script>` shows as `&lt;script&gt;`.
       public renderRawHtml(rawHtml: RawHtmlContent): String { rawHtml.html }
     }
 
+GFM's filter for disallowed raw HTML, over another renderer: a `<` that
+starts a `title`, `textarea`, `style`, `xmp`, `iframe`, `noembed`,
+`noframes`, `script`, or `plaintext` tag, opening or closing, becomes
+`&lt;`, as cmark-gfm's tagfilter does: at the start of inline raw HTML,
+and anywhere in an HTML block.
+
+    class FilteredRawHtml extends RawHtmlRenderer {
+      private inner: RawHtmlRenderer;
+      public constructor(inner: RawHtmlRenderer) { this.inner = inner; }
+      public renderRawHtml(rawHtml: RawHtmlContent): String {
+        filterDisallowedTags(inner.renderRawHtml(rawHtml), rawHtml.isBlock)
+      }
+    }
+
+    let filterDisallowedTags(html: String, everywhere: Boolean): String {
+      let source = new SourceText(html);
+      var changed = false;
+      for (var i = 0; i < source.length; i += 1) {
+        if (source.codeAt(i) == char'<' && isDisallowedTag(source, i)) { changed = true; }
+        if (!everywhere) { break; }
+      }
+      if (!changed) { return html; }
+      let out = new StringBuilder();
+      for (var i = 0; i < source.length; i += 1) {
+        if (source.codeAt(i) == char'<' && (everywhere || i == 0) && isDisallowedTag(source, i)) {
+          out.append("&lt;");
+        } else {
+          out.append(source.slice(i, i + 1));
+        }
+      }
+      out.toString()
+    }
+
+    let disallowedTags = [
+      "title", "textarea", "style", "xmp", "iframe", "noembed", "noframes", "script", "plaintext",
+    ];
+
+Whether the `<` at `at` starts one: `<` or `</`, the name in any case,
+then whitespace, `>`, or `/>`.
+
+    let isDisallowedTag(source: SourceText, at: Int): Boolean {
+      let nameStart = if (source.codeAt(at + 1) == char'/') { at + 2 } else { at + 1 };
+      for (var k = 0; k < disallowedTags.length; k += 1) {
+        let name = disallowedTags[k];
+        let length = name.countBetween(String.begin, name.end);
+        let after = nameStart + length;
+        if (after < source.length && asciiLowercase(source.slice(nameStart, after)) == name) {
+          let c = source.codeAt(after);
+          if (
+            c == char' ' || c == char'\t' || c == char'\n' || c == char'\r' || c == char'>' ||
+            (c == char'/' && source.codeAt(after + 1) == char'>')
+          ) {
+            return true;
+          }
+        }
+      }
+      false
+    }
+
 ## The renderer
 
 CommonMark's HTML, as its reference implementation lays it out: each
@@ -70,6 +129,21 @@ A renderer using `renderer` for raw HTML.
 
       public withRawHtmlRenderer(renderer: RawHtmlRenderer): MarkdownRenderer {
         new MarkdownRenderer(renderer)
+      }
+
+A renderer that also applies GFM's filter for disallowed raw HTML to
+what this one's `RawHtmlRenderer` gives: `<script>`, `<style>`,
+`<iframe>`, `<textarea>`, `<title>`, `<xmp>`, `<noembed>`,
+`<noframes>`, and `<plaintext>` tags show as text, as GitHub's do.
+Call it after `withRawHtmlTrusted()`, as `new
+MarkdownRenderer().withRawHtmlTrusted().withDisallowedRawHtmlFiltered()`,
+for GFM's own output. **It isn't a sanitizer:** it leaves event
+handlers (`<img src=x onerror=…>`), `javascript:` links, and every other
+tag, so trust the Markdown as for `withRawHtmlTrusted()`, or use the
+`kelpto` library's `renderSafe`.
+
+      public withDisallowedRawHtmlFiltered(): MarkdownRenderer {
+        new MarkdownRenderer(new FilteredRawHtml(rawHtmlRenderer))
       }
 
       public render(doc: MarkdownDocument): String {
@@ -148,15 +222,57 @@ A renderer using `renderer` for raw HTML.
             for (var i = 0; i < items.length; i += 1) {
               out.line();
               out.append("<li>");
+              let task = items[i].task;
+              if (task != null) {
+                out.append(
+                  if (task.checked) {
+                    "<input type=\"checkbox\" checked=\"\" disabled=\"\" /> "
+                  } else {
+                    "<input type=\"checkbox\" disabled=\"\" /> "
+                  },
+                );
+              }
               renderBlocks(items[i].children, itemsTight, out);
               out.append("</li>\n");
             }
             out.line();
             out.append("</${tag}>\n");
           };
+          is Table -> renderTable(block, out);
           is LinkReferenceDefinition -> do {};
           is BlankLine -> do {};
         }
+      }
+
+A GFM table, as cmark-gfm writes it: `<thead>` with the header row,
+then `<tbody>` with the rest, if any, each row with as many cells as
+the header, filled in empty, and `align` on cells in aligned columns.
+
+      private renderTable(table: Table, out: HtmlOut): Void {
+        let alignments = table.alignments;
+        out.line();
+        out.append("<table>\n<thead>\n");
+        renderRow(table.header, "th", alignments, out);
+        out.append("</thead>\n");
+        let rows = table.rows;
+        if (!rows.isEmpty) {
+          out.append("<tbody>\n");
+          for (var i = 0; i < rows.length; i += 1) { renderRow(rows[i], "td", alignments, out); }
+          out.append("</tbody>\n");
+        }
+        out.append("</table>\n");
+      }
+
+      private renderRow(row: TableRow, tag: String, alignments: List<String>, out: HtmlOut): Void {
+        let cells = row.cells;
+        out.append("<tr>\n");
+        for (var i = 0; i < alignments.length; i += 1) {
+          let alignment = alignments[i];
+          out.append(if (alignment == "none") { "<${tag}>" } else { "<${tag} align=\"${alignment}\">" });
+          if (i < cells.length) { renderInlines(cells[i].children, out); }
+          out.append("</${tag}>\n");
+        }
+        out.append("</tr>\n");
       }
 
       private renderInlines(inlines: List<ParagraphChild>, out: HtmlOut): Void {
@@ -181,6 +297,11 @@ A renderer using `renderer` for raw HTML.
             out.append("<strong>");
             renderInlines(inline.children, out);
             out.append("</strong>");
+          };
+          is Strikethrough -> do {
+            out.append("<del>");
+            renderInlines(inline.children, out);
+            out.append("</del>");
           };
           is Autolink -> out.append(
             "<a href=\"${escapeHref(inline.destination.url)}\">${escapeHtml(inline.text)}</a>",
@@ -252,6 +373,7 @@ spaces, as cmark writes it.
           is Autolink -> out.append(inline.text);
           is Emphasis -> addAltText(inline.children, out);
           is Strong -> addAltText(inline.children, out);
+          is Strikethrough -> addAltText(inline.children, out);
           is Image -> addAltText(inline.children, out);
           is Link -> addAltText(paragraphChildrenOf(inline.node), out);
         }

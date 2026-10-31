@@ -6,8 +6,10 @@ write it back with everything else exactly as it was. Render it safely,
 with raw HTML parsed as browsers parse it and links checked by Hrefine.
 
 **Status** (2026-10-31): all of CommonMark parses losslessly and
-renders as every one of the spec's 652 examples expects; the HTML side
-is still a small skeleton.
+renders as every one of the spec's 652 examples expects, and so do
+GitHub Flavored Markdown's extensions (tables, task list items,
+strikethrough, extended autolinks, and the disallowed raw HTML filter),
+as GFM's examples expect; the HTML side is still a small skeleton.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 
@@ -35,6 +37,10 @@ doc.headings[0].text;                       // "Old title"
 doc.headings[0].withText("New title").asWritten; // "# New title\n\nSee <b>this</b>.\n…", the rest untouched
 doc.toHtml();                               // "…<p>See &lt;b&gt;this&lt;/b&gt;.</p>…", raw HTML escaped
 new MarkdownRenderer().withRawHtmlTrusted().render(doc); // "…<p>See <b>this</b>.</p>…"
+
+let gfm = MarkdownParser.gfm.parse("| a | b |\n|---|--:|\n| ~~x~~ | www.example.com |\n\n- [ ] todo\n");
+gfm.tables[0].rows[0].cells[1].alignment;   // "right"
+gfm.taskListItems[0].withChecked(true).asWritten; // "…- [x] todo\n"
 ```
 
 **HTML alone:**
@@ -65,6 +71,10 @@ doc = parse_markdown("# Old title\n\nSee <b>this</b>.\n\n```py\nx = 1\n```\n")
 doc.headings[0].with_text("New title").as_written
 doc.code_blocks[0].with_info("python").as_written  # "…```python\n…"
 doc.to_html()
+
+from kelpto_md import MarkdownParser
+gfm = MarkdownParser.gfm.parse("| a | b |\n|---|--:|\n| x | www.example.com |\n")
+gfm.tables[0].rows[0].cells[0].with_text("y").as_written
 
 a = tokenize_html('<a href="/old" class=x>Go</a>').start_tags[0]
 [(x.name, x.value) for x in a.attributes]          # [("href", "/old"), ("class", "x")]
@@ -99,10 +109,11 @@ renderSafe(both).html;
 ## Tests and licensing
 
 Each library has its own tests. kelpto-md's tests against CommonMark's
-spec examples are in [tests/commonmark](tests/commonmark/README.md), a
-test-only library, since the examples are CC-BY-SA 4.0; see
-[NOTICE](NOTICE). `scripts/commonmark_spec.py` (run with `uv run`)
-regenerates them.
+spec examples are in [tests/commonmark](tests/commonmark/README.md),
+and against GFM's, from cmark-gfm, in [tests/gfm](tests/gfm/README.md):
+test-only libraries, since the examples are CC-BY-SA 4.0; see
+[NOTICE](NOTICE). `scripts/commonmark_spec.py` and
+`scripts/gfm_spec.py` (run with `uv run`) regenerate them.
 
 ## Building
 
@@ -112,4 +123,4 @@ at the top. Libraries import each other by path, as
 
 ## License
 
-Apache-2.0 OR MIT, at your option, as Temper is; see [COPYRIGHT](COPYRIGHT). Third-party material, with its notices, is in [NOTICE](NOTICE). The CommonMark spec examples in [tests/commonmark](tests/commonmark/README.md) stay under CC-BY-SA 4.0, apart from the libraries' code, and aren't published.
+Apache-2.0 OR MIT, at your option, as Temper is; see [COPYRIGHT](COPYRIGHT). Third-party material, with its notices, is in [NOTICE](NOTICE). The CommonMark and GFM examples in [tests/commonmark](tests/commonmark/README.md) and [tests/gfm](tests/gfm/README.md) stay under CC-BY-SA 4.0, apart from the libraries' code, and aren't published.

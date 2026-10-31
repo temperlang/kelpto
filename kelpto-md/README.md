@@ -14,6 +14,15 @@ doc.headings[0].withText("New").asWritten;     // "# New\n\n> See <b>this</b>.\n
 doc.toHtml();                // "<h1>Old</h1>\n<blockquote>\n<p>See &lt;b&gt;…"
                              // "…<li><em>b</em> <a href=\"/old\">home</a></li>…"
 new MarkdownRenderer().withRawHtmlTrusted().render(doc); // "…<p>See <b>this</b>.</p>…"
+
+let gfm = MarkdownParser.gfm.parse("| a | b |\n|:--|--:|\n| ~~x~~ | www.example.com |\n\n- [ ] todo\n");
+let cell = gfm.tables[0].rows[0].cells[1];
+cell.alignment;                  // "right"
+cell.withText("a|b").asWritten;  // "…| ~~x~~ | a\\|b |\n…"
+gfm.taskListItems[0].withChecked(true).asWritten; // "…- [x] todo\n"
+new MarkdownRenderer().withRawHtmlTrusted().withDisallowedRawHtmlFiltered().render(gfm);
+                                 // GFM's own HTML: "<table>\n<thead>…<del>x</del>…"
+MarkdownParser.commonMark.withTables(true).parse("| a |\n| - |\n"); // one extension
 ```
 
 - **All of CommonMark 0.31.2,** by its two-phase algorithm: every
@@ -22,6 +31,14 @@ new MarkdownRenderer().withRawHtmlTrusted().render(doc); // "…<p>See <b>this</
   character references, backslash escapes, and hard and soft line
   breaks). All 652 of the spec's examples pass, and parsing stays
   linear on cmark's pathological inputs.
+- **GitHub Flavored Markdown's extensions,** opt-in, from
+  `MarkdownParser.gfm` or one at a time from `MarkdownParser.commonMark`
+  (`withTables`, `withTaskListItems`, `withStrikethrough`, and
+  `withExtendedAutolinks`): every example in GFM's spec and cmark-gfm's
+  extension tests renders as cmark-gfm renders it, linear on its
+  pathological inputs too. Off, parsing is CommonMark's, at the same
+  cost. GFM's filter for disallowed raw HTML is on rendering:
+  `withDisallowedRawHtmlFiltered()`.
 - **Lossless,** whatever the input: tabs stay tabs (columns are counted
   as the spec says), line endings stay `\n`, `\r\n`, or `\r`, and odd
   input stays as written. Inlines keep their markup too: delimiter
@@ -34,16 +51,22 @@ new MarkdownRenderer().withRawHtmlTrusted().render(doc); // "…<p>See <b>this</
   `HtmlBlock`, `LinkReferenceDefinition`, `BlockQuote`, `ListBlock`,
   and `BlankLine`), `ListChild` (`ListItem` and `BlankLine`), and
   `ParagraphChild` (`Text`, `CodeSpan`, `RawHtml`, `Emphasis`,
-  `Strong`, `Link`, `Image`, `Autolink`, `HardBreak`, and
-  `CharacterReference`), and `LinkTextChild`, all of those but `Link`,
-  since links can't nest. Links know their `style`, `label`,
+  `Strong`, `Strikethrough`, `Link`, `Image`, `Autolink`, `HardBreak`,
+  and `CharacterReference`), and `LinkTextChild`, all of those but
+  `Link`, since links can't nest. GFM's `Table` is a block, with a
+  `header` and `rows` of `TableCell`s, each with its `alignment`;
+  `ListItem.task` gives a `TaskListItem` (`checked`); and `Autolink`'s
+  `style` is `"angle"`, or `"url"`, `"www"`, or `"email"` for extended
+  ones. Table pipes, delimiter rows, `~` runs, and task markers are
+  tokens, so GFM stays lossless too. Links know their `style`, `label`,
   `destination`, and `title`, resolving references through the
   document's definitions; `normalizeLabel` matches labels as the spec
   does, with full Unicode case folding.
 - **Edits** give a new document, changing only the edited span and
   sharing what didn't change: `Heading.withText` and `withLevel`,
-  `CodeBlock.withInfo`, and `withDestination` on
-  `LinkReferenceDefinition`, and on inline `Link` and `Image`.
+  `CodeBlock.withInfo`, `withDestination` on
+  `LinkReferenceDefinition`, and on inline `Link` and `Image`,
+  `TableCell.withText`, and `TaskListItem.withChecked`.
 - **Raw HTML,** inline and in HTML blocks, is found by CommonMark's
   rules and handed to a `RawHtmlHandler` (opaque text by default), and
   rendered by a `RawHtmlRenderer` (escaped by default). The `kelpto`

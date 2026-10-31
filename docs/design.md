@@ -40,7 +40,8 @@ it in use, and the top README shows them alone and together.
   `withLevel`, `CodeBlock.withInfo`, and `withDestination` on
   definitions, inline links, and images; rendering with raw HTML
   escaped unless `withRawHtmlTrusted()`. All 652 of the spec's
-  examples pass, in `tests/commonmark/`.
+  examples pass, in `tests/commonmark/`. GFM's extensions are opt-in
+  (see "kelpto-md's GFM extensions", below).
 - **kelpto-html:** a simplified tokenizer (start tags with attributes,
   end tags, comments, and text), typed views (`StartTag`, `EndTag`,
   `Comment`, `Text`, and `Attribute`), and `Attribute.withValue`.
@@ -109,6 +110,36 @@ and rendering defaults.
   one, and failed searches for closing backticks or HTML ends not
   repeated.
 
+### kelpto-md's GFM extensions
+
+- **Opt-in, by parser:** `MarkdownParser.gfm` has all four syntax
+  extensions, `MarkdownParser.commonMark` none, and `withTables`,
+  `withTaskListItems`, `withStrikethrough`, `withExtendedAutolinks`,
+  and `withRawHtmlHandler` change one, as Hrefine's `UrlPolicy` does,
+  so no named arguments are needed. `parseMarkdown` is `commonMark`.
+  The disallowed raw HTML filter is on rendering,
+  `withDisallowedRawHtmlFiltered()`, wrapping the `RawHtmlRenderer`.
+- **As cmark-gfm 0.29.0.gfm.13 does it,** odd corners included (tables
+  stop filling short rows after 524,288 empty cells, `~` runs read 100
+  at a time, emails found in text after the rest), since GitHub renders
+  by it. All of GFM's spec examples and cmark-gfm's extension tests
+  pass, in `tests/gfm/`, but nine where cmark-gfm's renderer drops a
+  `<strong>` directly inside another. One choice follows the spec
+  instead: task list items work inside block quotes and on a nested
+  item's line, where cmark-gfm, looking from the line's start, misses
+  them.
+- **Lossless:** a table is a leaf block whose lines are row nodes, with
+  `Pipe`, `TableDelimiter`, and cell nodes; a backslash before `|` in a
+  cell is a `PipeEscape` token, since GFM drops it before reading the
+  cell. Task markers are tokens in their item, strikethrough's runs
+  `StrikethroughMarker` tokens, and each extended autolink style a
+  node kind.
+- **Edits reparse as parsed:** the root's kind records the inline
+  extensions, so `Heading.withText` and `TableCell.withText` escape
+  `~` (and `|` in cells) only where needed.
+- **No cost when off:** each check is behind its flag, and only `~`,
+  `:`, and `w` gain cases in the inline scan.
+
 ### Generated tables
 
 Scripts in `scripts/` write them into kelpto-core from pinned sources,
@@ -126,18 +157,18 @@ checking every entry as the Temper code reads it:
 
 **Next,** roughly in order:
 
-1. GitHub Flavored Markdown's extensions, once its spec's org is
-   allowed.
-2. Edit batches (`doc.edit`), insert and remove, and more edits (link
+1. Edit batches (`doc.edit`), insert and remove, and more edits (link
    text, titles, and emphasis).
-3. The WHATWG tokenizer in full, with kelpto-core's character
+2. The WHATWG tokenizer in full, with kelpto-core's character
    references (and HTML's forms without `;`), then tree construction,
    against html5lib-tests and WPT.
-4. A real sanitizer on the built tree, with links checked, replacing
+3. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
-5. Chunked children and interning, once documents are big enough to
+4. Chunked children and interning, once documents are big enough to
    measure; deep nesting (thousands of block quotes or emphasis
    levels) without deep recursion.
+5. GFM's rest: footnotes, and maybe a renderer option for cmark-gfm's
+   merged nested `<strong>`; more edits for tables (rows and columns).
 
 ## Libraries and layout
 
