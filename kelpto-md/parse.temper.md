@@ -143,16 +143,24 @@ before reading the cell's inlines.
     export let wwwAutolinkKind = new Kind(174, "WwwAutolink");
     export let emailAutolinkKind = new Kind(175, "EmailAutolink");
 
-A document parsed with strikethrough or extended autolinks on has a
-root kind saying so, so edits that reparse inlines (`Heading.withText`,
-`TableCell.withText`) read them as the parser did. Every one is named
-`Document`.
+A document parsed with any GFM extension on has a root kind saying
+so: which inline extensions, so edits that reparse inlines
+(`Heading.withText`, `TableCell.withText`) read them as the parser
+did, or else only that it's GFM, for rendering as cmark-gfm does.
+Every one is named `Document`.
 
     let documentKindFor(extensions: Extensions): Kind {
       if (extensions.strikethrough && extensions.autolinks) { return new Kind(178, "Document"); }
       if (extensions.strikethrough) { return new Kind(176, "Document"); }
       if (extensions.autolinks) { return new Kind(177, "Document"); }
+      if (extensions.tables || extensions.taskListItems) { return new Kind(179, "Document"); }
       documentKind
+    }
+
+Whether the document holding `node` was parsed with any GFM extension.
+
+    let isGfmDocument(node: RedNode): Boolean {
+      node.root.green.kind.id != documentKind.id
     }
 
 The inline extensions of the document holding `node`, from its root's

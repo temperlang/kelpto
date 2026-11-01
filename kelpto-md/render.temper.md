@@ -147,7 +147,7 @@ tag, so trust the Markdown as for `withRawHtmlTrusted()`, or use the
       }
 
       public render(doc: MarkdownDocument): String {
-        let out = new HtmlOut(definitionsOf(doc));
+        let out = new HtmlOut(definitionsOf(doc), isGfmDocument(doc.node));
         renderBlocks(doc.children, false, out);
         out.toString()
       }
@@ -295,7 +295,7 @@ the header, filled in empty, and `align` on cells in aligned columns.
           };
           is Strong -> do {
             out.append("<strong>");
-            renderInlines(inline.children, out);
+            if (out.gfm) { renderInStrong(inline.children, out); } else { renderInlines(inline.children, out); }
             out.append("</strong>");
           };
           is Strikethrough -> do {
@@ -332,6 +332,19 @@ the header, filled in empty, and `align` on cells in aligned columns.
             }
           };
           else -> do {};
+        }
+      }
+
+A strong's children in a GFM document, as cmark-gfm's renderer writes
+them: a strong directly inside another adds no tags, so `****foo****`
+is `<strong>foo</strong>`, and `**a **b** c**` is `<strong>a b
+c</strong>`. The tree keeps both, as CommonMark parses them; only the
+HTML differs, and it looks the same.
+
+      private renderInStrong(inlines: List<ParagraphChild>, out: HtmlOut): Void {
+        for (var i = 0; i < inlines.length; i += 1) {
+          let inline = inlines[i];
+          if (inline is Strong) { renderInStrong(inline.children, out); } else { renderInline(inline, out); }
         }
       }
 
@@ -487,8 +500,13 @@ The document's definitions, for reference links.
 
       public definitions: Map<String, LinkReferenceDefinition>;
 
-      public constructor(definitions: Map<String, LinkReferenceDefinition>) {
+Whether the document was parsed with GFM, so renders as cmark-gfm does.
+
+      public gfm: Boolean;
+
+      public constructor(definitions: Map<String, LinkReferenceDefinition>, gfm: Boolean) {
         this.definitions = definitions;
+        this.gfm = gfm;
       }
 
       public append(text: String): Void {
@@ -532,4 +550,36 @@ A line break, unless at the start of a line.
       let html = parseMarkdown("   ### Spaced   ###  \n  one  \n   two\\*\n``` \n```\n").toHtml();
       let expected = "<h3>Spaced</h3>\n<p>one<br />\ntwo*</p>\n<pre><code></code></pre>\n";
       assert(html == expected) { html };
+    }
+
+A strong directly inside a strong: nested, as CommonMark writes it,
+but one `<strong>` in a GFM document, as cmark-gfm writes it, with the
+tree the same either way. A link or emphasis between them keeps both,
+and emphasis inside emphasis is unchanged.
+
+    test("rendering: a strong in a strong, as CommonMark and as GFM") {
+      let text = "****a****\n\n**b **c** d**\n\n**[**e**](/u)** ***f*** **_**g**_**\n\n*_h_*\n";
+      let plain = parseMarkdown(text);
+      let gfm = MarkdownParser.gfm.parse(text);
+      let outer = gfm.blocks[0] as Paragraph orelse panic();
+      let strong = outer.children[0] as Strong orelse panic();
+      assert(strong.children[0] is Strong && gfm.asWritten == text) { "keeps the tree" };
+      let cm = plain.toHtml();
+      let expectedCm = [
+        "<p><strong><strong>a</strong></strong></p>\n",
+        "<p><strong>b <strong>c</strong> d</strong></p>\n",
+        "<p><strong><a href=\"/u\"><strong>e</strong></a></strong> <em><strong>f</strong></em> ",
+        "<strong><em><strong>g</strong></em></strong></p>\n<p><em><em>h</em></em></p>\n",
+      ].join("") { (s: String): String => s };
+      assert(cm == expectedCm) { cm };
+      let expectedGfm = [
+        "<p><strong>a</strong></p>\n",
+        "<p><strong>b c d</strong></p>\n",
+        "<p><strong><a href=\"/u\"><strong>e</strong></a></strong> <em><strong>f</strong></em> ",
+        "<strong><em><strong>g</strong></em></strong></p>\n<p><em><em>h</em></em></p>\n",
+      ].join("") { (s: String): String => s };
+      let html = gfm.toHtml();
+      assert(html == expectedGfm) { html };
+      let tablesOnly = MarkdownParser.commonMark.withTables(true).parse(text).toHtml();
+      assert(tablesOnly == expectedGfm) { tablesOnly };
     }

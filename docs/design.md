@@ -123,8 +123,7 @@ and rendering defaults.
   stop filling short rows after 524,288 empty cells, `~` runs read 100
   at a time, emails found in text after the rest), since GitHub renders
   by it. All of GFM's spec examples and cmark-gfm's extension tests
-  pass, in `tests/gfm/`, but nine where cmark-gfm's renderer drops a
-  `<strong>` directly inside another. One choice follows the spec
+  pass, in `tests/gfm/`. One choice follows the spec
   instead: task list items work inside block quotes and on a nested
   item's line, where cmark-gfm, looking from the line's start, misses
   them.
@@ -137,6 +136,12 @@ and rendering defaults.
 - **Edits reparse as parsed:** the root's kind records the inline
   extensions, so `Heading.withText` and `TableCell.withText` escape
   `~` (and `|` in cells) only where needed.
+- **Rendered as cmark-gfm renders:** a document parsed with any
+  extension on (its root's kind says so) renders a strong directly
+  inside another strong without its own tags, as cmark-gfm's renderer
+  does (`src/html.c`, since 0.29.0.gfm.10), so `****foo****` gives one
+  `<strong>`. The tree keeps CommonMark's nesting; plain CommonMark
+  documents render it as CommonMark does.
 - **No cost when off:** each check is behind its flag, and only `~`,
   `:`, and `w` gain cases in the inline scan.
 
@@ -167,8 +172,16 @@ checking every entry as the Temper code reads it:
 4. Chunked children and interning, once documents are big enough to
    measure; deep nesting (thousands of block quotes or emphasis
    levels) without deep recursion.
-5. GFM's rest: footnotes, and maybe a renderer option for cmark-gfm's
-   merged nested `<strong>`; more edits for tables (rows and columns).
+5. GFM's rest: footnotes, and more edits for tables (rows and
+   columns).
+6. Benchmarks of kelpto-md against each language's usual Markdown
+   parsers: cmark (C), commonmark.js and markdown-it (JavaScript),
+   markdown-it-py and mistune (Python), pulldown-cmark and comrak
+   (Rust), commonmark-java and flexmark (Java), and Markdig (C#).
+   Parse alone, and parse and render, on realistic documents (the
+   CommonMark spec, READMEs, and a long document) and on cmark's
+   pathological shapes. Each package needs the user's approval before
+   it's installed.
 
 ## Libraries and layout
 

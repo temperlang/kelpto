@@ -1,9 +1,17 @@
 # Testing against GFM's examples
 
 Each example runs as cmark-gfm's own test tools run it: the spec's
-examples with only the extension each names, and extensions.txt's
-with all of them, raw HTML trusted (as cmark-gfm's `--unsafe`), and
-the disallowed raw HTML filter on where the extensions are.
+extension examples with only the extension each names, and
+extensions.txt's with all of them, raw HTML trusted (as cmark-gfm's
+`--unsafe`), and the disallowed raw HTML filter on where the
+extensions are.
+
+The spec's examples without an extension are CommonMark 0.29's, which
+cmark-gfm reads with none on yet renders as GFM. kelpto-md renders as
+GFM only a document parsed with GFM, so they're parsed with all of it,
+but for those in CommonMark's Autolinks section, which show what isn't
+linked without extended autolinks. As CommonMark, they're checked in
+`tests/commonmark/`, at 0.31.2.
 
     let { MarkdownParser, MarkdownRenderer } = import("../../kelpto-md");
 
@@ -13,7 +21,8 @@ the disallowed raw HTML filter on where the extensions are.
       if (extension == "table") { return MarkdownParser.commonMark.withTables(true); }
       if (extension == "strikethrough") { return MarkdownParser.commonMark.withStrikethrough(true); }
       if (extension == "autolink") { return MarkdownParser.commonMark.withExtendedAutolinks(true); }
-      MarkdownParser.commonMark
+      if (example.section == "Autolinks") { return MarkdownParser.gfm.withExtendedAutolinks(false); }
+      MarkdownParser.gfm
     }
 
     let rendererFor(example: GfmExample): MarkdownRenderer {
@@ -50,30 +59,6 @@ extensions.txt only checks that parsing doesn't fail.
 
     let label(example: GfmExample): String {
       "${example.source} ${example.number.toString()}"
-    }
-
-The spec's examples without an extension are CommonMark 0.29's, as
-cmark-gfm reads them, and kelpto-md reads CommonMark 0.31.2. All but
-nine agree. In those, cmark-gfm's renderer drops a `<strong>` directly
-inside another (since 0.29.0.gfm.10, against deep nesting), so
-`****foo****` is `<strong>foo</strong>`; kelpto-md keeps CommonMark's
-`<strong><strong>foo</strong></strong>`.
-
-Those nine, by number:
-
-    let commonMarkDifferences(): List<Int> {
-      [
-        398, 426, 434, 435, 436, 473, 474, 475, 477,
-      ]
-    }
-
-    let isKnownDifference(example: GfmExample): Boolean {
-      if (example.source != "spec" || example.extension != "") { return false; }
-      let known = commonMarkDifferences();
-      for (var i = 0; i < known.length; i += 1) {
-        if (known[i] == example.number) { return true; }
-      }
-      false
     }
 
 Counts by extension, as `extension: passed/total`.
@@ -115,25 +100,18 @@ Counts by extension, as `extension: passed/total`.
 
 ## Tests
 
-Every example passes but the known CommonMark differences. Logs the
-counts.
+Every example passes. Logs the counts.
 
     test("GFM spec: every example renders as cmark-gfm does") {
       let examples = gfmExamples();
       console.log(report(examples));
       let failures = new ListBuilder<String>();
-      let differing = new ListBuilder<String>();
       for (var i = 0; i < examples.length; i += 1) {
         let example = examples[i];
-        let ok = passes(example);
-        if (!ok && !isKnownDifference(example)) { failures.add(label(example)); }
-        if (ok && isKnownDifference(example)) { differing.add(label(example)); }
+        if (!passes(example)) { failures.add(label(example)); }
       }
       assert(failures.isEmpty) {
         "examples failing: ${failures.toList().join(", ") { (s: String): String => s }}"
-      };
-      assert(differing.isEmpty) {
-        "known differences now passing: ${differing.toList().join(", ") { (s: String): String => s }}"
       };
     }
 

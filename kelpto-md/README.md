@@ -36,8 +36,11 @@ MarkdownParser.commonMark.withTables(true).parse("| a |\n| - |\n"); // one exten
   (`withTables`, `withTaskListItems`, `withStrikethrough`, and
   `withExtendedAutolinks`): every example in GFM's spec and cmark-gfm's
   extension tests renders as cmark-gfm renders it, linear on its
-  pathological inputs too. Off, parsing is CommonMark's, at the same
-  cost. GFM's filter for disallowed raw HTML is on rendering:
+  pathological inputs too. That includes cmark-gfm's one change to
+  CommonMark's HTML: in a GFM document, a strong directly inside a
+  strong adds no tags (`****foo****` is one `<strong>`), though the
+  tree keeps both. Off, parsing and rendering are CommonMark's, at the
+  same cost. GFM's filter for disallowed raw HTML is on rendering:
   `withDisallowedRawHtmlFiltered()`.
 - **Lossless,** whatever the input: tabs stay tabs (columns are counted
   as the spec says), line endings stay `\n`, `\r\n`, or `\r`, and odd
