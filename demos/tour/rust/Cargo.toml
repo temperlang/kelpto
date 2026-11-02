@@ -1,0 +1,9 @@
+[package]
+name = "tour"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Built by `temper build` at the repo's top.
+kelpto-md = { path = "../../../temper.out/rust/kelpto-md" }

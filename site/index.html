@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kelpto: change one part, keep every byte</title>
+  <meta name="description" content="Lossless Markdown: parse, edit one heading, table cell, task, or link, and write it back with everything else exactly as written. CommonMark and GFM, in C++, C#, Java, JavaScript, Lua, Python, and Rust.">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap"><!--IMPORT_MAP--></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#try">Skip to the demo</a>
+  <header class="top">
+    <div class="wrap bar">
+      <p class="brand"><a href="#">Kelpto</a> <span class="beta-tag">beta</span></p>
+      <nav aria-label="Sections">
+        <a href="#try">Try it</a>
+        <!-- Later: "HTML" (#html), "Safe rendering" (#safe), "Speed" (#speed),
+             and "Compare" (#compare), as each section ships; see docs/site.md. -->
+        <a href="#tour">Tour</a>
+        <a href="https://github.com/temperlang/kelpto">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="opening" aria-labelledby="pitch">
+    <div class="wrap">
+      <p class="slogan">
+        <strong>Muscle memory for AI.</strong>
+        <span>Solve it once in Temper, and every language remembers.</span>
+      </p>
+      <h1 id="pitch">Change one part. Keep every byte.</h1>
+      <p class="lead">
+        Kelpto parses Markdown into a tree that remembers how it was
+        written. Change a heading, a table cell, a task, or a link, and
+        write the file back with everything else exactly as it was:
+        same spacing, same markers, same mess. In C++, C#, Java,
+        JavaScript, Lua, Python, and Rust.
+      </p>
+      <p class="conformance">
+        <span class="check" aria-hidden="true">✓</span>
+        All <strong><!--COMMONMARK_COUNT--></strong> of CommonMark 0.31.2's
+        examples pass, and all <strong><!--GFM_COUNT--></strong> of GitHub
+        Flavored Markdown's, from cmark-gfm's spec and tests.
+      </p>
+      <p class="beta-note">
+        Beta: <a href="https://temperlang.dev/">Temper</a> and the libraries
+        made with it, Kelpto included, are in beta. APIs may still change.
+      </p>
+    </div>
+  </section>
+
+  <main>
+    <section id="try" class="try-it" aria-labelledby="try-title">
+      <div class="wrap">
+        <h2 id="try-title">Edit it. Diff it.</h2>
+        <p>
+          Type or paste Markdown. Then click a heading, a table cell, a
+          task box, or a link in the preview to change it through
+          Kelpto's API, live in this page. The output differs from your
+          input only where you edited.
+        </p>
+        <div class="options" role="group" aria-label="Options">
+          <label><input type="checkbox" id="opt-gfm" checked> GitHub Flavored Markdown</label>
+          <label><input type="checkbox" id="opt-trusted"> Trust raw HTML</label>
+        </div>
+        <div class="panes">
+          <div class="pane">
+            <label for="md-input" class="pane-title">Your Markdown</label>
+            <textarea id="md-input" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+            <p class="status" id="roundtrip" aria-live="polite"></p>
+          </div>
+          <div class="pane">
+            <div class="pane-head">
+              <h3 class="pane-title" id="preview-title">Rendered</h3>
+              <div class="view-tabs" role="tablist" aria-label="Rendered view">
+                <button type="button" role="tab" id="view-preview" aria-selected="true" aria-controls="preview-panel">Preview</button>
+                <button type="button" role="tab" id="view-html" aria-selected="false" aria-controls="html-panel" tabindex="-1">HTML</button>
+              </div>
+            </div>
+            <div id="preview-panel" role="tabpanel" aria-labelledby="view-preview">
+              <iframe id="preview" title="Rendered preview: click a heading, table cell, task box, or link to edit it"
+                      sandbox="allow-same-origin"></iframe>
+            </div>
+            <div id="html-panel" role="tabpanel" aria-labelledby="view-html" hidden>
+              <pre class="source html-out" tabindex="0" aria-label="Rendered HTML"><code id="html-out"></code></pre>
+            </div>
+            <p class="small-note" id="render-note"></p>
+          </div>
+        </div>
+
+        <form class="editor" id="editor" hidden>
+          <label for="edit-value" id="edit-label">Text</label>
+          <div class="edit-row">
+            <input id="edit-value" type="text" spellcheck="false" autocomplete="off">
+            <button type="submit" class="primary">Apply</button>
+            <button type="button" class="plain" id="edit-cancel">Cancel</button>
+          </div>
+          <p class="small-note" id="edit-call"></p>
+        </form>
+        <p class="editor-hint" id="editor-hint" aria-live="polite">
+          Click a heading, table cell, task box, or link in the preview, or
+          tab to one and press Enter.
+        </p>
+
+        <div class="diff-box" id="diff-box">
+          <div class="pane-head">
+            <h3 class="pane-title" id="diff-title">Output, against your input</h3>
+            <button type="button" class="plain" id="reset" disabled>Undo all edits</button>
+          </div>
+          <p class="status" id="diff-summary" aria-live="polite"></p>
+          <pre class="source diff" id="diff" tabindex="0" aria-labelledby="diff-title"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Later sections slot in here, in this order, each with a nav link;
+         see docs/site.md:
+           #html     The HTML side: WHATWG tokenizer and tree, html5lib's tests.
+           #safe     Safe rendering: the sanitizer, with links checked by Hrefine.
+           #speed    Benchmarks against other parsers.
+           #compare  Conformance against other parsers, as a table. -->
+
+    <section id="tour" class="tour" aria-labelledby="tour-title">
+      <div class="wrap">
+        <h2 id="tour-title">The tour, in seven languages</h2>
+        <p>
+          One program through kelpto-md's API, written in each language:
+          parse and print back, edit one part, render safely, GFM, and
+          footnotes. Every version prints exactly the same text.
+        </p>
+        <div class="tabs" role="tablist" aria-label="Language" data-tabs="tour"></div>
+        <p class="run">Run it: <code id="run-command"></code></p>
+        <pre class="source tour-source" tabindex="0" aria-label="Tour source"><code id="tour-source"></code></pre>
+        <p class="tour-run">
+          <button type="button" id="tour-run" class="primary">Run in your browser</button>
+          <span id="tour-run-note"></span>
+        </p>
+        <pre id="tour-output" class="output" tabindex="0" aria-label="Tour output" aria-live="polite" hidden></pre>
+        <p class="small-note" id="sizes"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>
+        Kelpto is written once in <a href="https://temperlang.dev/">Temper</a>
+        and open source, Apache-2.0 or MIT:
+        <a href="https://github.com/temperlang/kelpto">github.com/temperlang/kelpto</a>.
+        Its tests come from the CommonMark spec and cmark-gfm, under
+        CC-BY-SA 4.0, and aren't part of the libraries; see
+        <a href="https://github.com/temperlang/kelpto/blob/main/NOTICE">NOTICE</a>.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

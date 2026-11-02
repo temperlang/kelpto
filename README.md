@@ -121,6 +121,19 @@ One Temper worktree with a library in each directory; run `temper test`
 at the top. Libraries import each other by path, as
 `import("../kelpto-core")`.
 
+Run the tour in every language against `temper.out/`, checking each
+prints the same text (see [demos](demos/README.md)):
+
+    temper build -b cpp -b csharp -b java -b js -b lua -b py -b rust
+    uv run demos/run.py [LANGUAGE ...]
+
+Build the site, with the JavaScript build, and serve it locally (see
+[docs/site.md](docs/site.md)):
+
+    temper build -b js
+    uv run site/build.py
+    python3 -m http.server --bind 127.0.0.1 -d site/build
+
 ## License
 
 Apache-2.0 OR MIT, at your option, as Temper is; see [COPYRIGHT](COPYRIGHT). Third-party material, with its notices, is in [NOTICE](NOTICE). The CommonMark and GFM examples in [tests/commonmark](tests/commonmark/README.md) and [tests/gfm](tests/gfm/README.md) stay under CC-BY-SA 4.0, apart from the libraries' code, and aren't published.

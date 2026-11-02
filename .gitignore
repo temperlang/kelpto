@@ -3,3 +3,10 @@ temper.keep/
 __pycache__/
 /data/unicode-*/
 /data/html5lib-tests-*/
+bin/
+build/
+node_modules/
+obj/
+target/
+.gradle/
+.venv/

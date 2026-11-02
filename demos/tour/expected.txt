@@ -1,0 +1,80 @@
+# Kelpto tour
+
+## 1. Parse and print, losslessly
+printed back exactly: true
+heading 1: Release notes
+table: Library, Status (left, right)
+row: kelpto-md, ready
+row: kelpto-html, early
+task: [x] checked
+task: [ ] not checked
+definition: docs -> https://example.com/old
+  #  Odd   heading  #\r\n -> exactly
+*\ta\r\n\t- b\r\n -> exactly
+> quote\nlazy\n*** -> exactly
+[x]: <a b> 'title'\n\n[x]\n -> exactly
+
+## 2. Edit one part
+- # Release notes
++ # Release notes, 0.1
+- | kelpto-html | early  |
++ | kelpto-html | ready  |
+- - [ ] HTML trees
++ - [x] HTML trees
+- [docs]: https://example.com/old
++ [docs]: https://example.com/new
+4 of 15 lines changed, the rest byte for byte
+at level 2: ## Release notes, 0.1\n
+level 7: throws
+
+## 3. Render, safe by default
+safe:
+<p>Hi &lt;b&gt;there&lt;/b&gt;!</p>
+&lt;script&gt;alert(1)&lt;/script&gt;
+trusted:
+<p>Hi <b>there</b>!</p>
+<script>alert(1)</script>
+trusted, GFM's filter:
+<p>Hi <b>there</b>!</p>
+&lt;script>alert(1)&lt;/script>
+
+## 4. GitHub Flavored Markdown
+GFM:
+<p><del>Old</del> New: <a href="http://www.example.com">www.example.com</a></p>
+<table>
+<thead>
+<tr>
+<th>a</th>
+<th align="center">b</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td align="center">2</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><input type="checkbox" disabled="" /> ship it</li>
+</ul>
+cell 2: column 1, center
+as CommonMark: tables 0, task items 0
+tables alone: tables 1, task items 0
+checked: - [x] ship it\n
+
+## 5. Footnotes
+reference 1 -> definition 1
+html:
+<p>Lossless<sup class="footnote-ref"><a href="#fn-1" id="fnref-1" data-footnote-ref>1</a></sup>, always.</p>
+<section class="footnotes" data-footnotes>
+<ol>
+<li id="fn-1">
+<p>Every byte. <a href="#fnref-1" class="footnote-backref" data-footnote-backref data-footnote-backref-idx="1" aria-label="Back to reference 1">↩</a></p>
+</li>
+</ol>
+</section>
+definition renamed: reference finds nothing
+reference renamed: reference finds bytes
+Lossless[^bytes], always.\n\n[^bytes]: Every byte.\n
+label 'two words': throws
