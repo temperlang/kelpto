@@ -35,7 +35,8 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   images, inline and by reference, autolinks, code spans, raw HTML,
   character references, backslash escapes, and hard and soft line
   breaks). All 652 of the spec's examples pass, and parsing stays
-  linear on cmark's pathological inputs.
+  linear on cmark's pathological inline inputs; deep block nesting
+  isn't linear yet (see [Speed](#speed)).
 - **GitHub Flavored Markdown's extensions,** opt-in, from
   `MarkdownParser.gfm` or one at a time from `MarkdownParser.commonMark`
   (`withTables`, `withTaskListItems`, `withStrikethrough`,
@@ -94,6 +95,19 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
 - **Destinations stay as written** in the tree, as a `LinkTarget`
   (escapes and character references resolved, nothing else); the
   renderer percent-encodes them only as it writes `href` and `src`.
+
+## Speed
+
+kelpto-md is slower than each language's usual parsers, since it keeps
+every byte and isn't tuned yet: on the CommonMark spec, 1.7 times
+flexmark's time in Java, 7 to 16 times that of cmark,
+commonmark-java, commonmark.js, markdown-it, markdown-it-py, and
+mistune, 30 to 33 times that of comrak and Markdig, and 104 times
+pulldown-cmark's (2026-11-02). It parses at about 8 MB/s in C++, 2 MB/s
+in C#, Java, JavaScript, and Rust, and 0.3 MB/s in Python and Lua.
+Walking every view and printing back, or a batch of edits, costs
+little more than parsing. See [docs/benchmarks.md](../docs/benchmarks.md)
+for the numbers, ranges, and reasons, and `bench/` to run them.
 
 ## Walking and transforming
 

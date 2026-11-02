@@ -230,13 +230,17 @@ checking every entry as the Temper code reads it:
    `\|` ending an extended autolink in a table cell should leave the
    link (`www.x.y\|` links `www.x.y`), and a paragraph that is only a
    link definition directly before a table stays text.
-6. Benchmarks of kelpto-md against each language's usual Markdown
-   parsers: cmark (C), commonmark.js and markdown-it (JavaScript),
-   markdown-it-py and mistune (Python), pulldown-cmark and comrak
-   (Rust), commonmark-java and flexmark (Java), and Markdig (C#).
-   Parse alone, and parse and render, on realistic documents (the
-   CommonMark spec, READMEs, and a long document) and on cmark's
-   pathological shapes.
+6. Benchmarks: done (2026-11-02; [benchmarks.md](benchmarks.md),
+   `bench/`, and `scripts/bench.py`). kelpto-md is 1.5 to 3.6 times
+   flexmark's time, 4 to 21 times most others', and 16 to 126 times
+   comrak's, Markdig's, and pulldown-cmark's. Next from them, without
+   changing behavior: make `SourceText` decode lazily or index the
+   language's own strings (20 to 30% of a parse in Python and
+   JavaScript); make deep block nesting linear (nested block quotes
+   are quadratic; part of item 4); look at the Rust translation's
+   locks on every mutable field (Rust is 4 times slower than C++ from
+   the same source) and at C#'s and Lua's garbage on long documents;
+   and compare GFM too.
 7. Typed walks: descendants of one kind (`doc.descendantsOf…`, or a
    filter per view type such as `headingsIn`), so users get typed views
    without casts (Rust needs `temper_core::cast` today) and, if

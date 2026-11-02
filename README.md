@@ -116,7 +116,10 @@ test-only libraries, since the examples are CC-BY-SA 4.0; see
 `scripts/gfm_spec.py` (run with `uv run`) regenerate them. Real
 documents (the CommonMark spec and some READMEs), with worked examples
 walking and transforming them, are in
-[tests/samples](tests/samples/README.md), for benchmarks too.
+[tests/samples](tests/samples/README.md). Benchmarks against each
+language's usual Markdown parsers, on those documents and on cmark's
+pathological inputs, are in [bench](bench/README.md), with results in
+[docs/benchmarks.md](docs/benchmarks.md).
 
 ## Building
 

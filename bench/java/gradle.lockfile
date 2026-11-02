@@ -1,0 +1,17 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+com.vladsch.flexmark:flexmark-util-ast:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-builder:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-collection:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-data:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-dependency:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-format:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-html:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-misc:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-sequence:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark-util-visitor:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.vladsch.flexmark:flexmark:0.64.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.commonmark:commonmark:0.32.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jetbrains:annotations:24.0.1=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+empty=annotationProcessor,testAnnotationProcessor

@@ -1,0 +1,17 @@
+[package]
+name = "kelpto-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Times kelpto-md against pulldown-cmark and comrak; see ../README.md."
+
+[dependencies]
+comrak = { version = "=0.55.0", default-features = false }
+# Built by `temper build` at the repo's top.
+kelpto-md = { path = "../../temper.out/rust/kelpto-md" }
+pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html"] }
+temper-core = { path = "../../temper.out/rust/temper-core" }
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"

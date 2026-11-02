@@ -1,0 +1,14 @@
+{
+  "name": "kelpto-bench",
+  "private": true,
+  "type": "module",
+  "description": "Times kelpto-md against commonmark.js and markdown-it; see ../README.md.",
+  "dependencies": {
+    "@temperlang/core": "file:../../temper.out/js/temper-core",
+    "@temperlang/std": "file:../../temper.out/js/std",
+    "commonmark": "0.31.2",
+    "kelpto-core": "file:../../temper.out/js/kelpto-core",
+    "kelpto-md": "file:../../temper.out/js/kelpto-md",
+    "markdown-it": "15.0.3"
+  }
+}

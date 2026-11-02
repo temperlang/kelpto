@@ -1,0 +1,30 @@
+# Kelpto's scripts in Python, run with `uv run`. Scripts that need nothing
+# else declare that inline; the benchmarks' group (see bench/README.md)
+# needs the generated Python libraries, so build them first:
+# `temper build -b py`.
+[project]
+name = "kelpto-scripts"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+bench = [
+    "kelpto-core",
+    "kelpto-md",
+    "markdown-it-py==4.2.0",
+    "mistune==3.4.0",
+    "temper-core",
+    "temper-std",
+]
+
+[tool.uv]
+package = false
+
+# The libraries `temper build` generates at the repo's top, with Temper's
+# runtime, so its sources apply, not PyPI's older releases.
+[tool.uv.sources]
+kelpto-core = { path = "temper.out/py/kelpto-core", editable = true }
+kelpto-md = { path = "temper.out/py/kelpto-md", editable = true }
+temper-core = { path = "temper.out/py/temper-core", editable = true }
+temper-std = { path = "temper.out/py/std", editable = true }
