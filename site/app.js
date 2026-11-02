@@ -1,9 +1,11 @@
-// Kelpto's site: the opening demo (demo.js), and the tour in each language,
-// with the JavaScript one run in the page. kelpto-md comes from Temper's JS
-// output, as plain ES modules named by the page's import map.
+// Kelpto's site: the opening demo (demo.js), with its edits as code in each
+// language (editcode.js), and the tour in each language, with the
+// JavaScript one run in the page. kelpto-md comes from Temper's JS output,
+// as plain ES modules named by the page's import map.
 
 import * as kelptoMd from "kelpto-md";
 import { initDemo } from "./demo.js";
+import { codeFor, programFor } from "./editcode.js";
 import { runTour } from "./tourrun.js";
 
 /** @param {string} id */
@@ -12,10 +14,9 @@ const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 /** @param {string} s */
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c);
 
-initDemo();
-
-// Code tabs for the tour, in each language, with a small highlighter, as on
-// Hrefine's site. Alphabetical, with Python first chosen.
+// Code tabs for the demo's edits and the tour, in each language, with a
+// small highlighter, as on Hrefine's site. Alphabetical, with Python first
+// chosen. Both rows of tabs share the choice.
 
 /** Name, tour file extension, run command, line comment. */
 const LANGUAGES = [
@@ -77,17 +78,21 @@ function highlight(source, comment) {
 /** @type {Map<string, Promise<string>>} */
 const sources = new Map();
 let selected = DEFAULT_LANGUAGE;
-const tabRow = /** @type {HTMLElement} */ (document.querySelector("[data-tabs]"));
+const tabRows = /** @type {HTMLElement[]} */ ([...document.querySelectorAll("[data-tabs]")]);
+
+/** @param {string} file */
+const commentOf = (file) => /** @type {string[]} */ (LANGUAGES.find(([, f]) => f === file))[3];
 
 /** @param {string} file */
 async function selectLanguage(file) {
   selected = file;
   const [, , run, comment] = /** @type {string[]} */ (LANGUAGES.find(([, f]) => f === file));
-  for (const button of /** @type {NodeListOf<HTMLElement>} */ (tabRow.querySelectorAll("button"))) {
+  for (const button of tabRows.flatMap((row) => /** @type {HTMLElement[]} */ ([...row.querySelectorAll("button")]))) {
     const on = button.dataset.file === file;
     button.setAttribute("aria-selected", String(on));
     button.tabIndex = on ? 0 : -1;
   }
+  showCode();
   $("run-command").textContent = run;
   // Only JavaScript runs here; on another tab, the button switches to it.
   const runButton = $("tour-run");
@@ -125,24 +130,96 @@ function loadSource(file) {
   return source;
 }
 
-for (const [i, [name, file]] of LANGUAGES.entries()) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.setAttribute("role", "tab");
-  button.setAttribute("aria-controls", "tour-source");
-  button.dataset.file = file;
-  button.textContent = name;
-  button.addEventListener("click", () => selectLanguage(file));
-  button.addEventListener("keydown", (event) => {
-    const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
-    if (step) {
-      const next = (i + step + LANGUAGES.length) % LANGUAGES.length;
-      selectLanguage(LANGUAGES[next][1]);
-      /** @type {HTMLElement} */ (tabRow.children[next]).focus();
-    }
-  });
-  tabRow.append(button);
+for (const tabRow of tabRows) {
+  for (const [i, [name, file]] of LANGUAGES.entries()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", /** @type {string} */ (tabRow.dataset.tabs));
+    button.dataset.file = file;
+    button.textContent = name;
+    button.addEventListener("click", () => selectLanguage(file));
+    button.addEventListener("keydown", (event) => {
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      if (step) {
+        const next = (i + step + LANGUAGES.length) % LANGUAGES.length;
+        selectLanguage(LANGUAGES[next][1]);
+        /** @type {HTMLElement} */ (tabRow.children[next]).focus();
+      }
+    });
+    tabRow.append(button);
+  }
 }
+
+// The demo's edits as code: the input as a literal, folded when it's long,
+// and one line per edit. Copy gives the whole program.
+
+/** @type {import("./editcode.js").Program | null} */
+let program = null;
+/** Whether the input's literal shows in full, until the input changes. */
+let literalOpen = false;
+
+/**
+ * A literal as HTML, folded to its first and last lines, or its start and
+ * end, behind a button that shows the rest.
+ *
+ * @param {string} literal
+ */
+function foldedLiteral(literal) {
+  const string = (/** @type {string} */ s) => `<span class="tok-string">${escapeHtml(s)}</span>`;
+  const lines = literal.split("\n");
+  const button = (/** @type {string} */ label) => `<button type="button" class="fold" aria-expanded="false">${label}</button>`;
+  if (literalOpen) return string(literal);
+  if (lines.length > 4) {
+    const n = lines.length - 2;
+    return `${string(lines[0])}\n${button(`⋯ ${n.toLocaleString("en")} more lines`)}\n${string(lines[lines.length - 1])}`;
+  }
+  const chars = Array.from(literal);
+  if (lines.length === 1 && chars.length > 72) {
+    const n = chars.length - 52;
+    return `${string(chars.slice(0, 48).join(""))}${button(`⋯ ${n.toLocaleString("en")} more characters`)}${string(chars.slice(-4).join(""))}`;
+  }
+  return string(literal);
+}
+
+function showCode() {
+  if (!program) return;
+  const { before, literal, after } = codeFor(selected, program);
+  const comment = commentOf(selected);
+  $("edit-code").innerHTML = highlight(before, comment) + foldedLiteral(literal) + highlight(after, comment);
+  const edits = program.steps.length;
+  $("code-note").textContent = edits
+    ? "One line per edit, with the same calls this page made. Every language prints the same output."
+    : "Click something in the preview, and each edit shows here as a line of code.";
+}
+
+$("edit-code").addEventListener("click", (event) => {
+  if (!(/** @type {HTMLElement} */ (event.target).closest("button.fold"))) return;
+  literalOpen = true;
+  showCode();
+  $("edit-code").parentElement?.focus();
+});
+
+$("code-copy").addEventListener("click", async () => {
+  if (!program) return;
+  const name = /** @type {string[]} */ (LANGUAGES.find(([, f]) => f === selected))[0];
+  try {
+    await navigator.clipboard.writeText(programFor(selected, program));
+    $("code-note").textContent = `Copied the ${name} program.`;
+  } catch {
+    // Shows the whole program, selected, to copy by hand.
+    literalOpen = true;
+    showCode();
+    getSelection()?.selectAllChildren($("edit-code"));
+    $("code-note").textContent = "Couldn't copy here, so the code is selected: copy it from your keyboard.";
+  }
+});
+
+initDemo((next) => {
+  if (next.input !== program?.input) literalOpen = false;
+  program = next;
+  showCode();
+});
 selectLanguage(DEFAULT_LANGUAGE);
 
 // The JavaScript tour runs in the page (tourrun.js, which the build also

@@ -26,7 +26,8 @@ jobs:
           gh release download dev -R temperlang/temper -p '*-linux-x64.tgz' -O - | tar -xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP"/temper-*-linux-x64 >> "$GITHUB_PATH"
 
-      # Node runs the JS tour and the spec examples at build time.
+      # Node runs the JS tour, the spec examples, and the code panel's
+      # JavaScript at build time; uv runs its Python.
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -34,7 +35,7 @@ jobs:
 
       - name: Build
         run: |
-          temper build -b js
+          temper build -b js -b py
           uv run site/build.py
 
       - uses: actions/upload-pages-artifact@v3

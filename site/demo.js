@@ -1,12 +1,14 @@
 // The opening demo: Markdown in, rendered HTML out, and edits through
 // kelpto-md's API on what's clicked in the preview, with the output shown
-// as a diff against the input. kelpto-md comes from Temper's JS output, as
-// plain ES modules named by the page's import map.
+// as a diff against the input. Each edit is a step (editcode.js), which the
+// code panel shows in every language. kelpto-md comes from Temper's JS
+// output, as plain ES modules named by the page's import map.
 
 import {
-  Autolink, BlockQuote, Emphasis, FootnoteReference, Heading, Link, LinkTarget, ListBlock, MarkdownParser,
-  MarkdownRenderer, Paragraph, Strikethrough, Strong, Table, normalizeLabel,
+  Autolink, BlockQuote, Emphasis, FootnoteReference, Heading, Link, ListBlock, MarkdownRenderer, Paragraph,
+  Strikethrough, Strong, Table, normalizeLabel,
 } from "kelpto-md";
+import { applyStep, parserFor } from "./editcode.js";
 
 const SAMPLE = `Release notes
 =============
@@ -45,58 +47,92 @@ const bytes = (s) => encoder.encode(s).length;
 const count = (n, one, many = `${one}s`) => `${n.toLocaleString("en")} ${n === 1 ? one : many}`;
 
 // The parts of a document that the preview can edit, in the order they
-// render, leaving out footnote definitions, which render at the end.
+// render, leaving out footnote definitions, which render at the end. Each
+// has the path the API takes to it from the document (see editcode.js):
+// through `headings`, `tables`, and `taskListItems`, which list every one,
+// footnote definitions' too, or, for a paragraph, `blocks`.
 
 /**
- * @typedef {{ headings: any[], tables: any[], tasks: any[], anchors: any[] }} Parts
+ * @typedef {import("./editcode.js").PathPart} PathPart
+ * @typedef {{ node: any, path: PathPart[] }} Part
+ * @typedef {{ headings: Part[], tables: Part[], tasks: Part[], anchors: Part[] }} Parts
  */
+
+/**
+ * Where a node is in a list of the document's, by its span, counting only
+ * nodes that `keep` keeps.
+ *
+ * @param {any[]} list
+ * @param {(node: any) => boolean} [keep]
+ */
+function spans(list, keep = () => true) {
+  const key = (/** @type {any} */ node) => `${node.span.start}+${node.span.length}`;
+  /** @type {Map<string, number>} */
+  const at = new Map();
+  list.forEach((node, i) => {
+    if (keep(node)) at.set(key(node), i);
+  });
+  return (/** @type {any} */ node) => /** @type {number} */ (at.get(key(node)));
+}
 
 /** @param {any} doc @returns {Parts} */
 function partsOf(doc) {
   /** @type {Parts} */
   const parts = { headings: [], tables: [], tasks: [], anchors: [] };
-  walkBlocks(doc.children, parts);
+  const index = {
+    headings: spans(doc.headings),
+    tables: spans(doc.tables),
+    tasks: spans(doc.taskListItems),
+    paragraphs: spans(doc.blocks, (block) => block instanceof Paragraph),
+  };
+
+  /** @param {any[]} blocks */
+  function walkBlocks(blocks) {
+    for (const block of blocks) {
+      if (block instanceof Heading) {
+        const path = /** @type {PathPart[]} */ ([["headings", index.headings(block)]]);
+        parts.headings.push({ node: block, path });
+        walkInlines(block.children, path);
+      } else if (block instanceof Paragraph) {
+        walkInlines(block.children, [["blocks", index.paragraphs(block), "Paragraph"]]);
+      } else if (block instanceof BlockQuote) {
+        walkBlocks(block.children);
+      } else if (block instanceof ListBlock) {
+        for (const item of block.items) {
+          if (item.task) parts.tasks.push({ node: item.task, path: [["taskListItems", index.tasks(item.task)]] });
+          walkBlocks(item.children);
+        }
+      } else if (block instanceof Table) {
+        const path = /** @type {PathPart[]} */ ([["tables", index.tables(block)]]);
+        parts.tables.push({ node: block, path });
+        [block.header, ...block.rows].forEach((row, r) => {
+          const rowPath = /** @type {PathPart[]} */ ([...path, r === 0 ? ["header"] : ["rows", r - 1]]);
+          row.cells.forEach((/** @type {any} */ cell, /** @type {number} */ c) => walkInlines(cell.children, [...rowPath, ["cells", c]]));
+        });
+      }
+    }
+  }
+
+  /** @param {any[]} inlines @param {PathPart[]} path */
+  function walkInlines(inlines, path) {
+    inlines.forEach((inline, i) => {
+      if (inline instanceof Link) {
+        const linkPath = /** @type {PathPart[]} */ ([...path, ["children", i, "Link"]]);
+        parts.anchors.push({ node: inline, path: linkPath });
+        walkInlines(inline.children, linkPath);
+      } else if (inline instanceof Autolink) {
+        parts.anchors.push({ node: inline, path: [] });
+      } else if (inline instanceof FootnoteReference) {
+        if (inline.definition) parts.anchors.push({ node: inline, path: [] });
+      } else if (inline instanceof Emphasis || inline instanceof Strong || inline instanceof Strikethrough) {
+        const type = inline instanceof Emphasis ? "Emphasis" : inline instanceof Strong ? "Strong" : "Strikethrough";
+        walkInlines(inline.children, [...path, ["children", i, type]]);
+      }
+    });
+  }
+
+  walkBlocks(doc.children);
   return parts;
-}
-
-/** @param {any[]} blocks @param {Parts} parts */
-function walkBlocks(blocks, parts) {
-  for (const block of blocks) {
-    if (block instanceof Heading) {
-      parts.headings.push(block);
-      walkInlines(block.children, parts);
-    } else if (block instanceof Paragraph) {
-      walkInlines(block.children, parts);
-    } else if (block instanceof BlockQuote) {
-      walkBlocks(block.children, parts);
-    } else if (block instanceof ListBlock) {
-      for (const item of block.items) {
-        if (item.task) parts.tasks.push(item.task);
-        walkBlocks(item.children, parts);
-      }
-    } else if (block instanceof Table) {
-      parts.tables.push(block);
-      for (const row of [block.header, ...block.rows]) {
-        for (const cell of row.cells) walkInlines(cell.children, parts);
-      }
-    }
-  }
-}
-
-/** @param {any[]} inlines @param {Parts} parts */
-function walkInlines(inlines, parts) {
-  for (const inline of inlines) {
-    if (inline instanceof Link) {
-      parts.anchors.push(inline);
-      walkInlines(inline.children, parts);
-    } else if (inline instanceof Autolink) {
-      parts.anchors.push(inline);
-    } else if (inline instanceof FootnoteReference) {
-      if (inline.definition) parts.anchors.push(inline);
-    } else if (inline instanceof Emphasis || inline instanceof Strong || inline instanceof Strikethrough) {
-      walkInlines(inline.children, parts);
-    }
-  }
 }
 
 // A line diff, with what changed inside each changed line.
@@ -281,7 +317,13 @@ function previewCss() {
 const outsideFootnotes = (d, selector) =>
   /** @type {HTMLElement[]} */ ([...d.querySelectorAll(selector)]).filter((el) => !el.closest("section.footnotes"));
 
-export function initDemo() {
+/**
+ * Starts the demo. `onProgram` gets the input, parser, and edits so far
+ * each time they change.
+ *
+ * @param {(program: import("./editcode.js").Program) => void} [onProgram]
+ */
+export function initDemo(onProgram = () => {}) {
   const input = /** @type {HTMLTextAreaElement} */ ($("md-input"));
   const gfmOption = /** @type {HTMLInputElement} */ ($("opt-gfm"));
   const trustedOption = /** @type {HTMLInputElement} */ ($("opt-trusted"));
@@ -292,25 +334,27 @@ export function initDemo() {
 
   input.value = SAMPLE;
   /** The document as parsed from the input, and as edited since. */
-  let parsed = MarkdownParser.gfm.parse(SAMPLE);
+  let parsed = parserFor({ input: SAMPLE, gfm: true, steps: [] }).parse(SAMPLE);
   let current = parsed;
-  let edits = 0;
+  /** The edits since the input was parsed, in order. */
+  /** @type {import("./editcode.js").Step[]} */
+  let steps = [];
   /** @type {Parts} */
   let parts = partsOf(current);
-  /** What the editor form changes: a function from its value to a new document. */
-  /** @type {((value: string) => any) | null} */
+  /** What the editor form changes: a function from its value to a step. */
+  /** @type {((value: string) => import("./editcode.js").Step) | null} */
   let pending = null;
   /** Which element to focus and mark once the preview reloads. */
-  /** @type {{ kind: string, index: number } | null} */
+  /** @type {{ kind: string, index: string } | null} */
   let refocus = null;
 
-  const parser = () => (gfmOption.checked ? MarkdownParser.gfm : MarkdownParser.commonMark);
+  const parser = () => parserFor({ input: input.value, gfm: gfmOption.checked, steps: [] });
   const renderer = () => (trustedOption.checked ? new MarkdownRenderer().withRawHtmlTrusted() : new MarkdownRenderer());
 
   function parseInput() {
     parsed = parser().parse(input.value);
     current = parsed;
-    edits = 0;
+    steps = [];
     closeEditor();
     const exact = parsed.asWritten === input.value;
     $("roundtrip").innerHTML = exact
@@ -329,12 +373,13 @@ export function initDemo() {
     preview.srcdoc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${previewCss()}</style></head><body>${html}</body></html>`;
     const diff = diffView(input.value, current.asWritten);
     $("diff").innerHTML = diff.html;
-    resetButton.disabled = edits === 0;
+    resetButton.disabled = steps.length === 0;
+    onProgram({ input: input.value, gfm: gfmOption.checked, steps: [...steps] });
     const total = bytes(input.value);
     $("diff-summary").innerHTML =
-      edits === 0
+      steps.length === 0
         ? `No edits yet, so the output is your input, all ${count(total, "byte")}.`
-        : `<span class="ok" aria-hidden="true">✓</span> ${count(edits, "edit")} changed ${count(diff.changedLines, "line")}. ` +
+        : `<span class="ok" aria-hidden="true">✓</span> ${count(steps.length, "edit")} changed ${count(diff.changedLines, "line")}. ` +
           `The other ${count(diff.kept, "byte")} of your ${total.toLocaleString("en")} are exactly as you wrote them.`;
   }
 
@@ -359,7 +404,7 @@ export function initDemo() {
     const tables = /** @type {HTMLTableElement[]} */ (outsideFootnotes(d, "table"));
     if (tables.length === parts.tables.length) {
       tables.forEach((table, t) => {
-        const rows = [parts.tables[t].header, ...parts.tables[t].rows];
+        const rows = [parts.tables[t].node.header, ...parts.tables[t].node.rows];
         [...table.rows].forEach((tr, r) => {
           [...tr.cells].forEach((td, c) => {
             if (r < rows.length && c < rows[r].cells.length) {
@@ -376,14 +421,13 @@ export function initDemo() {
         // Rendered disabled, as GitHub does; here, a click toggles it in
         // the Markdown instead.
         box.disabled = false;
-        editable(box, "task", i, parts.tasks[i].checked ? "Checked task" : "Unchecked task");
+        editable(box, "task", i, parts.tasks[i].node.checked ? "Checked task" : "Unchecked task");
       });
     } else if (boxes.length) skipped.push("task boxes");
     const anchors = outsideFootnotes(d, "a");
     if (anchors.length === parts.anchors.length) {
       anchors.forEach((a, i) => {
-        const part = parts.anchors[i];
-        if (part instanceof Link) editable(a, "link", i, `Link “${a.textContent}”`);
+        if (parts.anchors[i].node instanceof Link) editable(a, "link", i, `Link “${a.textContent}”`);
       });
     } else if (anchors.length) skipped.push("links");
     $("editor-hint").textContent = skipped.length
@@ -422,38 +466,41 @@ export function initDemo() {
     const kind = /** @type {string} */ (el.dataset.edit);
     const index = /** @type {string} */ (el.dataset.index);
     if (kind === "task") {
-      const task = parts.tasks[Number(index)];
-      apply(() => task.withChecked(!task.checked), { kind, index: Number(index) });
+      const { node: task, path } = parts.tasks[Number(index)];
+      apply({ kind: "task", path, value: !task.checked }, { kind, index });
       return;
     }
     if (kind === "heading") {
-      const heading = parts.headings[Number(index)];
-      openEditor("Heading text", heading.text, "heading.withText(text)", (value) => heading.withText(value), el);
+      const { node: heading, path } = parts.headings[Number(index)];
+      openEditor("Heading text", heading.text, "heading.withText(text)", (value) => ({ kind: "heading", path, value }), el);
     } else if (kind === "cell") {
       const [t, r, c] = index.split(",").map(Number);
-      const table = parts.tables[t];
+      const { node: table, path } = parts.tables[t];
       const cell = (r === 0 ? table.header : table.rows[r - 1]).cells[c];
-      openEditor("Cell text", cell.text, "cell.withText(text)", (value) => cell.withText(value), el);
+      /** @type {PathPart[]} */
+      const cellPath = [...path, r === 0 ? ["header"] : ["rows", r - 1], ["cells", c]];
+      openEditor("Cell text", cell.text, "cell.withText(text)", (value) => ({ kind: "cell", path: cellPath, value }), el);
     } else if (kind === "link") {
-      const link = parts.anchors[Number(index)];
+      const { node: link, path } = parts.anchors[Number(index)];
       if (link.style === "inline") {
         openEditor(
           "Link destination",
           link.destination?.url ?? "",
           "link.withDestination(new LinkTarget(url))",
-          (value) => link.withDestination(new LinkTarget(value)),
+          (value) => ({ kind: "link", path, value }),
           el,
         );
       } else {
         // A reference link's destination is its definition's.
         const label = normalizeLabel(link.label ?? "");
-        const definition = current.linkReferenceDefinitions.find((/** @type {any} */ def) => normalizeLabel(def.label) === label);
-        if (!definition) return;
+        const definitions = current.linkReferenceDefinitions;
+        const d = definitions.findIndex((/** @type {any} */ def) => normalizeLabel(def.label) === label);
+        if (d < 0) return;
         openEditor(
-          `Destination of [${definition.label}], in its definition`,
-          definition.destination.url,
+          `Destination of [${definitions[d].label}], in its definition`,
+          definitions[d].destination.url,
           "definition.withDestination(new LinkTarget(url))",
-          (value) => definition.withDestination(new LinkTarget(value)),
+          (value) => ({ kind: "definition", path: [["linkReferenceDefinitions", d]], value }),
           el,
         );
       }
@@ -467,7 +514,7 @@ export function initDemo() {
    * @param {string} label
    * @param {string} value
    * @param {string} call
-   * @param {(value: string) => any} edit
+   * @param {(value: string) => import("./editcode.js").Step} edit
    * @param {HTMLElement} el
    */
   function openEditor(label, value, call, edit, el) {
@@ -493,18 +540,18 @@ export function initDemo() {
   /**
    * Makes an edit, then shows the new document.
    *
-   * @param {() => any} edit
-   * @param {{ kind: string, index: any }} at
+   * @param {import("./editcode.js").Step} step
+   * @param {{ kind: string, index: string }} at
    */
-  function apply(edit, at) {
+  function apply(step, at) {
     try {
-      current = edit();
+      current = applyStep(current, step);
     } catch {
       $("edit-call").textContent = "kelpto-md refused that value here, such as a line break in a destination.";
       editValue.setAttribute("aria-invalid", "true");
       return false;
     }
-    edits += 1;
+    steps.push(step);
     refocus = at;
     show();
     return true;
@@ -516,7 +563,7 @@ export function initDemo() {
     const edit = pending;
     const value = editValue.value;
     const at = editing;
-    if (apply(() => edit(value), at)) closeEditor();
+    if (apply(edit(value), at)) closeEditor();
   });
   $("edit-cancel").addEventListener("click", closeEditor);
   editor.addEventListener("keydown", (event) => {
@@ -524,7 +571,7 @@ export function initDemo() {
   });
   resetButton.addEventListener("click", () => {
     current = parsed;
-    edits = 0;
+    steps = [];
     closeEditor();
     show();
   });

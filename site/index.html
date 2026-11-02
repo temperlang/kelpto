@@ -112,6 +112,16 @@
           <p class="status" id="diff-summary" aria-live="polite"></p>
           <pre class="source diff" id="diff" tabindex="0" aria-labelledby="diff-title"></pre>
         </div>
+
+        <div class="code-box">
+          <div class="pane-head">
+            <h3 class="pane-title" id="code-title">Your edits, as code</h3>
+            <button type="button" class="plain" id="code-copy">Copy</button>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Language for your edits" data-tabs="edit-code"></div>
+          <pre class="source edit-code" tabindex="0" aria-labelledby="code-title"><code id="edit-code"></code></pre>
+          <p class="small-note" id="code-note" aria-live="polite"></p>
+        </div>
       </div>
     </section>
 
@@ -130,7 +140,7 @@
           parse and print back, edit one part, render safely, GFM, and
           footnotes. Every version prints exactly the same text.
         </p>
-        <div class="tabs" role="tablist" aria-label="Language" data-tabs="tour"></div>
+        <div class="tabs" role="tablist" aria-label="Language" data-tabs="tour-source"></div>
         <p class="run">Run it: <code id="run-command"></code></p>
         <pre class="source tour-source" tabindex="0" aria-label="Tour source"><code id="tour-source"></code></pre>
         <p class="tour-run">

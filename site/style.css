@@ -428,6 +428,34 @@ pre.diff {
   white-space: pre;
 }
 
+.code-box {
+  margin-top: 1.5rem;
+}
+
+.code-box .tabs {
+  margin-top: 0.5rem;
+}
+
+pre.edit-code {
+  max-height: 30rem;
+  margin-bottom: 0.4rem;
+}
+
+.edit-code button.fold {
+  font: inherit;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 0.3rem;
+  padding: 0 0.4rem;
+  margin: 0.1rem 0;
+}
+
+.edit-code button.fold:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .diff .ln {
   display: block;
   padding: 0 0.4rem;

@@ -1,0 +1,217 @@
+{
+  "page": {
+    "input": "Release notes\n=============\n\nKelpto keeps   *every* byte, ~~mostly~~ always.\nPress <kbd>Ctrl</kbd>+<kbd>S</kbd> to save.\n\n| Library     | Status |   Since |\n|:------------|:------:|--------:|\n| kelpto-md   | ready  |     0.1 |\n| kelpto-html | early  |         |\n\n* [x] CommonMark\n* [ ] HTML trees\n    * [ ] html5lib's tests\n\n## Links\n\nRead [the docs][docs], or the [FAQ](https://example.com/faq \"FAQ\").\nFootnotes work too.[^why]\n\n[docs]:   https://example.com/old\n[^why]: GitHub has them.\n",
+    "gfm": true,
+    "steps": [
+      {
+        "kind": "heading",
+        "path": [
+          [
+            "headings",
+            0
+          ]
+        ],
+        "value": "Release notes, “0.2” \"final\" \\ ok"
+      },
+      {
+        "kind": "cell",
+        "path": [
+          [
+            "tables",
+            0
+          ],
+          [
+            "header"
+          ],
+          [
+            "cells",
+            1
+          ]
+        ],
+        "value": "State"
+      },
+      {
+        "kind": "cell",
+        "path": [
+          [
+            "tables",
+            0
+          ],
+          [
+            "rows",
+            1
+          ],
+          [
+            "cells",
+            2
+          ]
+        ],
+        "value": "0.2"
+      },
+      {
+        "kind": "task",
+        "path": [
+          [
+            "taskListItems",
+            2
+          ]
+        ],
+        "value": true
+      },
+      {
+        "kind": "definition",
+        "path": [
+          [
+            "linkReferenceDefinitions",
+            0
+          ]
+        ],
+        "value": "https://example.com/new?q=é"
+      },
+      {
+        "kind": "link",
+        "path": [
+          [
+            "blocks",
+            14,
+            "Paragraph"
+          ],
+          [
+            "children",
+            3,
+            "Link"
+          ]
+        ],
+        "value": "https://example.com/faq#ünï"
+      },
+      {
+        "kind": "heading",
+        "path": [
+          [
+            "headings",
+            1
+          ]
+        ],
+        "value": "Links 🔗"
+      }
+    ]
+  },
+  "escapes": {
+    "input": "\n# Say \"hi\" \\\\o/ \"\"\" `x` ${y} ??= )\" ]] ]=] [h](/h)\t\n\n> *see [here](/a \"t\")*  \n> next\\\\\nend \"q\"",
+    "gfm": false,
+    "steps": [
+      {
+        "kind": "link",
+        "path": [
+          [
+            "headings",
+            0
+          ],
+          [
+            "children",
+            3,
+            "Link"
+          ]
+        ],
+        "value": "/h?a=\"b\"&c=\\d"
+      },
+      {
+        "kind": "link",
+        "path": [
+          [
+            "blocks",
+            4,
+            "Paragraph"
+          ],
+          [
+            "children",
+            0,
+            "Emphasis"
+          ],
+          [
+            "children",
+            1,
+            "Link"
+          ]
+        ],
+        "value": "/b`${c}`??=)\"]]"
+      },
+      {
+        "kind": "heading",
+        "path": [
+          [
+            "headings",
+            0
+          ]
+        ],
+        "value": "Tab\there, \"quotes\" \\ ??= ]] )\""
+      }
+    ]
+  },
+  "crlf": {
+    "input": "Title\r\n=====\r\n\r\nCafé — naïve 😀 ??( \u0001 ctrl\r\n\r\n| a | [l](/x) |\r\n|---|---|\r\n| 1 | 2 |\r\n\r\n- [ ] täsk\r\n",
+    "gfm": true,
+    "steps": [
+      {
+        "kind": "link",
+        "path": [
+          [
+            "tables",
+            0
+          ],
+          [
+            "header"
+          ],
+          [
+            "cells",
+            1
+          ],
+          [
+            "children",
+            0,
+            "Link"
+          ]
+        ],
+        "value": "/ünï 😀"
+      },
+      {
+        "kind": "cell",
+        "path": [
+          [
+            "tables",
+            0
+          ],
+          [
+            "rows",
+            0
+          ],
+          [
+            "cells",
+            0
+          ]
+        ],
+        "value": "naïve ☕"
+      },
+      {
+        "kind": "task",
+        "path": [
+          [
+            "taskListItems",
+            0
+          ]
+        ],
+        "value": true
+      },
+      {
+        "kind": "heading",
+        "path": [
+          [
+            "headings",
+            0
+          ]
+        ],
+        "value": "Café — 😀"
+      }
+    ]
+  }
+}
