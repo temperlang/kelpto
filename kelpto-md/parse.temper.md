@@ -520,15 +520,27 @@ prefix tokens on lines after its first.
         builder.finish()
       }
 
-Opens `block`'s node, and its parents', unless open already.
+Opens `block`'s node, and its parents', unless open already. `open`
+is a path down from the document, so a block is open just when it's at
+its depth there.
 
       private ensureOpen(block: BlockData): Void {
-        for (var i = open.length - 1; i >= 0; i -= 1) {
-          if (open[i].id == block.id) { return; }
+        if (!isOpen(block)) {
+          let closed = new ListBuilder<BlockData>();
+          var at = block;
+          while (!isOpen(at)) {
+            closed.add(at);
+            at = at.parent as BlockData orelse panic();
+          }
+          for (var i = closed.length - 1; i >= 0; i -= 1) {
+            builder.startNode(kindOfBlock(closed[i]));
+            open.add(closed[i]);
+          }
         }
-        ensureOpen(block.parent as BlockData orelse panic());
-        builder.startNode(kindOfBlock(block));
-        open.add(block);
+      }
+
+      private isOpen(block: BlockData): Boolean {
+        block.depth < open.length && open[block.depth].id == block.id
       }
 
       private sourceToken(kind: Kind, start: Int, end: Int): Void {
@@ -1033,18 +1045,6 @@ no match.
     let isAsciiPunctuation(c: Int): Boolean {
       (c >= 0x21 && c <= 0x2F) || (c >= 0x3A && c <= 0x40) ||
         (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E)
-    }
-
-Where the line from `from` ends, before its line ending.
-
-    let lineContentEnd(source: SourceText, from: Int): Int {
-      var i = from;
-      while (i < source.length) {
-        let c = source.codeAt(i);
-        if (c == char'\n' || c == char'\r') { break; }
-        i += 1;
-      }
-      i
     }
 
 After the line ending at `at`: `\n`, `\r\n`, or `\r`.

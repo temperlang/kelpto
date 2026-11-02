@@ -56,6 +56,10 @@ doesn't make them).
       public id: Int;
       public var blockType: Int;
       public parent: BlockData?;
+
+How many blocks it's inside: 0 for the document.
+
+      public depth: Int;
       public children: ListBuilder<BlockData> = new ListBuilder<BlockData>();
       public var open: Boolean = true;
       public var firstLine: Int;
@@ -101,6 +105,7 @@ cells would be filled in empty (see `maxFilledCells`).
         this.id = id;
         this.blockType = type;
         this.parent = parent;
+        this.depth = if (parent == null) { 0 } else { parent.depth + 1 };
         this.firstLine = firstLine;
         this.endLine = firstLine;
       }
@@ -177,7 +182,7 @@ a line; text after the last one is a last line without one.
       let lines = new ListBuilder<LineData>();
       var start = 0;
       while (start < source.length) {
-        let end = lineContentEnd(source, start);
+        let end = source.lineEnd(start);
         let next = lineBreakEnd(source, end);
         lines.add(new LineData(start, end, next));
         start = next;
@@ -240,26 +245,33 @@ The code point at `at`, as if each line ended in `\n`.
         if (at < lineEnd) { source.codeAt(at) } else { char'\n' }
       }
 
+The loops below work on locals and set the fields once: in Rust, each
+read or write of a field of a class with `var` fields takes a lock.
+
       private findFirstNonspace(): Void {
         var charsToTab = tabStop - column % tabStop;
         if (firstNonspace <= offset) {
-          firstNonspace = offset;
-          firstNonspaceColumn = column;
-          while (firstNonspace < lineEnd) {
-            let c = source.codeAt(firstNonspace);
+          let source = this.source;
+          let lineEnd = this.lineEnd;
+          var at = offset;
+          var atColumn = column;
+          while (at < lineEnd) {
+            let c = source.codeAt(at);
             if (c == char' ') {
-              firstNonspace += 1;
-              firstNonspaceColumn += 1;
+              at += 1;
+              atColumn += 1;
               charsToTab -= 1;
               if (charsToTab == 0) { charsToTab = tabStop; }
             } else if (c == char'\t') {
-              firstNonspace += 1;
-              firstNonspaceColumn += charsToTab;
+              at += 1;
+              atColumn += charsToTab;
               charsToTab = tabStop;
             } else {
               break;
             }
           }
+          firstNonspace = at;
+          firstNonspaceColumn = atColumn;
         }
         indent = firstNonspaceColumn - column;
         blank = firstNonspace >= lineEnd;
@@ -269,30 +281,38 @@ Moves past `count` code points, or `count` columns if `columns`, in
 which case a tab can be partly consumed.
 
       private advanceOffset(count: Int, columns: Boolean): Void {
+        let source = this.source;
+        let lineEnd = this.lineEnd;
+        var at = offset;
+        var atColumn = column;
+        var partial = partiallyConsumedTab;
         var left = count;
-        while (left > 0 && offset < lineEnd) {
-          let c = source.codeAt(offset);
+        while (left > 0 && at < lineEnd) {
+          let c = source.codeAt(at);
           if (c == char'\t') {
-            let charsToTab = tabStop - column % tabStop;
+            let charsToTab = tabStop - atColumn % tabStop;
             if (columns) {
-              partiallyConsumedTab = charsToTab > left;
+              partial = charsToTab > left;
               let advance = if (left < charsToTab) { left } else { charsToTab };
-              column += advance;
-              if (!partiallyConsumedTab) { offset += 1; }
+              atColumn += advance;
+              if (!partial) { at += 1; }
               left -= advance;
             } else {
-              partiallyConsumedTab = false;
-              column += charsToTab;
-              offset += 1;
+              partial = false;
+              atColumn += charsToTab;
+              at += 1;
               left -= 1;
             }
           } else {
-            partiallyConsumedTab = false;
-            offset += 1;
-            column += 1;
+            partial = false;
+            at += 1;
+            atColumn += 1;
             left -= 1;
           }
         }
+        offset = at;
+        column = atColumn;
+        partiallyConsumedTab = partial;
       }
 
       private prefixToken(owner: BlockData, kind: Kind, start: Int, end: Int): Void {
@@ -855,17 +875,25 @@ Sets each block's `lastLine` from the lines holding its text.
       }
     }
 
+Lines come in order, so once a block has reached line `n`, so have its
+parents: stopping there keeps deep nesting linear.
+
     let reach(block: BlockData?, n: Int): Void {
-      if (block != null) {
-        if (block.lastLine < n) { block.lastLine = n; }
-        reach(block.parent, n);
+      var at = block;
+      while (at != null) {
+        let b = at as BlockData orelse panic();
+        if (b.lastLine >= n) { break; }
+        b.lastLine = n;
+        at = b.parent;
       }
     }
 
     let clearLastLineBlank(block: BlockData?): Void {
-      if (block != null) {
-        block.lastLineBlank = false;
-        clearLastLineBlank(block.parent);
+      var at = block;
+      while (at != null) {
+        let b = at as BlockData orelse panic();
+        b.lastLineBlank = false;
+        at = b.parent;
       }
     }
 
@@ -971,7 +999,7 @@ Where `at` is in the source. Not for the `\n` between lines.
 The content of lines `first` up to `end` of a paragraph-like leaf.
 
     let paragraphContent(source: SourceText, lines: List<LineData>, first: Int, end: Int): Content {
-      let out = new StringBuilder();
+      let ranges = new ListBuilder<Int>();
       let starts = new ListBuilder<Int>();
       let lengths = new ListBuilder<Int>();
       let sourceStarts = new ListBuilder<Int>();
@@ -979,23 +1007,23 @@ The content of lines `first` up to `end` of a paragraph-like leaf.
       for (var n = first; n < end; n += 1) {
         let line = lines[n];
         let textStart = skipBlanks(source, line.leafStart, line.contentEnd);
-        if (n > first) {
-          out.append("\n");
-          at += 1;
-        }
+        if (n > first) { at += 1; }
         starts.add(at);
         lengths.add(line.contentEnd - textStart);
         sourceStarts.add(textStart);
-        out.append(source.slice(textStart, line.contentEnd));
+        ranges.add(textStart);
+        ranges.add(line.contentEnd);
         at += line.contentEnd - textStart;
       }
-      new Content(new SourceText(out.toString()), starts.toList(), lengths.toList(), sourceStarts.toList(), first)
+      new Content(
+        source.joinLines(ranges.toList()), starts.toList(), lengths.toList(), sourceStarts.toList(), first,
+      )
     }
 
 Content from one range of one line, as for an ATX heading.
 
     let rangeContent(source: SourceText, line: Int, start: Int, end: Int): Content {
-      new Content(new SourceText(source.slice(start, end)), [0], [end - start], [start], line)
+      new Content(source.joinLines([start, end]), [0], [end - start], [start], line)
     }
 
 ## Link reference definitions

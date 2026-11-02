@@ -223,24 +223,24 @@ checking every entry as the Temper code reads it:
 3. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
 4. Chunked children and interning, once documents are big enough to
-   measure; deep nesting (thousands of block quotes or emphasis
-   levels) without deep recursion.
+   measure; deep nesting (thousands of emphasis levels, and views and
+   rendering of deep blocks) without deep recursion. Parsing and
+   printing deep block nesting are done: linear, with no recursion.
 5. GFM's rest: more edits for tables (rows and columns). Footnotes
    are done. Fix two differences from cmark-gfm in GFM documents: a
    `\|` ending an extended autolink in a table cell should leave the
    link (`www.x.y\|` links `www.x.y`), and a paragraph that is only a
    link definition directly before a table stays text.
 6. Benchmarks: done (2026-11-02; [benchmarks.md](benchmarks.md),
-   `bench/`, and `scripts/bench.py`). kelpto-md is 1.5 to 3.6 times
-   flexmark's time, 4 to 21 times most others', and 16 to 126 times
-   comrak's, Markdig's, and pulldown-cmark's. Next from them, without
-   changing behavior: make `SourceText` decode lazily or index the
-   language's own strings (20 to 30% of a parse in Python and
-   JavaScript); make deep block nesting linear (nested block quotes
-   are quadratic; part of item 4); look at the Rust translation's
-   locks on every mutable field (Rust is 4 times slower than C++ from
-   the same source) and at C#'s and Lua's garbage on long documents;
-   and compare GFM too.
+   `bench/`, and `scripts/bench.py`). A first tuning followed the
+   same day: paragraphs share the document's decoded code points
+   instead of decoding again (`SourceText.joinLines`), deep block
+   nesting is linear, and the block and inline parsers' per-character
+   loops work on locals, which Rust's translation locks for on every
+   field access. Next: the Rust translation's locks elsewhere (Rust is
+   still several times slower than C++ from the same source), C#'s
+   and Lua's garbage on long documents, Python's checked integer
+   arithmetic, and GFM benchmarks.
 7. Typed walks: descendants of one kind (`doc.descendantsOf…`, or a
    filter per view type such as `headingsIn`), so users get typed views
    without casts (Rust needs `temper_core::cast` today) and, if

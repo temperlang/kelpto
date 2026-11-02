@@ -255,6 +255,9 @@ Plain text from `pending` to `at` becomes an item.
 ### The pass
 
       public parse(): Void {
+        // Locals, not fields: in Rust, each field read takes a lock.
+        let text = this.text;
+        let end = this.end;
         var i = start;
         while (i < end) {
           let c = text.codeAt(i);
@@ -385,6 +388,8 @@ from the last start of each length, found in one pass the first time.
       private hasBacktickRunAfter(count: Int, from: Int): Boolean {
         if (!backticksScanned) {
           backticksScanned = true;
+          let text = this.text;
+          let end = this.end;
           var i = start;
           while (i < end) {
             if (text.codeAt(i) == char'`') {
@@ -470,6 +475,8 @@ Where `target`, ASCII, first appears from `from`, or -1.
 
       private findText(from: Int, target: String): Int {
         let first = target[String.begin];
+        let text = this.text;
+        let end = this.end;
         for (var i = from; i < end; i += 1) {
           if (text.codeAt(i) == first && startsWithText(text, i, end, target)) { return i; }
         }
@@ -989,6 +996,8 @@ character reference, and a reference can't span a line break.
         }
         if (!newlinesScanned) {
           newlinesScanned = true;
+          let text = this.text;
+          let end = this.end;
           for (var k = start; k < end; k += 1) {
             if (text.codeAt(k) == char'\n') { newlines.add(k); }
           }

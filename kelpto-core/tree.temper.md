@@ -112,9 +112,32 @@ An inner node: its kind, its children, and their total width.
         this.width = width;
       }
 
+With a stack of nodes and where each is up to, not recursion, so
+thousands of nested block quotes can't overflow the call stack.
+
       public writeTo(out: StringBuilder): Void {
-        for (var i = 0; i < children.length; i += 1) {
-          children[i].writeTo(out);
+        let nodes = new ListBuilder<GreenNode>();
+        let nexts = new ListBuilder<Int>();
+        nodes.add(this);
+        nexts.add(0);
+        while (!nodes.isEmpty) {
+          let top = nodes.length - 1;
+          let node = nodes[top];
+          let next = nexts[top];
+          if (next < node.children.length) {
+            nexts.set(top, next + 1);
+            let child = node.children[next];
+            when (child) {
+              is GreenNode -> do {
+                nodes.add(child);
+                nexts.add(0);
+              };
+              else -> child.writeTo(out);
+            }
+          } else {
+            nodes.removeLast();
+            nexts.removeLast();
+          }
         }
       }
 

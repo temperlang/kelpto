@@ -35,8 +35,8 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   images, inline and by reference, autolinks, code spans, raw HTML,
   character references, backslash escapes, and hard and soft line
   breaks). All 652 of the spec's examples pass, and parsing stays
-  linear on cmark's pathological inline inputs; deep block nesting
-  isn't linear yet (see [Speed](#speed)).
+  linear on cmark's pathological inputs, deep block nesting
+  included (see [Speed](#speed)).
 - **GitHub Flavored Markdown's extensions,** opt-in, from
   `MarkdownParser.gfm` or one at a time from `MarkdownParser.commonMark`
   (`withTables`, `withTaskListItems`, `withStrikethrough`,
@@ -107,7 +107,9 @@ pulldown-cmark's (2026-11-02). It parses at about 8 MB/s in C++, 2 MB/s
 in C#, Java, JavaScript, and Rust, and 0.3 MB/s in Python and Lua.
 Walking every view and printing back, or a batch of edits, costs
 little more than parsing. See [docs/benchmarks.md](../docs/benchmarks.md)
-for the numbers, ranges, and reasons, and `bench/` to run them.
+for the numbers, ranges, and reasons, and `bench/` to run them. A
+first tuning made parsing 1.2 to 1.4 times faster, and deep block
+nesting linear (7 to 15 times faster at hundreds of levels).
 
 ## Walking and transforming
 

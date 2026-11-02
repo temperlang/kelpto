@@ -65,6 +65,38 @@ inline ones too), and is quadratic on several inline shapes (6.8 s on
 160 KB of `[ (](`); flexmark overflows its stack on every size of
 `[ (](` and takes 5.7 s on 192 KB of unclosed links.
 
+## Tuning (2026-11-02, later)
+
+A first tuning, measured before and after on the same machine in
+[bench/results/2026-11-02-tuning.md](../bench/results/2026-11-02-tuning.md)
+(kelpto-md alone, in JavaScript, Python, and Rust; the machine was
+busy, so that file compares the two builds, not absolute times):
+
+- **Paragraphs share the document's decoding.** A paragraph's inline
+  text is `SourceText.joinLines` of the document's: its code points are
+  copied in slices, its string indices shared, and its slices taken
+  from the original string, line by line. Before, each paragraph was
+  joined into a new string and decoded again, twice (once to split off
+  link definitions, once to write it).
+- **Deep block nesting is linear.** Marking each block's last line
+  stopped at the first block already marked, and opening a block's
+  node checks its depth instead of searching the open nodes; neither
+  recurses now, nor does printing a tree back (`asWritten`).
+- **Fewer field reads in per-character loops,** for Rust, whose
+  translation takes a lock on every field read or write of a class
+  with `var` fields: the block parser's indentation scans, the inline
+  parser's main loop, and its whole-paragraph scans work on locals.
+  Splitting the document into lines is one loop in `SourceText`
+  (`lineEnd`).
+
+Parsing the CommonMark spec got 1.2 to 1.3 times faster in all three,
+and Hrefine's README 1.3 to 1.4 times; nested block quotes 11 to 15
+times, and nested lists 7 to 13 times, now ×1.9 to ×2.1 per doubling
+like every other shape. In Rust, a one-round run of
+`scripts/bench.py` gave 84 ms for the spec (99 times pulldown-cmark's
+time, 27 times comrak's). The tables above are the run before; a full
+run of all seven languages needs a quiet machine.
+
 ## Where kelpto-md is slower, and why
 
 kelpto-md is slower everywhere but against flexmark: 1.5 to 3.6 times
@@ -77,25 +109,25 @@ and Python, about 16 to 65 times against comrak and Markdig, and about
   tree, and 40 to 190 bytes of memory per byte of input. The others
   keep only what HTML needs, or, like pulldown-cmark and markdown-it,
   no tree at all.
-- **One source, translated, and not tuned yet.** The same Temper runs
+- **One source, translated, and barely tuned.** The same Temper runs
   in every language, through each one's Temper runtime. Where a
   language's translation is costly, every step pays. In Rust, each
   object with a mutable field, and each `ListBuilder`, sits behind an
   `Arc<RwLock<…>>`, so every field read or write takes a lock (815
-  `read()` or `write()` calls in kelpto-md's generated Rust); it runs
-  4 times slower than the C++ from the same source (94 ms against
-  24.5 ms on the spec; not profiled, since `perf` isn't installed
-  here). Python adds checks to integer arithmetic (755,000
+  `read()` or `write()` calls in kelpto-md's generated Rust, 788 after
+  the tuning above, with the hottest loops on locals); it ran 4 times
+  slower than the C++ from the same source (94 ms against 24.5 ms on
+  the spec; not profiled, since `perf` isn't installed here). Python adds checks to integer arithmetic (755,000
   calls to `int_add` in one parse of the spec, about 10% of it).
-- **`SourceText` decodes every text in full.** It copies the document
-  into two arrays, code points and their indices, one character at a
-  time through the runtime's string functions, and does it again for
-  each paragraph's inline content. In Python (cProfile, the spec) that
-  is 29% of a parse: 1,865 `SourceText`s, 0.71 s of 2.43 s. In
-  JavaScript (`node --prof`, Hrefine's README) the constructor and its
-  array pushes are about 20% of the ticks. Decoding lazily, or indexing
-  the language's own strings where they allow it, would cut most of
-  that, and some memory.
+- **`SourceText` decodes the document in full,** one character at a
+  time through the runtime's string functions, into two arrays (code
+  points and their indices): before the tuning above, 29% of a parse
+  in Python (cProfile, the spec) and about 20% of the ticks in
+  JavaScript (`node --prof`, Hrefine's README), with each paragraph
+  decoded again. Paragraphs now share the document's; the one decode
+  is left. In JavaScript, copying a slice of a `List` is slower than
+  decoding, since Temper's lists are frozen arrays there, so
+  `joinLines` copies from the builder the document was decoded into.
 - **Garbage collection** on long documents in C# and Lua: spec-x10
   takes 18 times the spec's time there for 10 times the bytes, against
   7 to 13 times elsewhere, with C#'s peak memory the highest.
