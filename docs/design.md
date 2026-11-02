@@ -113,37 +113,52 @@ and rendering defaults.
 ### kelpto-md's GFM extensions
 
 - **Opt-in, by parser:** `MarkdownParser.gfm` has all four syntax
-  extensions, `MarkdownParser.commonMark` none, and `withTables`,
+  extensions and footnotes (an option in cmark-gfm, but on at GitHub),
+  `MarkdownParser.commonMark` none, and `withTables`,
   `withTaskListItems`, `withStrikethrough`, `withExtendedAutolinks`,
-  and `withRawHtmlHandler` change one, as Hrefine's `UrlPolicy` does,
+  `withFootnotes`, and `withRawHtmlHandler` change one, as Hrefine's `UrlPolicy` does,
   so no named arguments are needed. `parseMarkdown` is `commonMark`.
   The disallowed raw HTML filter is on rendering,
   `withDisallowedRawHtmlFiltered()`, wrapping the `RawHtmlRenderer`.
 - **As cmark-gfm 0.29.0.gfm.13 does it,** odd corners included (tables
   stop filling short rows after 524,288 empty cells, `~` runs read 100
-  at a time, emails found in text after the rest), since GitHub renders
-  by it. All of GFM's spec examples and cmark-gfm's extension tests
-  pass, in `tests/gfm/`. One choice follows the spec
-  instead: task list items work inside block quotes and on a nested
-  item's line, where cmark-gfm, looking from the line's start, misses
-  them.
+  at a time, emails found in text after the rest, a footnote
+  reference's label taken as written whatever markup it holds, `![^`
+  never an image), since GitHub renders by it. All of GFM's spec
+  examples, cmark-gfm's extension tests, and its footnote regression
+  tests pass, in `tests/gfm/`. Some choices differ: task list items
+  work inside block quotes and on a nested item's line, where
+  cmark-gfm, looking from the line's start, misses them; and a
+  footnote reference needs its `^` written as is and can't span a line
+  break, where cmark-gfm garbles or drops the text.
 - **Lossless:** a table is a leaf block whose lines are row nodes, with
   `Pipe`, `TableDelimiter`, and cell nodes; a backslash before `|` in a
   cell is a `PipeEscape` token, since GFM drops it before reading the
   cell. Task markers are tokens in their item, strikethrough's runs
   `StrikethroughMarker` tokens, and each extended autolink style a
-  node kind.
+  node kind. A footnote definition is a container like a block quote,
+  `[^`, its label, `]`, and `:` tokens on its first line; a reference
+  is `FootnoteOpen`, `LabelText`, and `LinkClose` tokens, whether or
+  not a definition has its label.
 - **Edits reparse as parsed:** the root's kind records the inline
-  extensions, so `Heading.withText` and `TableCell.withText` escape
+  extensions, footnotes included, so `Heading.withText` and `TableCell.withText` escape
   `~` (and `|` in cells) only where needed.
 - **Rendered as cmark-gfm renders:** a document parsed with any
   extension on (its root's kind says so) renders a strong directly
   inside another strong without its own tags, as cmark-gfm's renderer
   does (`src/html.c`, since 0.29.0.gfm.10), so `****foo****` gives one
   `<strong>`. The tree keeps CommonMark's nesting; plain CommonMark
-  documents render it as CommonMark does.
+  documents render it as CommonMark does. Footnotes resolve when
+  rendered, as links do: definitions stay where written in the tree,
+  and those referred to render in a section at the end, numbered by
+  first reference (in definitions too, used or not), with backlinks;
+  a reference without a definition renders as its text.
 - **No cost when off:** each check is behind its flag, and only `~`,
-  `:`, and `w` gain cases in the inline scan.
+  `:`, and `w` gain cases in the inline scan. Footnotes add a check at
+  `]` after links fail, at `!`, and at the block starts, and one walk
+  of the tree when rendering, only in documents parsed with them.
+  Nested references stay linear: inner ones are dropped, not
+  rescanned.
 
 ### Generated tables
 
@@ -172,8 +187,8 @@ checking every entry as the Temper code reads it:
 4. Chunked children and interning, once documents are big enough to
    measure; deep nesting (thousands of block quotes or emphasis
    levels) without deep recursion.
-5. GFM's rest: footnotes, and more edits for tables (rows and
-   columns).
+5. GFM's rest: more edits for tables (rows and columns). Footnotes
+   are done.
 6. Benchmarks of kelpto-md against each language's usual Markdown
    parsers: cmark (C), commonmark.js and markdown-it (JavaScript),
    markdown-it-py and mistune (Python), pulldown-cmark and comrak

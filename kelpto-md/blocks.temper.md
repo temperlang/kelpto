@@ -45,6 +45,7 @@ Block types, as plain numbers, since they're internal.
     let typeDefinition = 11;
     let typeBlankLine = 12;
     let typeTable = 13;
+    let typeFootnoteDefinition = 14;
 
 A block while parsing: mutable, with what the algorithm needs. Blank
 lines and link reference definitions are kept as blocks too, so they
@@ -416,6 +417,22 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
         if (type == typeTable) {
           return if (!blank && continuesTable(block)) { 1 } else { 0 };
         }
+        if (type == typeFootnoteDefinition) {
+
+GFM's footnote definitions go on with four columns of indentation, or
+on an empty line, as cmark-gfm checks it: nothing at all before the
+line ending, so not spaces, nor a container's prefix.
+
+          if (indent >= 4) {
+            let start = offset;
+            advanceOffset(4, true);
+            prefixToken(block, indentKind, start, offset);
+            containerOffset = offset;
+            return 1;
+          }
+          let line = lines[lineNumber];
+          return if (line.start == line.contentEnd) { 1 } else { 0 };
+        }
         if (
           type == typeAtxHeading || type == typeSetextHeading || type == typeThematicBreak ||
           type == typeBlankLine || type == typeDefinition
@@ -453,14 +470,15 @@ Opens the blocks that start on this line, giving the innermost.
         var container = start;
         var maybeLazy = current.blockType == typeParagraph;
         var containerType = container.blockType;
+        var depth = 0;
         while (
           containerType != typeFencedCode && containerType != typeIndentedCode &&
           containerType != typeHtmlBlock
         ) {
+          depth += 1;
           findFirstNonspace();
           let indented = indent >= 4;
           let c = peek(firstNonspace);
-          var matched = 0;
           if (!indented && c == char'>') {
             let quote = addChild(container, typeBlockQuote);
             prefixToken(quote, indentKind, offset, firstNonspace);
@@ -498,6 +516,11 @@ Opens the blocks that start on this line, giving the innermost.
           ) {
             container = addChild(container, typeThematicBreak);
             advanceOffset(lineEnd - offset, false);
+          } else if (
+            !indented && extensions.footnotes && depth < maxOpenDepth &&
+            footnoteLabelEnd(source, firstNonspace, lineEnd) > 0
+          ) {
+            container = openFootnoteDefinition(container);
           } else if (
             (!indented || containerType == typeList) && indent < 4 &&
             listMarkerEnd(source, firstNonspace, lineEnd, containerType == typeParagraph) > 0
@@ -589,6 +612,26 @@ reference definitions; then the underline is a paragraph's text.
         }
       }
 
+A GFM footnote definition, `[^label]:`, and the spaces and tabs after
+it, as its prefix. Its blocks start after them, so its first line is
+never indented code.
+
+      private openFootnoteDefinition(container: BlockData): BlockData {
+        let labelEnd = footnoteLabelEnd(source, firstNonspace, lineEnd);
+        let markerEnd = labelEnd + 2;
+        let contentStart = skipBlanks(source, markerEnd, lineEnd);
+        let definition = addChild(container, typeFootnoteDefinition);
+        prefixToken(definition, indentKind, offset, firstNonspace);
+        prefixToken(definition, footnoteOpenKind, firstNonspace, firstNonspace + 2);
+        prefixToken(definition, labelTextKind, firstNonspace + 2, labelEnd);
+        prefixToken(definition, linkCloseKind, labelEnd, labelEnd + 1);
+        prefixToken(definition, colonKind, labelEnd + 1, markerEnd);
+        prefixToken(definition, whitespaceKind, markerEnd, contentStart);
+        advanceOffset(contentStart - offset, false);
+        containerOffset = offset;
+        definition
+      }
+
 A list item, and a list for it if `container` isn't a list it can
 join. Its content starts after the marker and 1 to 4 columns of
 spaces; with 5 or more, or none before the line's end, after one.
@@ -672,7 +715,8 @@ A lazy continuation line.
           addLine(container);
         } else if (blank) {
           if (
-            (type == typeBlockQuote || type == typeListItem) && container.firstLine == lineNumber &&
+            (type == typeBlockQuote || type == typeListItem || type == typeFootnoteDefinition) &&
+            container.firstLine == lineNumber &&
             !container.hasRealChild
           ) {
 
@@ -851,7 +895,10 @@ Where the definition at `at` ends, or -1.
     }
 
     let canContain(parent: Int, child: Int): Boolean {
-      if (parent == typeDocument || parent == typeBlockQuote || parent == typeListItem) {
+      if (
+        parent == typeDocument || parent == typeBlockQuote || parent == typeListItem ||
+        parent == typeFootnoteDefinition
+      ) {
         child != typeListItem
       } else if (parent == typeList) {
         child == typeListItem
@@ -1277,6 +1324,31 @@ or `X`, and `]`, then a space or tab before anything else.
       if (mark != char' ' && mark != char'x' && mark != char'X') { return 0; }
       if (!isTableSpace(source.codeAt(at + 3))) { return 0; }
       at + 3
+    }
+
+### GFM: footnote definitions
+
+How many blocks one line may open, past which cmark-gfm opens no
+footnote definitions, so deep nesting on one line stays cheap.
+
+    let maxOpenDepth = 100;
+
+Where the `]` of a footnote definition's `[^label]:` at `at` is, or 0:
+`[^`, a label of anything but `]`, spaces, tabs, line endings, and
+U+0000, then `]:`, as cmark-gfm scans it.
+
+    let footnoteLabelEnd(source: SourceText, at: Int, end: Int): Int {
+      if (codeIn(source, at, end) != char'[' || codeIn(source, at + 1, end) != char'^') { return 0; }
+      var i = at + 2;
+      while (i < end) {
+        let c = source.codeAt(i);
+        if (c == char']') {
+          return if (i > at + 2 && codeIn(source, i + 1, end) == char':') { i } else { 0 };
+        }
+        if (c == char' ' || c == char'\t' || c == 0) { return 0; }
+        i += 1;
+      }
+      0
     }
 
 ### HTML blocks

@@ -7,12 +7,13 @@ where each node may go, after Mike's idea of nesting in the types:
 - **`BlockChild`:** blocks, which go in a document, a block quote, or a
   list item: `Heading`, `Paragraph`, `CodeBlock`, `IndentedCode`,
   `ThematicBreak`, `HtmlBlock`, `LinkReferenceDefinition`,
-  `BlockQuote`, `ListBlock`, `Table`, and `BlankLine`.
+  `BlockQuote`, `ListBlock`, `Table`, `FootnoteDefinition`, and
+  `BlankLine`.
 - **`ListChild`:** what a list holds, `ListItem` and `BlankLine`.
 - **`ParagraphChild`:** inlines, which headings and table cells hold
   too: `Text`, `CodeSpan`, `RawHtml`, `Emphasis`, `Strong`,
-  `Strikethrough`, `Link`, `Image`, `Autolink`, `HardBreak`, and
-  `CharacterReference`.
+  `Strikethrough`, `Link`, `Image`, `Autolink`, `HardBreak`,
+  `CharacterReference`, and `FootnoteReference`.
 - **`LinkTextChild`:** what a link's text may hold: every
   `ParagraphChild` but `Link`, since links can't nest.
 
@@ -153,6 +154,31 @@ Fenced code blocks.
         result.toList()
       }
 
+GFM footnote definitions, in order, nested ones too, used or not.
+
+      public get footnoteDefinitions(): List<FootnoteDefinition> {
+        let result = new ListBuilder<FootnoteDefinition>();
+        let all = blocks;
+        for (var i = 0; i < all.length; i += 1) {
+          let block = all[i];
+          if (block is FootnoteDefinition) { result.add(block); }
+        }
+        result.toList()
+      }
+
+GFM footnote references, in order, wherever inlines go: in headings,
+paragraphs, table cells, links, and footnote definitions.
+
+      public get footnoteReferences(): List<FootnoteReference> {
+        let result = new ListBuilder<FootnoteReference>();
+        let walk = new FootnoteWalk();
+        walk.visit(node);
+        for (var i = 0; i < walk.references.length; i += 1) {
+          result.add(new FootnoteReference(walk.references[i]));
+        }
+        result.toList()
+      }
+
       public get htmlBlocks(): List<HtmlBlock> {
         let result = new ListBuilder<HtmlBlock>();
         let all = blocks;
@@ -195,6 +221,7 @@ HTML with the default, escaping raw HTML. See `MarkdownRenderer`.
         result.add(block);
         when (block) {
           is BlockQuote -> addBlocks(block.children, result);
+          is FootnoteDefinition -> addBlocks(block.children, result);
           is ListBlock -> do {
             let items = block.items;
             for (var j = 0; j < items.length; j += 1) {
@@ -219,6 +246,7 @@ The typed view of a block node.
       if (node.hasKind(blockQuoteKind)) { return new BlockQuote(node); }
       if (node.hasKind(listKind)) { return new ListBlock(node); }
       if (node.hasKind(tableKind)) { return new Table(node); }
+      if (node.hasKind(footnoteDefinitionKind)) { return new FootnoteDefinition(node); }
       new BlankLine(node)
     }
 
@@ -252,6 +280,7 @@ The typed view of an inline node.
       }
       if (node.hasKind(hardBreakKind)) { return new HardBreak(node); }
       if (node.hasKind(characterReferenceKind)) { return new CharacterReference(node); }
+      if (node.hasKind(footnoteReferenceKind)) { return new FootnoteReference(node); }
       new Text(node)
     }
 
@@ -842,7 +871,7 @@ block.
     }
 
 Whether `node`, a list or list item, ends with a blank line, there or
-in its last list or item.
+in its last list, item, or footnote definition.
 
     let endsWithBlankLine(node: RedNode): Boolean {
       let kids = node.childNodes;
@@ -850,6 +879,7 @@ in its last list or item.
       let last = kids[kids.length - 1];
       if (last.hasKind(blankLineKind)) { return true; }
       if (last.hasKind(listKind) || last.hasKind(listItemKind)) { return endsWithBlankLine(last); }
+      if (last.hasKind(footnoteDefinitionKind)) { return footnoteEndsBlank(last); }
       false
     }
 
@@ -871,9 +901,18 @@ CommonMark leaves them out of the document.
           if ((kid.hasKind(listKind) || kid.hasKind(listItemKind)) && endsWithBlankLine(kid)) {
             return true;
           }
+          if (kid.hasKind(footnoteDefinitionKind) && footnoteEndsBlank(kid)) { return true; }
         }
       }
       false
+    }
+
+A footnote definition ends with a blank line if it holds nothing, its
+first line empty after `[^label]:`, or its last block is one.
+
+    let footnoteEndsBlank(node: RedNode): Boolean {
+      let kids = node.childNodes;
+      kids.isEmpty || kids[kids.length - 1].hasKind(blankLineKind)
     }
 
     let isBlock(node: RedNode): Boolean {
@@ -950,6 +989,57 @@ One or more blank lines' worth: a line of only spaces and tabs.
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
+    }
+
+### GFM footnote definitions
+
+A footnote definition, such as `[^note]: Text`, holding blocks: the
+rest of its first line, then lines indented four columns, and empty
+lines. It renders as nothing where it is; a document's definitions
+with references render in a section at the end, numbered in order of
+first reference.
+
+    export class FootnoteDefinition extends BlockChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+The label between `[^` and `]`, as written. References match it by
+`normalizeLabel`, as links match definitions.
+
+      public get label(): String { node.childOfKind(labelTextKind)?.asWritten ?? "" }
+
+      public get children(): List<BlockChild> { blockChildrenOf(node) }
+
+A new document with the label replaced by `label`, changing only the
+label. References to the old label no longer reach it. Bubbles unless
+`label` is a valid one (see `checkFootnoteLabel`).
+
+      public withLabel(label: String): MarkdownDocument throws Bubble {
+        checkFootnoteLabel(label);
+        let token = node.childOfKind(labelTextKind) as RedToken orelse panic();
+        new MarkdownDocument(token.replaceWith(new GreenToken(labelTextKind, label)))
+      }
+    }
+
+A label an edit can write for a footnote definition or reference:
+something, with no whitespace, brackets, backslashes, backticks, `<`,
+`|`, or U+0000, so it reads back as the same label wherever it goes.
+Bubbles if not.
+
+    let checkFootnoteLabel(label: String): Void throws Bubble {
+      let source = new SourceText(label);
+      if (source.length == 0) { bubble(); }
+      for (var i = 0; i < source.length; i += 1) {
+        let c = source.codeAt(i);
+        if (
+          isAsciiWhitespace(c) || c == char'[' || c == char']' || c == char'\\' || c == char'`' ||
+          c == char'<' || c == char'|' || c == 0
+        ) {
+          bubble();
+        }
+      }
     }
 
 ### GFM tables
@@ -1468,6 +1558,171 @@ written, with its value a view.
 What it stands for, such as `&` for `&amp;`.
 
       public get value(): String { referenceValue(node.asWritten) }
+    }
+
+A GFM footnote reference, such as `[^note]`. It renders as a number
+linking to its definition, or, if no definition has its label, as its
+text, as written.
+
+    export class FootnoteReference extends ParagraphChild & LinkTextChild {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+The label between `[^` and `]`, as written, markup and all (but for
+backslashes before `|` in a table cell, which GFM drops).
+
+      public get label(): String { footnoteLabelOf(node) }
+
+The definition it refers to, or null: the first with its label, by
+`normalizeLabel`. Looks through the whole document.
+
+      public get definition(): FootnoteDefinition? {
+        let index = new FootnoteIndex(node.root);
+        let found = index.definitionOf(node);
+        if (found == null) { null } else { new FootnoteDefinition(found) }
+      }
+
+A new document with the label replaced by `label`, changing only the
+label. Bubbles unless `label` is a valid one (see
+`checkFootnoteLabel`).
+
+      public withLabel(label: String): MarkdownDocument throws Bubble {
+        checkFootnoteLabel(label);
+        let kids = node.green.children;
+        let out = new ListBuilder<GreenElement>();
+        var placed = false;
+        for (var i = 0; i < kids.length; i += 1) {
+          let id = kids[i].kind.id;
+          if (id == labelTextKind.id || id == pipeEscapeKind.id) {
+            if (!placed) { out.add(new GreenToken(labelTextKind, label)); }
+            placed = true;
+          } else {
+            out.add(kids[i]);
+          }
+        }
+        new MarkdownDocument(node.replaceWith(new GreenNode(node.kind, out.toList())))
+      }
+    }
+
+    let footnoteLabelOf(node: RedNode): String {
+      let out = new StringBuilder();
+      let kids = node.green.children;
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        if (kid.kind.id == labelTextKind.id) { kid.writeTo(out); }
+      }
+      out.toString()
+    }
+
+### Numbering footnotes
+
+The footnote nodes of a tree, in order: references as they come, and
+definitions as each ends, after any nested in them, as cmark-gfm
+collects them. Code, HTML, and tables' delimiter rows hold neither.
+
+    class FootnoteWalk {
+      public references: ListBuilder<RedNode> = new ListBuilder<RedNode>();
+      public definitions: ListBuilder<RedNode> = new ListBuilder<RedNode>();
+      public constructor() {}
+
+      public visit(node: RedNode): Void {
+        let kind = node.green.kind;
+        if (kind.id == footnoteReferenceKind.id) {
+          references.add(node);
+          return;
+        }
+        if (
+          kind.id == codeBlockKind.id || kind.id == indentedCodeKind.id || kind.id == htmlBlockKind.id ||
+          kind.id == rawHtmlKind.id || kind.id == codeSpanKind.id
+        ) {
+          return;
+        }
+        var at = node.offset;
+        let kids = node.green.children;
+        for (var i = 0; i < kids.length; i += 1) {
+          let kid = kids[i];
+          if (kid is GreenNode) { visit(new RedNode(kid, node, at, i)); }
+          at += kid.width;
+        }
+        if (kind.id == footnoteDefinitionKind.id) { definitions.add(node); }
+      }
+    }
+
+How a document's footnotes number, as cmark-gfm numbers them: each
+reference goes to the first definition with its label, and each
+definition referred to gets the next number at its first reference.
+References in definitions count where the definitions are, even
+unused ones. A reference's label matches only up to 1,000 bytes of
+UTF-8, as cmark-gfm's labels do.
+
+    class FootnoteIndex {
+
+The definitions referred to, in number order; how many references
+each has; and each resolved reference's number and its place among
+its definition's references (1 for the first), by its offset.
+
+      public used: ListBuilder<RedNode> = new ListBuilder<RedNode>();
+      public counts: ListBuilder<Int> = new ListBuilder<Int>();
+      private numbers: MapBuilder<Int, Int> = new MapBuilder<Int, Int>();
+      private places: MapBuilder<Int, Int> = new MapBuilder<Int, Int>();
+      private byLabel: MapBuilder<String, RedNode> = new MapBuilder<String, RedNode>();
+
+      public constructor(root: RedNode) {
+        let walk = new FootnoteWalk();
+        walk.visit(root);
+        let definitions = walk.definitions;
+        for (var i = 0; i < definitions.length; i += 1) {
+          let label = normalizeLabel(new FootnoteDefinition(definitions[i]).label);
+          if (!byLabel.has(label)) { byLabel[label] = definitions[i]; }
+        }
+        let numberOf = new MapBuilder<Int, Int>();
+        let references = walk.references;
+        for (var i = 0; i < references.length; i += 1) {
+          let reference = references[i];
+          let found = definitionOf(reference);
+          if (found != null) {
+            let key = found.offset;
+            var number = numberOf.getOr(key, 0);
+            if (number == 0) {
+              used.add(found);
+              counts.add(0);
+              number = used.length;
+              numberOf[key] = number;
+            }
+            counts.set(number - 1, counts[number - 1] + 1);
+            numbers[reference.offset] = number;
+            places[reference.offset] = counts[number - 1];
+          }
+        }
+      }
+
+The definition `reference` goes to, or null.
+
+      public definitionOf(reference: RedNode): RedNode? {
+        let label = footnoteLabelOf(reference);
+        if (utf8Length(label) > 1000) { return null; }
+        let normalized = normalizeLabel(label);
+        if (normalized.isEmpty) { return null; }
+        if (byLabel.has(normalized)) { byLabel[normalized] orelse panic() } else { null }
+      }
+
+The number of the reference at `offset`, or 0 if none, and its place
+among its definition's references.
+
+      public numberAt(offset: Int): Int { numbers.getOr(offset, 0) }
+      public placeAt(offset: Int): Int { places.getOr(offset, 0) }
+    }
+
+    let utf8Length(text: String): Int {
+      let source = new SourceText(text);
+      var length = 0;
+      for (var i = 0; i < source.length; i += 1) {
+        let c = source.codeAt(i);
+        length += if (c < 0x80) { 1 } else if (c < 0x800) { 2 } else if (c < 0x10000) { 3 } else { 4 };
+      }
+      length
     }
 
 ## Escaping for edits

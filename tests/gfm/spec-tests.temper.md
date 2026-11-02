@@ -1,8 +1,9 @@
 # Testing against GFM's examples
 
 Each example runs as cmark-gfm's own test tools run it: the spec's
-extension examples with only the extension each names, and
-extensions.txt's with all of them, raw HTML trusted (as cmark-gfm's
+extension examples with only the extension each names, extensions.txt's
+with all of them, footnotes included, and regression.txt's footnote
+examples with those each names, raw HTML trusted (as cmark-gfm's
 `--unsafe`), and the disallowed raw HTML filter on where the
 extensions are.
 
@@ -17,6 +18,18 @@ linked without extended autolinks. As CommonMark, they're checked in
 
     let parserFor(example: GfmExample): MarkdownParser {
       let extension = example.extension;
+      if (example.source == "regression") {
+        var parser = MarkdownParser.commonMark;
+        let names = extension.split(" ");
+        for (var i = 0; i < names.length; i += 1) {
+          let name = names[i];
+          if (name == "table") { parser = parser.withTables(true); }
+          if (name == "strikethrough") { parser = parser.withStrikethrough(true); }
+          if (name == "autolink") { parser = parser.withExtendedAutolinks(true); }
+          if (name == "footnotes") { parser = parser.withFootnotes(true); }
+        }
+        return parser;
+      }
       if (example.source == "extensions" || extension == "disabled") { return MarkdownParser.gfm; }
       if (extension == "table") { return MarkdownParser.commonMark.withTables(true); }
       if (extension == "strikethrough") { return MarkdownParser.commonMark.withStrikethrough(true); }
@@ -71,6 +84,8 @@ Counts by extension, as `extension: passed/total`.
         let example = examples[i];
         let name = if (example.source == "extensions") {
           "extensions.txt (all)"
+        } else if (example.source == "regression") {
+          "regression.txt (footnotes)"
         } else if (example.extension == "") {
           "spec (CommonMark 0.29)"
         } else if (example.extension == "disabled") {

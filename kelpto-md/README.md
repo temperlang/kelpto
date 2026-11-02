@@ -23,6 +23,10 @@ gfm.taskListItems[0].withChecked(true).asWritten; // "…- [x] todo\n"
 new MarkdownRenderer().withRawHtmlTrusted().withDisallowedRawHtmlFiltered().render(gfm);
                                  // GFM's own HTML: "<table>\n<thead>…<del>x</del>…"
 MarkdownParser.commonMark.withTables(true).parse("| a |\n| - |\n"); // one extension
+
+let notes = MarkdownParser.gfm.parse("Hi[^n].\n\n[^n]: A note.\n");
+notes.footnoteReferences[0].definition?.label;   // "n"
+notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</a></sup>.</p>\n<section …"
 ```
 
 - **All of CommonMark 0.31.2,** by its two-phase algorithm: every
@@ -33,10 +37,12 @@ MarkdownParser.commonMark.withTables(true).parse("| a |\n| - |\n"); // one exten
   linear on cmark's pathological inputs.
 - **GitHub Flavored Markdown's extensions,** opt-in, from
   `MarkdownParser.gfm` or one at a time from `MarkdownParser.commonMark`
-  (`withTables`, `withTaskListItems`, `withStrikethrough`, and
-  `withExtendedAutolinks`): every example in GFM's spec and cmark-gfm's
-  extension tests renders as cmark-gfm renders it, linear on its
-  pathological inputs too. That includes cmark-gfm's one change to
+  (`withTables`, `withTaskListItems`, `withStrikethrough`,
+  `withExtendedAutolinks`, and `withFootnotes`): every example in GFM's
+  spec and cmark-gfm's extension and footnote tests renders as
+  cmark-gfm renders it, linear on its pathological inputs too.
+  Footnotes render as GitHub's do: numbered by first reference, in a
+  section at the end, with backlinks. That includes cmark-gfm's one change to
   CommonMark's HTML: in a GFM document, a strong directly inside a
   strong adds no tags (`****foo****` is one `<strong>`), though the
   tree keeps both. Off, parsing and rendering are CommonMark's, at the
@@ -60,7 +66,9 @@ MarkdownParser.commonMark.withTables(true).parse("| a |\n| - |\n"); // one exten
   `header` and `rows` of `TableCell`s, each with its `alignment`;
   `ListItem.task` gives a `TaskListItem` (`checked`); and `Autolink`'s
   `style` is `"angle"`, or `"url"`, `"www"`, or `"email"` for extended
-  ones. Table pipes, delimiter rows, `~` runs, and task markers are
+  ones. `FootnoteDefinition` is a block holding blocks, and
+  `FootnoteReference` an inline, with its `label` and `definition`.
+  Table pipes, delimiter rows, `~` runs, and task markers are
   tokens, so GFM stays lossless too. Links know their `style`, `label`,
   `destination`, and `title`, resolving references through the
   document's definitions; `normalizeLabel` matches labels as the spec
@@ -69,7 +77,8 @@ MarkdownParser.commonMark.withTables(true).parse("| a |\n| - |\n"); // one exten
   sharing what didn't change: `Heading.withText` and `withLevel`,
   `CodeBlock.withInfo`, `withDestination` on
   `LinkReferenceDefinition`, and on inline `Link` and `Image`,
-  `TableCell.withText`, and `TaskListItem.withChecked`.
+  `TableCell.withText`, `TaskListItem.withChecked`, and `withLabel` on
+  footnote definitions and references.
 - **Raw HTML,** inline and in HTML blocks, is found by CommonMark's
   rules and handed to a `RawHtmlHandler` (opaque text by default), and
   rendered by a `RawHtmlRenderer` (escaped by default). The `kelpto`

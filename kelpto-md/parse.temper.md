@@ -143,16 +143,33 @@ before reading the cell's inlines.
     export let wwwAutolinkKind = new Kind(174, "WwwAutolink");
     export let emailAutolinkKind = new Kind(175, "EmailAutolink");
 
+GFM's footnotes, when on: a definition, `[^label]:` and its blocks, a
+container like a block quote, its marker tokens on its first line; and
+a reference, `[^label]`, inline. Both write `[^` as a `FootnoteOpen`
+token, the label as `LabelText`, and `]` as `LinkClose`, then a
+definition's `:` as `Colon`. In a table cell, a backslash before `|` in
+a reference's label is a `PipeEscape` token, as elsewhere in cells.
+
+    export let footnoteDefinitionKind = new Kind(184, "FootnoteDefinition");
+    export let footnoteReferenceKind = new Kind(185, "FootnoteReference");
+    export let footnoteOpenKind = new Kind(186, "FootnoteOpen");
+
 A document parsed with any GFM extension on has a root kind saying
 so: which inline extensions, so edits that reparse inlines
 (`Heading.withText`, `TableCell.withText`) read them as the parser
 did, or else only that it's GFM, for rendering as cmark-gfm does.
+Footnotes count as inline, and also tell the renderer to number them.
 Every one is named `Document`.
 
     let documentKindFor(extensions: Extensions): Kind {
-      if (extensions.strikethrough && extensions.autolinks) { return new Kind(178, "Document"); }
-      if (extensions.strikethrough) { return new Kind(176, "Document"); }
-      if (extensions.autolinks) { return new Kind(177, "Document"); }
+      let s = extensions.strikethrough;
+      let a = extensions.autolinks;
+      if (extensions.footnotes) {
+        return new Kind(if (s && a) { 183 } else if (s) { 181 } else if (a) { 182 } else { 180 }, "Document");
+      }
+      if (s && a) { return new Kind(178, "Document"); }
+      if (s) { return new Kind(176, "Document"); }
+      if (a) { return new Kind(177, "Document"); }
       if (extensions.tables || extensions.taskListItems) { return new Kind(179, "Document"); }
       documentKind
     }
@@ -168,7 +185,17 @@ kind.
 
     let inlineExtensionsOf(node: RedNode): Extensions {
       let id = node.root.green.kind.id;
-      new Extensions(false, false, id == 176 || id == 178, id == 177 || id == 178)
+      new Extensions(
+        false, false, id == 176 || id == 178 || id == 181 || id == 183,
+        id == 177 || id == 178 || id == 182 || id == 183, id >= 180 && id <= 183,
+      )
+    }
+
+Whether the document holding `node` was parsed with footnotes on.
+
+    let hasFootnotes(node: RedNode): Boolean {
+      let id = node.root.green.kind.id;
+      id >= 180 && id <= 183
     }
 
 A tab partly used by a prefix, with 1, 2, or 3 columns left for the
@@ -249,7 +276,7 @@ The green tree alone, for tools working below the typed views.
 
 A `MarkdownParser` says which of GitHub Flavored Markdown's extensions
 to read, and how to handle raw HTML. Start from `MarkdownParser.gfm`,
-with all four, or `MarkdownParser.commonMark`, with none, as
+with all of them, or `MarkdownParser.commonMark`, with none, as
 `parseMarkdown` reads, and change one option per `with` method; each
 gives a new parser, so one can be shared.
 
@@ -274,6 +301,12 @@ cmark-gfm, define them:
 - **Extended autolinks:** `www.` domains, `http://`, `https://`, and
   `ftp://` URLs, and email addresses (with `mailto:` or `xmpp:` or
   not), linked without angle brackets.
+- **Footnotes:** a definition, `[^label]:` then blocks indented four
+  columns after its first line, and references, `[^label]`, matching
+  definitions' labels as links' do. They render numbered in order of
+  first reference, in a section at the end. cmark-gfm has them as an
+  option rather than an extension, but GitHub turns them on, so `gfm`
+  has them too.
 
 GFM's fifth extension, the filter for disallowed raw HTML, is on
 rendering: see `MarkdownRenderer.withDisallowedRawHtmlFiltered`. With
@@ -286,6 +319,7 @@ the same.
       private taskListItems: Boolean;
       private strikethrough: Boolean;
       private autolinks: Boolean;
+      private footnotes: Boolean;
 
 The constructor is private, so parsers start from `commonMark` or
 `gfm`. Its parameters are plain types, since Temper's C# backend makes
@@ -293,46 +327,52 @@ private constructors public.
 
       private constructor(
         rawHtmlHandler: RawHtmlHandler, tables: Boolean, taskListItems: Boolean,
-        strikethrough: Boolean, autolinks: Boolean,
+        strikethrough: Boolean, autolinks: Boolean, footnotes: Boolean,
       ) {
         this.rawHtmlHandler = rawHtmlHandler;
         this.tables = tables;
         this.taskListItems = taskListItems;
         this.strikethrough = strikethrough;
         this.autolinks = autolinks;
+        this.footnotes = footnotes;
       }
 
 CommonMark alone, as `parseMarkdown` reads it.
 
       public static commonMark: MarkdownParser = new MarkdownParser(
-        new OpaqueRawHtml(), false, false, false, false,
+        new OpaqueRawHtml(), false, false, false, false, false,
       );
 
-All four of GFM's syntax extensions: tables, task list items,
-strikethrough, and extended autolinks.
+All four of GFM's syntax extensions, tables, task list items,
+strikethrough, and extended autolinks, and footnotes, as GitHub reads
+them.
 
       public static gfm: MarkdownParser = new MarkdownParser(
-        new OpaqueRawHtml(), true, true, true, true,
+        new OpaqueRawHtml(), true, true, true, true, true,
       );
 
       public withRawHtmlHandler(handler: RawHtmlHandler): MarkdownParser {
-        new MarkdownParser(handler, tables, taskListItems, strikethrough, autolinks)
+        new MarkdownParser(handler, tables, taskListItems, strikethrough, autolinks, footnotes)
       }
 
       public withTables(on: Boolean): MarkdownParser {
-        new MarkdownParser(rawHtmlHandler, on, taskListItems, strikethrough, autolinks)
+        new MarkdownParser(rawHtmlHandler, on, taskListItems, strikethrough, autolinks, footnotes)
       }
 
       public withTaskListItems(on: Boolean): MarkdownParser {
-        new MarkdownParser(rawHtmlHandler, tables, on, strikethrough, autolinks)
+        new MarkdownParser(rawHtmlHandler, tables, on, strikethrough, autolinks, footnotes)
       }
 
       public withStrikethrough(on: Boolean): MarkdownParser {
-        new MarkdownParser(rawHtmlHandler, tables, taskListItems, on, autolinks)
+        new MarkdownParser(rawHtmlHandler, tables, taskListItems, on, autolinks, footnotes)
       }
 
       public withExtendedAutolinks(on: Boolean): MarkdownParser {
-        new MarkdownParser(rawHtmlHandler, tables, taskListItems, strikethrough, on)
+        new MarkdownParser(rawHtmlHandler, tables, taskListItems, strikethrough, on, footnotes)
+      }
+
+      public withFootnotes(on: Boolean): MarkdownParser {
+        new MarkdownParser(rawHtmlHandler, tables, taskListItems, strikethrough, autolinks, on)
       }
 
 Parses `text`. Never fails: any text is some document.
@@ -343,7 +383,8 @@ The green tree alone.
 
       public parseGreen(text: String): GreenNode {
         parseWith(
-          text, rawHtmlHandler, new Extensions(tables, taskListItems, strikethrough, autolinks),
+          text, rawHtmlHandler,
+          new Extensions(tables, taskListItems, strikethrough, autolinks, footnotes),
         )
       }
     }
@@ -355,9 +396,10 @@ Which extensions a parse reads, inside the library.
       public taskListItems: Boolean,
       public strikethrough: Boolean,
       public autolinks: Boolean,
+      public footnotes: Boolean,
     ) {}
 
-    let noExtensions = new Extensions(false, false, false, false);
+    let noExtensions = new Extensions(false, false, false, false, false);
 
     let parseWith(text: String, rawHtmlHandler: RawHtmlHandler, extensions: Extensions): GreenNode {
       let source = new SourceText(text);
@@ -416,6 +458,7 @@ prefix tokens on lines after its first.
       private builder: GreenNodeBuilder = new GreenNodeBuilder();
       private open: ListBuilder<BlockData> = new ListBuilder<BlockData>();
       private var inText: Boolean = false;
+      private var inCell: Boolean = false;
 
       public constructor(
         source: SourceText, lines: List<LineData>, handler: RawHtmlHandler,
@@ -864,8 +907,10 @@ written as `emit` writes them.
 
       private parseInlines(content: Content, start: Int, end: Int, inCell: Boolean): Void {
         let parser = new InlineParser(
-          content.text, start, end, labels, extensions.strikethrough, extensions.autolinks, inCell,
+          content.text, start, end, labels, extensions.strikethrough, extensions.autolinks,
+          extensions.footnotes, inCell,
         );
+        this.inCell = inCell;
         parser.parse();
         builder.startNode(inlineContentKind);
         writeItems(content, parser, 0);
@@ -902,12 +947,32 @@ The children of `parent`, an item of `parser`. Text items group into
               }
             }
             emit(content, kind, start, end);
+          } else if (inCell && kind.id == labelTextKind.id) {
+            closeText();
+            cellLabel(content, start, end);
           } else {
             closeText();
             emit(content, kind, start, end);
           }
           item = parser.nexts[item];
         }
+      }
+
+A footnote reference's label in a table cell, with each backslash
+before `|` a `PipeEscape`, which the label leaves out, as GFM drops it
+before reading the cell's inlines. Done here, once per label written,
+rather than as references are found, which can nest.
+
+      private cellLabel(content: Content, start: Int, end: Int): Void {
+        var at = start;
+        for (var k = start; k + 1 < end; k += 1) {
+          if (content.text.codeAt(k) == char'\\' && content.text.codeAt(k + 1) == char'|') {
+            emit(content, labelTextKind, at, k);
+            emit(content, pipeEscapeKind, k, k + 1);
+            at = k + 1;
+          }
+        }
+        emit(content, labelTextKind, at, end);
       }
 
 Raw HTML goes to the handler if it's one piece in the source, and
@@ -946,6 +1011,7 @@ stays opaque text between line breaks' prefixes if not.
       if (type == typeHtmlBlock) { return htmlBlockKind; }
       if (type == typeDefinition) { return linkReferenceDefinitionKind; }
       if (type == typeTable) { return tableKind; }
+      if (type == typeFootnoteDefinition) { return footnoteDefinitionKind; }
       blankLineKind
     }
 
@@ -1292,15 +1358,15 @@ looks for the marker from the start of the line only).
       assert(mismatch == "<p>a | b\n|-|\nc\n|-|</p>\n") { mismatch };
     }
 
-Random mixes of GFM's markup, from a fixed seed. Each must roundtrip,
-and render without failing, with all of GFM on.
+Random mixes of GFM's markup, footnotes included, from a fixed seed.
+Each must roundtrip, and render without failing, with all of GFM on.
 
     let gfmPieces(): List<String> {
       [
         "|", " | ", "\\|", "\\\\|", "---", ":-", "-:", ":-:", "|-|", "\n", "\r\n", "\r", "\n\n", "a",
         "~", "~~", "~~~", " ", "\t", "www.", "x.test", "http://", "https://a.b", "ftp:", "@", "a@b.c",
         "mailto:", "xmpp:", "_", "*", "(", ")", "&amp;", ";", "<", ">", "- ", "1. ", "[ ] ", "[x] ",
-        "[X]", "> ", "    ", "`", "[", "]", "é", "😀", "\u{B}",
+        "[X]", "> ", "    ", "`", "[", "]", "é", "😀", "\u{B}", "[^a]", "[^a]: ", "[^", "^", "![",
       ]
     }
 
@@ -1328,4 +1394,153 @@ and render without failing, with all of GFM on.
         }
       }
       assert(failures == 0 && rendered > 0) { "${failures.toString()} failed, such as ${first}" };
+    }
+
+### GFM's footnotes
+
+Rendered HTML below is cmark-gfm 0.29.0.gfm.13's for the same input
+(with all of GFM and footnotes on), byte for byte. These helpers write
+its markup for a reference and a backlink.
+
+    let fnRef(id: String, number: Int, place: Int): String {
+      let suffix = if (place > 1) { "-${place.toString()}" } else { "" };
+      "<sup class=\"footnote-ref\"><a href=\"#fn-${id}\" id=\"fnref-${id}${suffix}\" data-footnote-ref>${number.toString()}</a></sup>"
+    }
+
+    let fnBack(id: String, number: Int, place: Int): String {
+      let n = number.toString();
+      if (place == 1) {
+        return "<a href=\"#fnref-${id}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${n}\" aria-label=\"Back to reference ${n}\">↩</a>";
+      }
+      let p = place.toString();
+      " <a href=\"#fnref-${id}-${p}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${n}-${p}\" aria-label=\"Back to reference ${n}-${p}\">↩<sup class=\"footnote-ref\">${p}</sup></a>"
+    }
+
+    let joined(parts: List<String>): String { parts.join("") { (s: String): String => s } }
+
+Definitions keep every code point where they're written, and render
+at the end in order of first reference, the unused one left out, a
+reference in it still counting. References match case-insensitively;
+one without a definition is its text, markup and all; `![^` is no
+image.
+
+    test("GFM footnotes: definitions and references, losslessly") {
+      let text = "Hi[^n] and[^N], ![^n] [^none] [^x *y*].\n\n> [^n]: A *note*.\n>\n>     More.\n\n[^u]: Unused, but [^m].\n\n[^m]:\n    ```\n    code\n    ```\n";
+      let doc = MarkdownParser.gfm.parse(text);
+      assert(doc.asWritten == text) { doc.asWritten };
+      let definitions = doc.footnoteDefinitions;
+      let labels = new ListBuilder<String>();
+      for (var i = 0; i < definitions.length; i += 1) { labels.add(definitions[i].label); }
+      assert(joined(labels.toList()) == "num") { joined(labels.toList()) };
+      let quote = doc.children[2] as BlockQuote orelse panic();
+      let note = quote.children[0] as FootnoteDefinition orelse panic();
+      assert(note.asWritten == "[^n]: A *note*.\n") { note.asWritten };
+      let after = quote.children;
+      assert(note.children[0] is Paragraph && after[after.length - 1] is IndentedCode) { "the `>` line ends it" };
+      let references = doc.footnoteReferences;
+      assert(references.length == 6) { references.length.toString() };
+      assert(references[1].label == "N" && references[1].definition?.label == "n") { references[1].label };
+      assert(references[3].definition == null && references[4].label == "x *y*") { references[4].label };
+      assert(references[5].asWritten == "[^m]" && references[5].definition?.label == "m") { "in the unused one" };
+      let html = doc.toHtml();
+      let expected = joined([
+        "<p>Hi", fnRef("n", 1, 1), " and", fnRef("n", 1, 2), ", !", fnRef("n", 1, 3),
+        " [^none] [^x *y*].</p>\n<blockquote>\n<pre><code>More.\n</code></pre>\n</blockquote>\n",
+        "<section class=\"footnotes\" data-footnotes>\n<ol>\n<li id=\"fn-n\">\n<p>A <em>note</em>. ",
+        fnBack("n", 1, 1), fnBack("n", 1, 2), fnBack("n", 1, 3), "</p>\n</li>\n",
+        "<li id=\"fn-m\">\n<pre><code>code\n</code></pre>\n", fnBack("m", 2, 1), "\n</li>\n",
+        "</ol>\n</section>\n",
+      ]);
+      assert(html == expected) { html };
+    }
+
+In a table cell, where `\|` is `|`; in an image's description, where a
+reference adds nothing but one without a definition is its text; and
+in a list, where a definition that's only `[^a]:` ends with a blank
+line, making the list loose. The first definition with a label wins,
+and a reference followed by `[]` stays one, but one followed by a
+destination is a link.
+
+    test("GFM footnotes: in cells, images, and lists") {
+      let table = MarkdownParser.gfm.parse("| a | b |\n| - | - |\n| [^p\\|q] | [^z] |\n\n[^p|q]: Pipe.\n");
+      let cell = table.footnoteReferences[0];
+      assert(cell.label == "p|q" && cell.asWritten == "[^p\\|q]") { cell.label };
+      let tableHtml = table.toHtml();
+      let tableExpected = joined([
+        "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>",
+        fnRef("p%7Cq", 1, 1), "</td>\n<td>[^z]</td>\n</tr>\n</tbody>\n</table>\n",
+        "<section class=\"footnotes\" data-footnotes>\n<ol>\n<li id=\"fn-p%7Cq\">\n<p>Pipe. ",
+        fnBack("p%7Cq", 1, 1), "</p>\n</li>\n</ol>\n</section>\n",
+      ]);
+      assert(tableHtml == tableExpected) { tableHtml };
+      let image = MarkdownParser.gfm.parse("![x [^a] y [^b]](/u)\n\n[^a]: q\n").toHtml();
+      let imageExpected = joined([
+        "<p><img src=\"/u\" alt=\"x  y [^b]\" /></p>\n<section class=\"footnotes\" data-footnotes>\n<ol>\n",
+        "<li id=\"fn-a\">\n<p>q ", fnBack("a", 1, 1), "</p>\n</li>\n</ol>\n</section>\n",
+      ]);
+      assert(image == imageExpected) { image };
+      let list = MarkdownParser.gfm.parse("- [^a]:\n- b\n\n[^a]: x\n    [^a]: y\n\n[^a] [^a][] [^a](/l)\n").toHtml();
+      let listExpected = joined([
+        "<ul>\n<li></li>\n<li>\n<p>b</p>\n</li>\n</ul>\n<p>", fnRef("a", 1, 1), " ", fnRef("a", 1, 2),
+        "[] <a href=\"/l\">^a</a></p>\n<section class=\"footnotes\" data-footnotes>\n<ol>\n<li id=\"fn-a\">\n",
+        fnBack("a", 1, 1), fnBack("a", 1, 2), "\n</li>\n</ol>\n</section>\n",
+      ]);
+      assert(list == listExpected) { list };
+    }
+
+Off, as in `parseMarkdown`, `[^a]: /u` is a link reference definition
+and `![^a](/i)` an image, as CommonMark has them. On, the definition
+is a footnote's, and the `!` text.
+
+    test("GFM footnotes: off unless asked for") {
+      let text = "[^a]\n\n[^a]: /u\n![^a](/i)\n";
+      let off = parseMarkdown(text).toHtml();
+      assert(off == "<p><a href=\"/u\">^a</a></p>\n<p><img src=\"/i\" alt=\"^a\" /></p>\n") { off };
+      let gfmOff = MarkdownParser.gfm.withFootnotes(false).parse(text).toHtml();
+      assert(gfmOff == off) { gfmOff };
+      let on = MarkdownParser.commonMark.withFootnotes(true).parse(text).toHtml();
+      let expected = joined([
+        "<p>", fnRef("a", 1, 1), "</p>\n<section class=\"footnotes\" data-footnotes>\n<ol>\n",
+        "<li id=\"fn-a\">\n<p>/u\n!<a href=\"/i\">^a</a> ", fnBack("a", 1, 1), "</p>\n</li>\n</ol>\n</section>\n",
+      ]);
+      assert(on == expected) { on };
+    }
+
+Where kelpto-md differs from cmark-gfm, which there drops or garbles
+text: a `^` escaped or written as a character reference, and brackets
+across a line break, make no reference.
+
+    test("GFM footnotes: an escaped ^ and a line break make no reference") {
+      let html = MarkdownParser.gfm.parse("[\\^a] [&#94;a] [^a\nb]\n\n[^a]: x\n").toHtml();
+      assert(html == "<p>[^a] [^a] [^a\nb]</p>\n") { html };
+    }
+
+Edits: a heading's new text is escaped, so it holds no reference, and
+labels change alone, references to an old one no longer resolving. An
+edited document renders as its text parses.
+
+    test("GFM footnotes: edits") {
+      let doc = MarkdownParser.gfm.parse("# Notes[^n]\n\nText[^n].\n\n[^n]: A note.\n");
+      let heading = doc.headings[0].withText("New [^n]");
+      assert(heading.asWritten == "# New \\[^n\\]\n\nText[^n].\n\n[^n]: A note.\n") { heading.asWritten };
+      assert(heading.footnoteReferences.length == 1) { "the heading has none" };
+      let renamed = doc.footnoteDefinitions[0].withLabel("note") orelse panic();
+      assert(renamed.asWritten == "# Notes[^n]\n\nText[^n].\n\n[^note]: A note.\n") { renamed.asWritten };
+      assert(renamed.footnoteReferences[0].definition == null) { "no longer resolves" };
+      let renamedHtml = renamed.toHtml();
+      assert(renamedHtml == "<h1>Notes[^n]</h1>\n<p>Text[^n].</p>\n") { renamedHtml };
+      let pointed = doc.footnoteReferences[1].withLabel("Other") orelse panic();
+      assert(pointed.asWritten == "# Notes[^n]\n\nText[^Other].\n\n[^n]: A note.\n") { pointed.asWritten };
+      let edits = [heading, renamed, pointed];
+      for (var i = 0; i < edits.length; i += 1) {
+        let again = MarkdownParser.gfm.parse(edits[i].asWritten).toHtml();
+        assert(edits[i].toHtml() == again) { again };
+      }
+      let bad = do { doc.footnoteDefinitions[0].withLabel("a b"); "accepted" } orelse "bubbled";
+      assert(bad == "bubbled") { "a label can't hold a space" };
+      let empty = do { doc.footnoteReferences[0].withLabel(""); "accepted" } orelse "bubbled";
+      assert(empty == "bubbled") { "nor be empty" };
+      let cell = MarkdownParser.gfm.parse("| a |\n| - |\n| [^p\\|q] |\n").footnoteReferences[0];
+      let cellEdit = cell.withLabel("r") orelse panic();
+      assert(cellEdit.asWritten == "| a |\n| - |\n| [^r] |\n") { cellEdit.asWritten };
     }

@@ -103,6 +103,7 @@ GFM's inline extensions, and whether this is a table cell's content.
 
       private strikethrough: Boolean;
       private autolinks: Boolean;
+      private footnotes: Boolean;
       private inCell: Boolean;
 
 Each item's kind; its range, or -1 for a node; whether it groups into
@@ -156,13 +157,19 @@ declaration, or CDATA section closes.
       private var noDeclarationEnd: Int = -1;
       private var noCdataEnd: Int = -1;
 
+Where the content's line breaks are, found the first time a footnote
+reference might span one.
+
+      private newlines: ListBuilder<Int> = new ListBuilder<Int>();
+      private var newlinesScanned: Boolean = false;
+
 The start of plain text not yet in an item.
 
       private var pending: Int;
 
       public constructor(
         text: SourceText, start: Int, end: Int, labels: Mapped<String, Boolean>,
-        strikethrough: Boolean, autolinks: Boolean, inCell: Boolean,
+        strikethrough: Boolean, autolinks: Boolean, footnotes: Boolean, inCell: Boolean,
       ) {
         this.text = text;
         this.start = start;
@@ -170,6 +177,7 @@ The start of plain text not yet in an item.
         this.labels = labels;
         this.strikethrough = strikethrough;
         this.autolinks = autolinks;
+        this.footnotes = footnotes;
         this.inCell = inCell;
         this.pending = start;
         newNode(inlineContentKind);
@@ -251,7 +259,11 @@ Plain text from `pending` to `at` becomes an item.
             char'&' -> ampersand(i);
             char'*', char'_' -> delimiterRun(i, c);
             char'[' -> openBracket(i, i + 1, false);
-            char'!' -> if (codeAt(i + 1) == char'[') { openBracket(i, i + 2, true) } else { i + 1 };
+            char'!' -> if (codeAt(i + 1) == char'[' && !(footnotes && codeAt(i + 2) == char'^')) {
+              openBracket(i, i + 2, true)
+            } else {
+              i + 1
+            };
             char']' -> closeBracket(i);
             char'~' -> if (strikethrough) { tildeRun(i) } else { i + 1 };
             char':' -> if (autolinks) { urlAutolink(i) } else { i + 1 };
@@ -945,8 +957,70 @@ definition has. Else `]` is text.
           }
           return finishLink(b, labelTokenEnd);
         }
+        if (footnotes && isFootnoteReference(b, i)) { return footnoteReference(b, i); }
         popBracket();
         i + 1
+      }
+
+### GFM's footnote references
+
+With footnotes on, a `[` that makes no link is a footnote reference if
+`^` and something more follow it, as cmark-gfm reads them: its label
+is the text up to `]` as written, whatever markup it holds, and it's a
+reference whether or not a definition has that label. The renderer
+shows one without a definition as that text. An image can't start
+`![^`: there the `!` is text, so `![^1]` is `!` and a reference.
+
+Two choices differ from cmark-gfm 0.29.0.gfm.13, whose results there
+lose or garble text: the `^` must be written as is, not escaped or a
+character reference, and a reference can't span a line break.
+
+      private isFootnoteReference(b: Int, close: Int): Boolean {
+        let textStart = bracketTextStarts[b];
+        if (bracketImages[b] || text.codeAt(textStart) != char'^' || close <= textStart + 1) {
+          return false;
+        }
+        if (!newlinesScanned) {
+          newlinesScanned = true;
+          for (var k = start; k < end; k += 1) {
+            if (text.codeAt(k) == char'\n') { newlines.add(k); }
+          }
+        }
+        var low = 0;
+        var high = newlines.length;
+        while (low < high) {
+          let middle = (low + high) / 2;
+          if (newlines[middle] < textStart) { low = middle + 1; } else { high = middle; }
+        }
+        low >= newlines.length || newlines[low] > close
+      }
+
+The reference for bracket `b`, closed by the `]` at `close`: its `[^`,
+its label as one token, and the `]`. What was parsed inside goes, and
+so do the delimiters there, as cmark-gfm drops them.
+
+      private footnoteReference(b: Int, close: Int): Int {
+        flush(close);
+        let opener = bracketItems[b];
+        while (lastDelimiter > bracketDelimiters[b]) { removeDelimiter(lastDelimiter); }
+        let node = newNode(footnoteReferenceKind);
+        let before = prevs[opener];
+        prevs.set(node, before);
+        if (before >= 0) { nexts.set(before, node); } else { firsts.set(0, node); }
+        lasts.set(0, node);
+        let open = starts[opener];
+        kinds.set(opener, footnoteOpenKind);
+        textual.set(opener, false);
+        ends.set(opener, open + 2);
+        prevs.set(opener, -1);
+        nexts.set(opener, -1);
+        firsts.set(node, opener);
+        lasts.set(node, opener);
+        token(node, labelTextKind, open + 2, close, false);
+        token(node, linkCloseKind, close, close + 1, false);
+        popBracket();
+        pending = close + 1;
+        close + 1
       }
 
 Past spaces, tabs, and at most one line ending (a paragraph has no
@@ -1466,19 +1540,48 @@ compiler, folding many big constant strings, gives up (2026-10-31).
         25 -> "${repeated("(", n)}www.a.b${repeated(")", n)}";
         26 -> repeated("~a ~~a ", n);
         27 -> repeated("[www.a.b ", n);
+        28 -> "${repeated("[^", n)}a${repeated("]", n)}";
+        29 -> "${repeated("[^a] ", n)}\n\n[^a]: x\n";
+        30 -> "${repeated("[^a]:", n)}\n\n[^a]\n";
+        31 -> "${repeated("[^a]: [^a]\n", n)}";
+        32 -> repeated("![^a ![^", n);
+        33 -> "${repeated("[^a", n)}\n${repeated("]", n)}";
         else -> "";
       }
     }
 
-Cases 16 and on are GFM's: cmark-gfm's pathological table, a wide
+    test("pathological inputs stay linear") {
+      for (var k = 0; k < 16; k += 1) {
+        let text = pathological(k, 10000);
+        let doc = parseMarkdown(text);
+        assert(doc.asWritten == text) { "case ${k.toString()} roundtrips" };
+        assert(!doc.toHtml().isEmpty) { "case ${k.toString()} renders" };
+      }
+    }
+
+Cases 16 to 27 are GFM's: cmark-gfm's pathological table, a wide
 header over many short rows (stopped by `maxFilledCells`), and
 autolinks with underscores, many `@`, protocols, and parentheses. They
-parse with all of GFM on.
+parse with all of GFM on, in a test of their own, as are the
+footnotes' below, so each stays within JavaScript's test timeout.
 
-    test("pathological inputs stay linear") {
-      for (var k = 0; k < 28; k += 1) {
+    test("pathological GFM inputs stay linear") {
+      for (var k = 16; k < 28; k += 1) {
         let text = pathological(k, 10000);
-        let doc = if (k < 16) { parseMarkdown(text) } else { MarkdownParser.gfm.parse(text) };
+        let doc = MarkdownParser.gfm.parse(text);
+        assert(doc.asWritten == text) { "case ${k.toString()} roundtrips" };
+        assert(!doc.toHtml().isEmpty) { "case ${k.toString()} renders" };
+      }
+    }
+
+Cases 28 and on are GFM's footnotes: references nested in each other,
+many to one definition, definitions nested on one line, many with one
+label, images that can't start with `![^`, and brackets spanning lines.
+
+    test("pathological footnotes stay linear") {
+      for (var k = 28; k < 34; k += 1) {
+        let text = pathological(k, 10000);
+        let doc = MarkdownParser.gfm.parse(text);
         assert(doc.asWritten == text) { "case ${k.toString()} roundtrips" };
         assert(!doc.toHtml().isEmpty) { "case ${k.toString()} renders" };
       }

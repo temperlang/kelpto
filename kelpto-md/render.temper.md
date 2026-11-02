@@ -147,9 +147,73 @@ tag, so trust the Markdown as for `withRawHtmlTrusted()`, or use the
       }
 
       public render(doc: MarkdownDocument): String {
-        let out = new HtmlOut(definitionsOf(doc), isGfmDocument(doc.node));
+        let footnotes = if (hasFootnotes(doc.node)) { new FootnoteIndex(doc.node) } else { null };
+        let out = new HtmlOut(definitionsOf(doc), isGfmDocument(doc.node), footnotes);
         renderBlocks(doc.children, false, out);
+        if (footnotes != null) { renderFootnotes(footnotes, out); }
         out.toString()
+      }
+
+GFM's footnotes, as cmark-gfm writes them: after the document, a
+section with an item for each definition referred to, in number order,
+wherever it was written. Its backlinks, one for each reference, go at
+the end of its last paragraph, after a space, or else on a line of
+their own. Nested definitions aren't in their parents.
+
+      private renderFootnotes(footnotes: FootnoteIndex, out: HtmlOut): Void {
+        let used = footnotes.used;
+        if (used.isEmpty) { return; }
+        out.append("<section class=\"footnotes\" data-footnotes>\n<ol>\n");
+        for (var n = 0; n < used.length; n += 1) {
+          let definition = new FootnoteDefinition(used[n]);
+          let id = escapeHref(definition.label);
+          let backlinks = footnoteBacklinks(id, n + 1, footnotes.counts[n]);
+          out.append("<li id=\"fn-${id}\">\n");
+          let kids = definition.children;
+          var last = -1;
+          for (var i = 0; i < kids.length; i += 1) {
+            let kid = kids[i];
+            if (!(kid is BlankLine || kid is LinkReferenceDefinition || kid is FootnoteDefinition)) { last = i; }
+          }
+          var written = false;
+          for (var i = 0; i < kids.length; i += 1) {
+            let kid = kids[i];
+            if (i == last && kid is Paragraph) {
+              out.line();
+              out.append("<p>");
+              renderInlines((kid as Paragraph orelse panic()).children, out);
+              out.append(" ${backlinks}</p>\n");
+              written = true;
+            } else {
+              renderBlock(kid, false, out);
+            }
+          }
+          if (!written) { out.append("${backlinks}\n"); }
+          out.append("</li>\n");
+        }
+        out.append("</ol>\n</section>\n");
+      }
+
+A reference: its definition's number, linking there, with an `id`
+for the backlink, `-2` and on after the first. With no definition, its
+text as written.
+
+      private renderFootnoteReference(reference: FootnoteReference, out: HtmlOut): Void {
+        let footnotes = out.footnotes;
+        if (footnotes != null) {
+          let at = reference.node.offset;
+          let number = footnotes.numberAt(at);
+          if (number > 0) {
+            let place = footnotes.placeAt(at);
+            let id = escapeHref(new FootnoteDefinition(footnotes.used[number - 1]).label);
+            let suffix = if (place > 1) { "-${place.toString()}" } else { "" };
+            out.append(
+              "<sup class=\"footnote-ref\"><a href=\"#fn-${id}\" id=\"fnref-${id}${suffix}\" data-footnote-ref>${number.toString()}</a></sup>",
+            );
+            return;
+          }
+        }
+        out.append(escapeHtml("[^${reference.label}]"));
       }
 
       private renderBlocks(blocks: List<BlockChild>, tight: Boolean, out: HtmlOut): Void {
@@ -239,6 +303,7 @@ tag, so trust the Markdown as for `withRawHtmlTrusted()`, or use the
             out.append("</${tag}>\n");
           };
           is Table -> renderTable(block, out);
+          is FootnoteDefinition -> do {};
           is LinkReferenceDefinition -> do {};
           is BlankLine -> do {};
         }
@@ -287,6 +352,7 @@ the header, filled in empty, and `align` on cells in aligned columns.
           is CodeSpan -> out.append("<code>${escapeHtml(inline.code)}</code>");
           is RawHtml -> out.append(rawHtmlRenderer.renderRawHtml(inline));
           is CharacterReference -> out.append(escapeHtml(inline.value));
+          is FootnoteReference -> renderFootnoteReference(inline, out);
           is HardBreak -> out.append("<br />\n");
           is Emphasis -> do {
             out.append("<em>");
@@ -325,7 +391,7 @@ the header, filled in empty, and `align` on cells in aligned columns.
               unresolved(inline.node, out);
             } else {
               let alt = new StringBuilder();
-              addAltText(inline.children, alt);
+              addAltText(inline.children, alt, out.footnotes);
               out.append("<img src=\"${escapeHref(target.url)}\" alt=\"${escapeHtml(alt.toString())}\"");
               appendTitle(linkTitleOf(inline.node, out.definitions), out);
               out.append(" />");
@@ -367,14 +433,29 @@ and label as text, around its text rendered.
       }
     }
 
+The backlinks of footnote `number`, whose `id` is escaped already, to
+each of its `count` references.
+
+    let footnoteBacklinks(id: String, number: Int, count: Int): String {
+      let n = number.toString();
+      let out = new StringBuilder();
+      out.append("<a href=\"#fnref-${id}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${n}\" aria-label=\"Back to reference ${n}\">↩</a>");
+      for (var k = 2; k <= count; k += 1) {
+        let m = "${n}-${k.toString()}";
+        out.append(" <a href=\"#fnref-${id}-${k.toString()}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${m}\" aria-label=\"Back to reference ${m}\">↩<sup class=\"footnote-ref\">${k.toString()}</sup></a>");
+      }
+      out.toString()
+    }
+
     let appendTitle(title: String?, out: HtmlOut): Void {
       if (title != null) { out.append(" title=\"${escapeHtml(title)}\""); }
     }
 
 An image's description as `alt` text: plain text, with line breaks as
-spaces, as cmark writes it.
+spaces, as cmark writes it. A footnote reference adds nothing, unless
+it has no definition; then it's its text.
 
-    let addAltText(inlines: List<ParagraphChild>, out: StringBuilder): Void {
+    let addAltText(inlines: List<ParagraphChild>, out: StringBuilder, footnotes: FootnoteIndex?): Void {
       for (var i = 0; i < inlines.length; i += 1) {
         let inline = inlines[i];
         when (inline) {
@@ -384,11 +465,14 @@ spaces, as cmark writes it.
           is CharacterReference -> out.append(inline.value);
           is HardBreak -> out.append(" ");
           is Autolink -> out.append(inline.text);
-          is Emphasis -> addAltText(inline.children, out);
-          is Strong -> addAltText(inline.children, out);
-          is Strikethrough -> addAltText(inline.children, out);
-          is Image -> addAltText(inline.children, out);
-          is Link -> addAltText(paragraphChildrenOf(inline.node), out);
+          is Emphasis -> addAltText(inline.children, out, footnotes);
+          is Strong -> addAltText(inline.children, out, footnotes);
+          is Strikethrough -> addAltText(inline.children, out, footnotes);
+          is Image -> addAltText(inline.children, out, footnotes);
+          is Link -> addAltText(paragraphChildrenOf(inline.node), out, footnotes);
+          is FootnoteReference -> if ((footnotes?.numberAt(inline.node.offset) ?? 0) == 0) {
+            out.append("[^${inline.label}]");
+          };
         }
       }
     }
@@ -504,9 +588,16 @@ Whether the document was parsed with GFM, so renders as cmark-gfm does.
 
       public gfm: Boolean;
 
-      public constructor(definitions: Map<String, LinkReferenceDefinition>, gfm: Boolean) {
+How the document's footnotes number, if it was parsed with them.
+
+      public footnotes: FootnoteIndex?;
+
+      public constructor(
+        definitions: Map<String, LinkReferenceDefinition>, gfm: Boolean, footnotes: FootnoteIndex?,
+      ) {
         this.definitions = definitions;
         this.gfm = gfm;
+        this.footnotes = footnotes;
       }
 
       public append(text: String): Void {
