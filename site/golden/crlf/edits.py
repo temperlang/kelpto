@@ -12,7 +12,7 @@ Café — naïve 😀 ??( \x01 ctrl\r
 - [ ] täsk\r
 """
 doc = MarkdownParser.gfm.parse(text)
-doc = doc.tables[0].header.cells[1].children[0].with_destination(LinkTarget("/ünï 😀"))
+doc = doc.links[0].with_destination(LinkTarget("/ünï 😀"))
 doc = doc.tables[0].rows[0].cells[0].with_text("naïve ☕")
 doc = doc.task_list_items[0].with_checked(True)
 doc = doc.headings[0].with_text("Café — 😀")

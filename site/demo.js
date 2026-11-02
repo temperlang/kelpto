@@ -49,8 +49,8 @@ const count = (n, one, many = `${one}s`) => `${n.toLocaleString("en")} ${n === 1
 // The parts of a document that the preview can edit, in the order they
 // render, leaving out footnote definitions, which render at the end. Each
 // has the path the API takes to it from the document (see editcode.js):
-// through `headings`, `tables`, and `taskListItems`, which list every one,
-// footnote definitions' too, or, for a paragraph, `blocks`.
+// through `headings`, `tables`, `taskListItems`, and `links`, which list
+// every one, footnote definitions' too.
 
 /**
  * @typedef {import("./editcode.js").PathPart} PathPart
@@ -83,7 +83,7 @@ function partsOf(doc) {
     headings: spans(doc.headings),
     tables: spans(doc.tables),
     tasks: spans(doc.taskListItems),
-    paragraphs: spans(doc.blocks, (block) => block instanceof Paragraph),
+    links: spans(doc.links),
   };
 
   /** @param {any[]} blocks */
@@ -92,9 +92,9 @@ function partsOf(doc) {
       if (block instanceof Heading) {
         const path = /** @type {PathPart[]} */ ([["headings", index.headings(block)]]);
         parts.headings.push({ node: block, path });
-        walkInlines(block.children, path);
+        walkInlines(block.children);
       } else if (block instanceof Paragraph) {
-        walkInlines(block.children, [["blocks", index.paragraphs(block), "Paragraph"]]);
+        walkInlines(block.children);
       } else if (block instanceof BlockQuote) {
         walkBlocks(block.children);
       } else if (block instanceof ListBlock) {
@@ -105,30 +105,27 @@ function partsOf(doc) {
       } else if (block instanceof Table) {
         const path = /** @type {PathPart[]} */ ([["tables", index.tables(block)]]);
         parts.tables.push({ node: block, path });
-        [block.header, ...block.rows].forEach((row, r) => {
-          const rowPath = /** @type {PathPart[]} */ ([...path, r === 0 ? ["header"] : ["rows", r - 1]]);
-          row.cells.forEach((/** @type {any} */ cell, /** @type {number} */ c) => walkInlines(cell.children, [...rowPath, ["cells", c]]));
-        });
+        for (const row of [block.header, ...block.rows]) {
+          for (const cell of row.cells) walkInlines(cell.children);
+        }
       }
     }
   }
 
-  /** @param {any[]} inlines @param {PathPart[]} path */
-  function walkInlines(inlines, path) {
-    inlines.forEach((inline, i) => {
+  /** @param {any[]} inlines */
+  function walkInlines(inlines) {
+    for (const inline of inlines) {
       if (inline instanceof Link) {
-        const linkPath = /** @type {PathPart[]} */ ([...path, ["children", i, "Link"]]);
-        parts.anchors.push({ node: inline, path: linkPath });
-        walkInlines(inline.children, linkPath);
+        parts.anchors.push({ node: inline, path: [["links", index.links(inline)]] });
+        walkInlines(inline.children);
       } else if (inline instanceof Autolink) {
         parts.anchors.push({ node: inline, path: [] });
       } else if (inline instanceof FootnoteReference) {
         if (inline.definition) parts.anchors.push({ node: inline, path: [] });
       } else if (inline instanceof Emphasis || inline instanceof Strong || inline instanceof Strikethrough) {
-        const type = inline instanceof Emphasis ? "Emphasis" : inline instanceof Strong ? "Strong" : "Strikethrough";
-        walkInlines(inline.children, [...path, ["children", i, type]]);
+        walkInlines(inline.children);
       }
-    });
+    }
   }
 
   walkBlocks(doc.children);

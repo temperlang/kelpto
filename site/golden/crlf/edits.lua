@@ -12,7 +12,7 @@ local text = "Title\r\n"
   .. "\r\n"
   .. "- [ ] täsk\r\n"
 local doc = MarkdownParser.gfm:parse(text)
-doc = doc.tables[1].header.cells[2].children[1]:withDestination(LinkTarget("/ünï 😀"))
+doc = doc.links[1]:withDestination(LinkTarget("/ünï 😀"))
 doc = doc.tables[1].rows[1].cells[1]:withText("naïve ☕")
 doc = doc.taskListItems[1]:withChecked(true)
 doc = doc.headings[1]:withText("Café — 😀")

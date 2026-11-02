@@ -30,6 +30,6 @@ doc = doc.Tables[0].Header.Cells[1].WithText("State");
 doc = doc.Tables[0].Rows[1].Cells[2].WithText("0.2");
 doc = doc.TaskListItems[2].WithChecked(true);
 doc = doc.LinkReferenceDefinitions[0].WithDestination(new LinkTarget("https://example.com/new?q=é"));
-doc = ((Link) ((Paragraph) doc.Blocks[14]).Children[3]).WithDestination(new LinkTarget("https://example.com/faq#ünï"));
+doc = doc.Links[1].WithDestination(new LinkTarget("https://example.com/faq#ünï"));
 doc = doc.Headings[1].WithText("Links 🔗");
 Console.WriteLine(doc.AsWritten);

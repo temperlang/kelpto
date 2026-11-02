@@ -1,8 +1,6 @@
-import kelpto_md.Link;
 import kelpto_md.LinkTarget;
 import kelpto_md.MarkdownDocument;
 import kelpto_md.MarkdownParser;
-import kelpto_md.Paragraph;
 
 public class Edits {
     public static void main(String[] args) {
@@ -36,7 +34,7 @@ public class Edits {
         doc = doc.getTables().get(0).getRows().get(1).getCells().get(2).withText("0.2");
         doc = doc.getTaskListItems().get(2).withChecked(true);
         doc = doc.getLinkReferenceDefinitions().get(0).withDestination(new LinkTarget("https://example.com/new?q=é"));
-        doc = ((Link) ((Paragraph) doc.getBlocks().get(14)).getChildren().get(3)).withDestination(new LinkTarget("https://example.com/faq#ünï"));
+        doc = doc.getLinks().get(1).withDestination(new LinkTarget("https://example.com/faq#ünï"));
         doc = doc.getHeadings().get(1).withText("Links 🔗");
         System.out.println(doc.getAsWritten());
     }

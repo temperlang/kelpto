@@ -1,5 +1,4 @@
-use kelpto_md::{Link, LinkTarget, MarkdownParser, Paragraph};
-use temper_core::cast;
+use kelpto_md::{LinkTarget, MarkdownParser};
 
 fn main() {
     let text = "Release notes
@@ -31,7 +30,7 @@ Footnotes work too.[^why]
     doc = doc.tables()[0].rows()[1].cells()[2].with_text("0.2");
     doc = doc.task_list_items()[2].with_checked(true);
     doc = doc.link_reference_definitions()[0].with_destination(LinkTarget::new("https://example.com/new?q=é")).expect("one line");
-    doc = cast::<Link>(cast::<Paragraph>(doc.blocks()[14].clone()).unwrap().children()[3].clone()).unwrap().with_destination(LinkTarget::new("https://example.com/faq#ünï")).expect("one line");
+    doc = doc.links()[1].with_destination(LinkTarget::new("https://example.com/faq#ünï")).expect("one line");
     doc = doc.headings()[1].with_text("Links 🔗");
     println!("{}", doc.as_written());
 }

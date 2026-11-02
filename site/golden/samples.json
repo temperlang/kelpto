@@ -72,14 +72,8 @@
         "kind": "link",
         "path": [
           [
-            "blocks",
-            14,
-            "Paragraph"
-          ],
-          [
-            "children",
-            3,
-            "Link"
+            "links",
+            1
           ]
         ],
         "value": "https://example.com/faq#ünï"
@@ -104,13 +98,8 @@
         "kind": "link",
         "path": [
           [
-            "headings",
+            "links",
             0
-          ],
-          [
-            "children",
-            3,
-            "Link"
           ]
         ],
         "value": "/h?a=\"b\"&c=\\d"
@@ -119,19 +108,8 @@
         "kind": "link",
         "path": [
           [
-            "blocks",
-            4,
-            "Paragraph"
-          ],
-          [
-            "children",
-            0,
-            "Emphasis"
-          ],
-          [
-            "children",
-            1,
-            "Link"
+            "links",
+            1
           ]
         ],
         "value": "/b`${c}`??=)\"]]"
@@ -156,20 +134,8 @@
         "kind": "link",
         "path": [
           [
-            "tables",
+            "links",
             0
-          ],
-          [
-            "header"
-          ],
-          [
-            "cells",
-            1
-          ],
-          [
-            "children",
-            0,
-            "Link"
           ]
         ],
         "value": "/ünï 😀"

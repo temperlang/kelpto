@@ -1,5 +1,4 @@
-use kelpto_md::{Emphasis, Link, LinkTarget, MarkdownParser, Paragraph};
-use temper_core::cast;
+use kelpto_md::{LinkTarget, MarkdownParser};
 
 fn main() {
     let text = "
@@ -9,8 +8,8 @@ fn main() {
 > next\\\\
 end \"q\"";
     let mut doc = MarkdownParser::common_mark().parse(text);
-    doc = cast::<Link>(doc.headings()[0].children()[3].clone()).unwrap().with_destination(LinkTarget::new("/h?a=\"b\"&c=\\d")).expect("one line");
-    doc = cast::<Link>(cast::<Emphasis>(cast::<Paragraph>(doc.blocks()[4].clone()).unwrap().children()[0].clone()).unwrap().children()[1].clone()).unwrap().with_destination(LinkTarget::new("/b`${c}`??=)\"]]")).expect("one line");
+    doc = doc.links()[0].with_destination(LinkTarget::new("/h?a=\"b\"&c=\\d")).expect("one line");
+    doc = doc.links()[1].with_destination(LinkTarget::new("/b`${c}`??=)\"]]")).expect("one line");
     doc = doc.headings()[0].with_text("Tab\there, \"quotes\" \\ ??= ]] )\"");
     println!("{}", doc.as_written());
 }

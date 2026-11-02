@@ -1,13 +1,10 @@
 #include <iostream>
-#include <memory>
 #include <string>
 
 #include "kelpto-md/init.hpp"
 
-using kelpto_md::Link;
 using kelpto_md::LinkTarget;
 using kelpto_md::MarkdownParser;
-using kelpto_md::Paragraph;
 
 int main() {
   std::string text = R"(Release notes
@@ -39,7 +36,7 @@ Footnotes work too.[^why]
   doc = doc->get_tables()->at(0)->get_rows()->at(1)->get_cells()->at(2)->withText("0.2");
   doc = doc->get_taskListItems()->at(2)->withChecked(true);
   doc = doc->get_linkReferenceDefinitions()->at(0)->withDestination(LinkTarget::make("https://example.com/new?q=\303\251"));
-  doc = std::dynamic_pointer_cast<Link>(std::dynamic_pointer_cast<Paragraph>(doc->get_blocks()->at(14))->get_children()->at(3))->withDestination(LinkTarget::make("https://example.com/faq#\303\274n\303\257"));
+  doc = doc->get_links()->at(1)->withDestination(LinkTarget::make("https://example.com/faq#\303\274n\303\257"));
   doc = doc->get_headings()->at(1)->withText("Links \360\237\224\227");
   std::cout << doc->get_asWritten() << "\n";
 }

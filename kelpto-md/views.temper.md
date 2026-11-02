@@ -179,6 +179,17 @@ paragraphs, table cells, links, and footnote definitions.
         result.toList()
       }
 
+Links, inline or by reference, in order, wherever inlines go: in
+headings, paragraphs, table cells, emphasis, image descriptions, and
+inside containers and footnote definitions. Not images, autolinks, or
+link reference definitions.
+
+      public get links(): List<Link> {
+        let result = new ListBuilder<Link>();
+        addLinks(node, result);
+        result.toList()
+      }
+
       public get htmlBlocks(): List<HtmlBlock> {
         let result = new ListBuilder<HtmlBlock>();
         let all = blocks;
@@ -230,6 +241,31 @@ HTML with the default, escaping raw HTML. See `MarkdownRenderer`.
           };
           else -> do {};
         }
+      }
+    }
+
+Links don't nest, so a link's text needs no walk. Code, HTML, and
+autolinks hold none.
+
+    let addLinks(node: RedNode, result: ListBuilder<Link>): Void {
+      let kind = node.green.kind;
+      if (kind.id == linkKind.id) {
+        result.add(new Link(node));
+        return;
+      }
+      if (
+        kind.id == codeBlockKind.id || kind.id == indentedCodeKind.id || kind.id == htmlBlockKind.id ||
+        kind.id == rawHtmlKind.id || kind.id == codeSpanKind.id || kind.id == autolinkKind.id ||
+        kind.id == urlAutolinkKind.id || kind.id == wwwAutolinkKind.id || kind.id == emailAutolinkKind.id
+      ) {
+        return;
+      }
+      var at = node.offset;
+      let kids = node.green.children;
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        if (kid is GreenNode) { addLinks(new RedNode(kid, node, at, i), result); }
+        at += kid.width;
       }
     }
 
@@ -1909,6 +1945,63 @@ Edits change only their own span: the text before and after it stays.
       assert(plain.linkReferenceDefinitions[0].destination.url == "https://x.test/a(b)") { plain.asWritten };
       let bad = do { definition.withDestination(new LinkTarget("a\nb")); "accepted" } orelse "bubbled";
       assert(bad == "bubbled") { "no line breaks" };
+    }
+
+    test("links: every link, in order, nested ones too") {
+      let text = [
+        "# [h](/h)\n",
+        "\n",
+        "> - *[a](/a)* and **[b][r]**\n",
+        ">   1. [c]\n",
+        "\n",
+        "| [d](/d) | `[no](/no)` |\n",
+        "|---|---|\n",
+        "| ![i [e](/e)](/img) | <https://x.test> www.x.test |\n",
+        "\n",
+        "    [code](/code)\n",
+        "\n",
+        "Text[^n] and <b>[f](/f)</b>.\n",
+        "\n",
+        "[^n]: In a [g](/g) note.\n",
+        "\n",
+        "[r]: /r\n",
+        "[c]: /c\n",
+      ].join("") { (s: String): String => s };
+      let doc = MarkdownParser.gfm.parse(text);
+      let links = doc.links;
+      let texts = links.join(" ") { (link: Link): String => link.text };
+      assert(texts == "h a b c d e f g") { texts };
+      let urls = links.join(" ") { (link: Link): String => link.destination?.url ?? "null" };
+      assert(urls == "/h /a /r /c /d /e /f /g") { urls };
+      assert(links[2].style == "full" && links[3].style == "shortcut") { links[3].style };
+      assert(parseMarkdown("`[a](/a)` <https://x.test> ![b](/b)\n").links.length == 0) { "no code, autolinks, or images" };
+    }
+
+    test("edits through links change only the destination and reparse the same") {
+      let text = "> - *[a](/a)*\n\n| ![i [e](/e)](/img) |\n|---|\n| [d](/d) |\n\nHi[^n] [r].\n\n[^n]: A [g](/g \"t\").\n\n[r]: /r\n";
+      let doc = MarkdownParser.gfm.parse(text);
+      let links = doc.links;
+      assert(links.length == 5) { links.length.toString() };
+      let a = links[0].withDestination(new LinkTarget("/new a")) orelse panic();
+      assert(a.asWritten == "> - *[a](</new a>)*\n\n| ![i [e](/e)](/img) |\n|---|\n| [d](/d) |\n\nHi[^n] [r].\n\n[^n]: A [g](/g \"t\").\n\n[r]: /r\n") { a.asWritten };
+      let e = links[1].withDestination(new LinkTarget("/x")) orelse panic();
+      assert(e.links[1].destination?.url == "/x") { e.asWritten };
+      let d = links[2].withDestination(new LinkTarget("/y")) orelse panic();
+      assert(d.asWritten == "> - *[a](/a)*\n\n| ![i [e](/e)](/img) |\n|---|\n| [d](/y) |\n\nHi[^n] [r].\n\n[^n]: A [g](/g \"t\").\n\n[r]: /r\n") { d.asWritten };
+      let g = links[4].withDestination(new LinkTarget("/z")) orelse panic();
+      assert(g.links[4].destination?.url == "/z" && g.links[4].title == "t") { g.asWritten };
+      let edits = [a, e, d, g];
+      for (var i = 0; i < edits.length; i += 1) {
+        let edited = edits[i];
+        let reparsed = MarkdownParser.gfm.parse(edited.asWritten);
+        let before = edited.links.join(" ") { (link: Link): String => "${link.text}=${link.destination?.url ?? "null"}" };
+        let after = reparsed.links.join(" ") { (link: Link): String => "${link.text}=${link.destination?.url ?? "null"}" };
+        assert(before == after) { after };
+        assert(reparsed.toHtml() == edited.toHtml()) { edited.asWritten };
+      }
+      let bad = do { links[3].withDestination(new LinkTarget("/x")); "accepted" } orelse "bubbled";
+      assert(bad == "bubbled") { "a reference's destination is its definition's" };
+      assert(doc.asWritten == text) { "the old document is unchanged" };
     }
 
     test("withText in a list item and a setext heading") {

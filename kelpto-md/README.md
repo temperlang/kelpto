@@ -7,6 +7,7 @@ written; render to HTML with raw HTML escaped by default.
 let doc = parseMarkdown("# Old\n\n> See <b>this</b>.\n\n- a\n- *b* [home]\n\n[home]: /old\n");
 doc.asWritten;               // the input, byte for byte
 doc.headings[0].text;        // "Old"
+doc.links[0].destination?.url; // "/old", from its definition
 doc.headings[0].withText("New").asWritten;     // "# New\n\n> See <b>this</b>.\n…"
 (doc.headings[0].withLevel(2) orelse panic()).asWritten; // "## Old\n…"
 (doc.linkReferenceDefinitions[0].withDestination(new LinkTarget("/new")) orelse panic())
@@ -73,7 +74,8 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   Table pipes, delimiter rows, `~` runs, and task markers are
   tokens, so GFM stays lossless too. Links know their `style`, `label`,
   `destination`, and `title`, resolving references through the
-  document's definitions; `normalizeLabel` matches labels as the spec
+  document's definitions, and a document's `links` lists them all, in
+  order, wherever they are; `normalizeLabel` matches labels as the spec
   does, with full Unicode case folding.
 - **Edits** give a new document, changing only the edited span and
   sharing what didn't change: `Heading.withText` and `withLevel`,

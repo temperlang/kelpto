@@ -12,7 +12,7 @@ var text = "Title\r\n" +
     "\r\n" +
     "- [ ] täsk\r\n";
 var doc = MarkdownParser.Gfm.Parse(text);
-doc = ((Link) doc.Tables[0].Header.Cells[1].Children[0]).WithDestination(new LinkTarget("/ünï 😀"));
+doc = doc.Links[0].WithDestination(new LinkTarget("/ünï 😀"));
 doc = doc.Tables[0].Rows[0].Cells[0].WithText("naïve ☕");
 doc = doc.TaskListItems[0].WithChecked(true);
 doc = doc.Headings[0].WithText("Café — 😀");

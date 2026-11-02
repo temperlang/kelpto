@@ -2,17 +2,17 @@
 //
 // A step is what one edit changes, by the index path kelpto-md's API takes
 // to reach it: `{ kind, path, value }`, where each part of `path` is a
-// property, an index into it if it's a list, and the type to cast to where
-// the list holds an interface (`blocks` and `children`). The page edits
-// through `applyStep`, and the code panel shows `codeFor`, so the code says
-// what the page did. `build.py` runs the JavaScript (and Python) code and
+// property and an index into it if it's a list. The document's own lists
+// (`headings`, `tables`, `taskListItems`, `linkReferenceDefinitions`, and
+// `links`) are typed, so no path needs a cast. The page edits through
+// `applyStep`, and the code panel shows `codeFor`, so the code says what
+// the page did. `build.py` runs the JavaScript (and Python) code and
 // checks that it prints what `applyStep` gives.
 
 import { LinkTarget, MarkdownParser } from "kelpto-md";
-import * as kelptoMd from "kelpto-md";
 
 /**
- * @typedef {[name: string, index?: number, type?: string]} PathPart
+ * @typedef {[name: string, index?: number]} PathPart
  * @typedef {"heading" | "cell" | "task" | "definition" | "link"} StepKind
  * @typedef {{ kind: StepKind, path: PathPart[], value: string | boolean }} Step
  * @typedef {{ input: string, gfm: boolean, steps: Step[] }} Program
@@ -22,18 +22,17 @@ import * as kelptoMd from "kelpto-md";
 const METHODS = { heading: "withText", cell: "withText", task: "withChecked", definition: "withDestination", link: "withDestination" };
 
 /**
- * The node a path reaches in a document, checking each cast's type.
+ * The node a path reaches in a document.
  *
  * @param {any} doc
  * @param {PathPart[]} path
  */
 function reach(doc, path) {
   let node = doc;
-  for (const [name, index, type] of path) {
+  for (const [name, index] of path) {
     node = node[name];
     if (index !== undefined) node = node[index];
     if (node === undefined || node === null) throw new Error(`Nothing at ${name}${index ?? ""}.`);
-    if (type && !(node instanceof /** @type {any} */ (kelptoMd)[type])) throw new Error(`Not a ${type} at ${name}[${index}].`);
   }
   return node;
 }
@@ -235,12 +234,11 @@ const pascal = (name) => name[0].toUpperCase() + name.slice(1);
 
 /**
  * @typedef {{
- *   imports: (names: string[], casts: boolean) => string,
+ *   imports: (names: string[]) => string,
  *   open: string, close: string,
  *   text: [string, (s: string) => string, string],
  *   parse: (gfm: boolean, edits: boolean) => string,
  *   part: (expr: string, name: string, index?: number) => string,
- *   cast: (expr: string, type: string) => string,
  *   call: (expr: string, method: string, arg: string) => string,
  *   value: (s: string) => string,
  *   bool: (b: boolean) => string,
@@ -255,15 +253,14 @@ const pascal = (name) => name[0].toUpperCase() + name.slice(1);
 /** @type {Record<string, Spelling>} */
 const SPELLINGS = {
   cpp: {
-    imports: (names, casts) =>
-      `#include <iostream>\n${casts ? "#include <memory>\n" : ""}#include <string>\n\n#include "kelpto-md/init.hpp"\n\n` +
+    imports: (names) =>
+      `#include <iostream>\n#include <string>\n\n#include "kelpto-md/init.hpp"\n\n` +
       names.map((n) => `using kelpto_md::${n};\n`).join(""),
     open: "\nint main() {\n",
     close: "}\n",
     text: ["  std::string text = ", cppText, ";\n"],
     parse: (gfm) => `  auto doc = MarkdownParser::${gfm ? "gfm" : "commonMark"}()->parse(text);\n`,
     part: (expr, name, index) => `${expr}->get_${name}()${index === undefined ? "" : `->at(${index})`}`,
-    cast: (expr, type) => `std::dynamic_pointer_cast<${type}>(${expr})`,
     call: (expr, method, arg) => `${expr}->${method}(${arg})`,
     value: cppEscaped,
     bool: String,
@@ -280,7 +277,6 @@ const SPELLINGS = {
     text: ["var text = ", csText, ";\n"],
     parse: (gfm) => `var doc = MarkdownParser.${gfm ? "Gfm" : "CommonMark"}.Parse(text);\n`,
     part: (expr, name, index) => `${expr}.${pascal(name)}${index === undefined ? "" : `[${index}]`}`,
-    cast: (expr, type) => `((${type}) ${expr})`,
     call: (expr, method, arg) => `${expr}.${pascal(method)}(${arg})`,
     value: csEscaped,
     bool: String,
@@ -297,7 +293,6 @@ const SPELLINGS = {
     text: ["        String text = ", (s) => javaText(s, "        "), ";\n"],
     parse: (gfm) => `        MarkdownDocument doc = MarkdownParser.${gfm ? "gfm" : "commonMark"}.parse(text);\n`,
     part: (expr, name, index) => `${expr}.get${pascal(name)}()${index === undefined ? "" : `.get(${index})`}`,
-    cast: (expr, type) => `((${type}) ${expr})`,
     call: (expr, method, arg) => `${expr}.${method}(${arg})`,
     value: javaEscaped,
     bool: String,
@@ -314,7 +309,6 @@ const SPELLINGS = {
     text: ["const text = ", (s) => jsString(s, s.includes("\n")), ";\n"],
     parse: (gfm, edits) => `${edits ? "let" : "const"} doc = MarkdownParser.${gfm ? "gfm" : "commonMark"}.parse(text);\n`,
     part: (expr, name, index) => `${expr}.${name}${index === undefined ? "" : `[${index}]`}`,
-    cast: (expr) => expr,
     call: (expr, method, arg) => `${expr}.${method}(${arg})`,
     value: (s) => jsString(s),
     bool: String,
@@ -331,7 +325,6 @@ const SPELLINGS = {
     text: ["local text = ", luaText, "\n"],
     parse: (gfm) => `local doc = MarkdownParser.${gfm ? "gfm" : "commonMark"}:parse(text)\n`,
     part: (expr, name, index) => `${expr}.${name}${index === undefined ? "" : `[${index + 1}]`}`,
-    cast: (expr) => expr,
     call: (expr, method, arg) => `${expr}:${method}(${arg})`,
     value: luaEscaped,
     bool: String,
@@ -348,7 +341,6 @@ const SPELLINGS = {
     text: ["text = ", (s) => pyString(s, s.includes("\n")), "\n"],
     parse: (gfm) => `doc = MarkdownParser.${gfm ? "gfm" : "common_mark"}.parse(text)\n`,
     part: (expr, name, index) => `${expr}.${snake(name)}${index === undefined ? "" : `[${index}]`}`,
-    cast: (expr) => expr,
     call: (expr, method, arg) => `${expr}.${snake(method)}(${arg})`,
     value: (s) => pyString(s),
     bool: (b) => (b ? "True" : "False"),
@@ -359,14 +351,12 @@ const SPELLINGS = {
     indent: "",
   },
   rs: {
-    imports: (names, casts) =>
-      `use kelpto_md::${names.length > 1 ? `{${names.join(", ")}}` : names[0]};\n${casts ? "use temper_core::cast;\n" : ""}`,
+    imports: (names) => `use kelpto_md::${names.length > 1 ? `{${names.join(", ")}}` : names[0]};\n`,
     open: "\nfn main() {\n",
     close: "}\n",
     text: ["    let text = ", (s) => rsString(s, s.includes("\n")), ";\n"],
     parse: (gfm, edits) => `    let ${edits ? "mut " : ""}doc = MarkdownParser::${gfm ? "gfm" : "common_mark"}().parse(text);\n`,
     part: (expr, name, index) => `${expr}.${snake(name)}()${index === undefined ? "" : `[${index}]`}`,
-    cast: (expr, type) => `cast::<${type}>(${expr}.clone()).unwrap()`,
     call: (expr, method, arg) => `${expr}.${snake(method)}(${arg})`,
     value: (s) => rsString(s),
     bool: String,
@@ -393,13 +383,7 @@ export function codeFor(language, { input, gfm, steps }) {
   const names = new Set(["MarkdownParser"]);
   const edits = steps.map((step) => {
     let expr = "doc";
-    for (const [name, index, type] of step.path) {
-      expr = s.part(expr, name, index);
-      if (type && s.cast(expr, type) !== expr) {
-        expr = s.cast(expr, type);
-        names.add(type);
-      }
-    }
+    for (const [name, index] of step.path) expr = s.part(expr, name, index);
     let arg = typeof step.value === "boolean" ? s.bool(step.value) : s.value(step.value);
     if (step.kind === "definition" || step.kind === "link") {
       arg = s.target(arg);
@@ -407,9 +391,8 @@ export function codeFor(language, { input, gfm, steps }) {
     }
     return s.assign(s.call(expr, METHODS[step.kind], arg) + s.check(step.kind));
   });
-  const casts = steps.some((step) => step.path.some(([, , type]) => type)) && s.cast("x", "T") !== "x";
   const [prefix, literalOf, suffix] = s.text;
-  const before = s.imports([...names].sort(), casts) + s.open + prefix;
+  const before = s.imports([...names].sort()) + s.open + prefix;
   const literal = literalOf(input);
   const after = suffix + s.parse(gfm, steps.length > 0) + edits.join("") + s.print + s.close;
   return { before, literal, after };

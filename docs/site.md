@@ -17,10 +17,10 @@ live, with the same build every other language's tests run on.
   in all seven languages, with the same tabs as the tour, sharing the
   choice. `editcode.js` records each edit as a step (its kind, the index
   path the API takes to it, and the new value), and the page edits
-  through those steps, so the code is what the page did. Inline links
-  have no list of their own, so their path goes through `blocks` and
-  `children`, with casts in typed languages (Rust's need `temper-core`).
-  The build runs the JavaScript for the samples in `site/golden/` and
+  through those steps, so the code is what the page did. Each path
+  starts at one of the document's typed lists (`headings`, `tables`,
+  `taskListItems`, `linkReferenceDefinitions`, or `links`), so no
+  language needs a cast. The build runs the JavaScript for the samples in `site/golden/` and
   checks it prints what the page's edits give, runs the Python too once
   it's built, and checks the other languages' code against `site/golden/`
   (`--update-golden` rewrites it).

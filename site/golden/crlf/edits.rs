@@ -1,5 +1,4 @@
-use kelpto_md::{Link, LinkTarget, MarkdownParser};
-use temper_core::cast;
+use kelpto_md::{LinkTarget, MarkdownParser};
 
 fn main() {
     let text = "Title\r
@@ -14,7 +13,7 @@ Café — naïve 😀 ??( \u{01} ctrl\r
 - [ ] täsk\r
 ";
     let mut doc = MarkdownParser::gfm().parse(text);
-    doc = cast::<Link>(doc.tables()[0].header().cells()[1].children()[0].clone()).unwrap().with_destination(LinkTarget::new("/ünï 😀")).expect("one line");
+    doc = doc.links()[0].with_destination(LinkTarget::new("/ünï 😀")).expect("one line");
     doc = doc.tables()[0].rows()[0].cells()[0].with_text("naïve ☕");
     doc = doc.task_list_items()[0].with_checked(true);
     doc = doc.headings()[0].with_text("Café — 😀");
