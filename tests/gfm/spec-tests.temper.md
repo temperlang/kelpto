@@ -2,8 +2,8 @@
 
 Each example runs as cmark-gfm's own test tools run it: the spec's
 extension examples with only the extension each names, extensions.txt's
-with all of them, footnotes included, and regression.txt's footnote
-examples with those each names, raw HTML trusted (as cmark-gfm's
+with all of them, footnotes included, and regression.txt's with those
+each names (none for most), raw HTML trusted (as cmark-gfm's
 `--unsafe`), and the disallowed raw HTML filter on where the
 extensions are.
 
@@ -85,7 +85,7 @@ Counts by extension, as `extension: passed/total`.
         let name = if (example.source == "extensions") {
           "extensions.txt (all)"
         } else if (example.source == "regression") {
-          "regression.txt (footnotes)"
+          "regression.txt"
         } else if (example.extension == "") {
           "spec (CommonMark 0.29)"
         } else if (example.extension == "disabled") {

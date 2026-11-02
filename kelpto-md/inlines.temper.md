@@ -106,6 +106,11 @@ GFM's inline extensions, and whether this is a table cell's content.
       private footnotes: Boolean;
       private inCell: Boolean;
 
+Whether this is a GFM document, parsed with any extension on, where
+`![^` is never an image, footnotes or not, as cmark-gfm reads it.
+
+      private gfm: Boolean;
+
 Each item's kind; its range, or -1 for a node; whether it groups into
 a `Text` node; its first and last children; and its siblings.
 
@@ -170,6 +175,7 @@ The start of plain text not yet in an item.
       public constructor(
         text: SourceText, start: Int, end: Int, labels: Mapped<String, Boolean>,
         strikethrough: Boolean, autolinks: Boolean, footnotes: Boolean, inCell: Boolean,
+        gfm: Boolean,
       ) {
         this.text = text;
         this.start = start;
@@ -179,6 +185,7 @@ The start of plain text not yet in an item.
         this.autolinks = autolinks;
         this.footnotes = footnotes;
         this.inCell = inCell;
+        this.gfm = gfm;
         this.pending = start;
         newNode(inlineContentKind);
       }
@@ -259,7 +266,7 @@ Plain text from `pending` to `at` becomes an item.
             char'&' -> ampersand(i);
             char'*', char'_' -> delimiterRun(i, c);
             char'[' -> openBracket(i, i + 1, false);
-            char'!' -> if (codeAt(i + 1) == char'[' && !(footnotes && codeAt(i + 2) == char'^')) {
+            char'!' -> if (codeAt(i + 1) == char'[' && !(gfm && codeAt(i + 2) == char'^')) {
               openBracket(i, i + 2, true)
             } else {
               i + 1
@@ -968,8 +975,8 @@ With footnotes on, a `[` that makes no link is a footnote reference if
 `^` and something more follow it, as cmark-gfm reads them: its label
 is the text up to `]` as written, whatever markup it holds, and it's a
 reference whether or not a definition has that label. The renderer
-shows one without a definition as that text. An image can't start
-`![^`: there the `!` is text, so `![^1]` is `!` and a reference.
+shows one without a definition as that text. As in any GFM document,
+an image can't start `![^`, so `![^1]` is `!` and a reference.
 
 Two choices differ from cmark-gfm 0.29.0.gfm.13, whose results there
 lose or garble text: the `^` must be written as is, not escaped or a

@@ -67,9 +67,9 @@ test/extensions.txt, cmark-gfm's tests of the extensions, by Yuki
 Izumi (SHA-256
 a2a45e98be9fca95f564f927265a0f63beea6cae5369d1cf4bde44caa51b2a3a),
 and test/regression.txt, cmark-gfm's regression tests (SHA-256
-0920d7e8134d5e4ec3693f3f52d904b42de45e23a66c29f54fe714dc54213fd9), only
-its footnote examples: each example's Markdown and expected HTML, its
-section, and the extensions it needs. They are in tests/gfm/spec.json
+0920d7e8134d5e4ec3693f3f52d904b42de45e23a66c29f54fe714dc54213fd9): each
+example's Markdown and expected HTML, its section, and the extensions
+it needs. They are in tests/gfm/spec.json
 and tests/gfm/examples.temper.md, a test-only library kept apart from
 Kelpto's own code, which nothing imports and which isn't published.
 scripts/gfm_spec.py extracts them the way cmark-gfm's test tools

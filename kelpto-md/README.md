@@ -39,15 +39,17 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   `MarkdownParser.gfm` or one at a time from `MarkdownParser.commonMark`
   (`withTables`, `withTaskListItems`, `withStrikethrough`,
   `withExtendedAutolinks`, and `withFootnotes`): every example in GFM's
-  spec and cmark-gfm's extension and footnote tests renders as
+  spec and cmark-gfm's extension and regression tests renders as
   cmark-gfm renders it, linear on its pathological inputs too.
   Footnotes render as GitHub's do: numbered by first reference, in a
   section at the end, with backlinks. That includes cmark-gfm's one change to
   CommonMark's HTML: in a GFM document, a strong directly inside a
   strong adds no tags (`****foo****` is one `<strong>`), though the
-  tree keeps both. Off, parsing and rendering are CommonMark's, at the
-  same cost. GFM's filter for disallowed raw HTML is on rendering:
-  `withDisallowedRawHtmlFiltered()`.
+  tree keeps both. There, too, `![^` is never an image. Off, parsing
+  and rendering are CommonMark's, at the same cost. GFM's filter for
+  disallowed raw HTML is on rendering: `withDisallowedRawHtmlFiltered()`.
+  Where it differs from cmark-gfm on purpose, see
+  [Differences from cmark-gfm](#differences-from-cmark-gfm).
 - **Lossless,** whatever the input: tabs stay tabs (columns are counted
   as the spec says), line endings stay `\n`, `\r\n`, or `\r`, and odd
   input stays as written. Inlines keep their markup too: delimiter
@@ -86,3 +88,30 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
 - **Destinations stay as written** in the tree, as a `LinkTarget`
   (escapes and character references resolved, nothing else); the
   renderer percent-encodes them only as it writes `href` and `src`.
+
+## Differences from cmark-gfm
+
+kelpto-md follows CommonMark 0.31.2, and in GFM documents renders as
+cmark-gfm (0.29.0.gfm.13) does, with these deliberate differences:
+
+- **Links don't nest.** After a link, cmark-gfm makes earlier `[`
+  openers active again, so `[a [b](/c) [d] e](/f)` is a link inside a
+  link (invalid HTML). kelpto-md keeps CommonMark's rule, which its
+  typed views rely on.
+- **Raw HTML keeps its line endings** (`\r\n` and `\r`) as written,
+  where cmark-gfm writes `\n`, in CommonMark documents too.
+- **Task list items** also work inside block quotes and on a nested
+  item's first line, where cmark-gfm misses them.
+- **Footnote references** need their `^` written as is (not `\^` or
+  `&#94;`) and can't span a line break; cmark-gfm garbles or drops the
+  text there.
+- **CommonMark 0.31.2, not 0.29:** where the spec changed since
+  cmark-gfm's base, kelpto-md follows the newer spec (for example, a
+  link definition's title on the next line followed by other text).
+- **`~~` beside emphasis:** `*~~ a \**` is emphasis in kelpto-md, as
+  CommonMark's delimiter rules give, where cmark-gfm leaves plain text.
+
+Known bugs, to be fixed (see the roadmap in docs/design.md): a `\|` at
+the end of an extended autolink in a table cell stays in the link, and
+a paragraph that is only a link definition directly before a table is
+read as a definition, where cmark-gfm keeps it as text.

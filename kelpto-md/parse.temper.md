@@ -181,12 +181,13 @@ Whether the document holding `node` was parsed with any GFM extension.
     }
 
 The inline extensions of the document holding `node`, from its root's
-kind.
+kind. Block extensions don't change inlines, so `tables` stands for
+them all, and the inlines of a document with only those read as GFM's.
 
     let inlineExtensionsOf(node: RedNode): Extensions {
       let id = node.root.green.kind.id;
       new Extensions(
-        false, false, id == 176 || id == 178 || id == 181 || id == 183,
+        id != documentKind.id, false, id == 176 || id == 178 || id == 181 || id == 183,
         id == 177 || id == 178 || id == 182 || id == 183, id >= 180 && id <= 183,
       )
     }
@@ -397,7 +398,14 @@ Which extensions a parse reads, inside the library.
       public strikethrough: Boolean,
       public autolinks: Boolean,
       public footnotes: Boolean,
-    ) {}
+    ) {
+
+Whether any is on, so the document is GFM's.
+
+      public get gfm(): Boolean {
+        tables || taskListItems || strikethrough || autolinks || footnotes
+      }
+    }
 
     let noExtensions = new Extensions(false, false, false, false, false);
 
@@ -908,7 +916,7 @@ written as `emit` writes them.
       private parseInlines(content: Content, start: Int, end: Int, inCell: Boolean): Void {
         let parser = new InlineParser(
           content.text, start, end, labels, extensions.strikethrough, extensions.autolinks,
-          extensions.footnotes, inCell,
+          extensions.footnotes, inCell, extensions.gfm,
         );
         this.inCell = inCell;
         parser.parse();
@@ -1358,6 +1366,23 @@ looks for the marker from the start of the line only).
       assert(mismatch == "<p>a | b\n|-|\nc\n|-|</p>\n") { mismatch };
     }
 
+One place where cmark-gfm's inline scan differs from CommonMark's,
+followed in GFM documents, those parsed with any extension on: `![^`
+never starts an image, footnotes or not. Plain CommonMark documents
+read it as CommonMark does.
+
+    test("GFM: `![^` is no image, footnotes or not") {
+      let text = "![^a](/u) ![a](/v)\n";
+      let cm = parseMarkdown(text).toHtml();
+      assert(cm == "<p><img src=\"/u\" alt=\"^a\" /> <img src=\"/v\" alt=\"a\" /></p>\n") { cm };
+      let expected = "<p>!<a href=\"/u\">^a</a> <img src=\"/v\" alt=\"a\" /></p>\n";
+      let tablesOnly = MarkdownParser.commonMark.withTables(true).parse(text);
+      assert(tablesOnly.toHtml() == expected) { tablesOnly.toHtml() };
+      assert(tablesOnly.asWritten == text) { tablesOnly.asWritten };
+      let gfm = MarkdownParser.gfm.withFootnotes(false).parse(text).toHtml();
+      assert(gfm == expected) { gfm };
+    }
+
 Random mixes of GFM's markup, footnotes included, from a fixed seed.
 Each must roundtrip, and render without failing, with all of GFM on.
 
@@ -1489,15 +1514,16 @@ destination is a link.
     }
 
 Off, as in `parseMarkdown`, `[^a]: /u` is a link reference definition
-and `![^a](/i)` an image, as CommonMark has them. On, the definition
-is a footnote's, and the `!` text.
+and `![^a](/i)` an image, as CommonMark has them; in a GFM document
+without footnotes, `![^` is no image, though. On, the definition is a
+footnote's, and the `!` text.
 
     test("GFM footnotes: off unless asked for") {
       let text = "[^a]\n\n[^a]: /u\n![^a](/i)\n";
       let off = parseMarkdown(text).toHtml();
       assert(off == "<p><a href=\"/u\">^a</a></p>\n<p><img src=\"/i\" alt=\"^a\" /></p>\n") { off };
       let gfmOff = MarkdownParser.gfm.withFootnotes(false).parse(text).toHtml();
-      assert(gfmOff == off) { gfmOff };
+      assert(gfmOff == "<p><a href=\"/u\">^a</a></p>\n<p>!<a href=\"/i\">^a</a></p>\n") { gfmOff };
       let on = MarkdownParser.commonMark.withFootnotes(true).parse(text).toHtml();
       let expected = joined([
         "<p>", fnRef("a", 1, 1), "</p>\n<section class=\"footnotes\" data-footnotes>\n<ol>\n",

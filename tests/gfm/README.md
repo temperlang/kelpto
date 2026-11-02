@@ -6,9 +6,8 @@ cmark-gfm, GitHub's reference implementation, at tag 0.29.0.gfm.13.
 - **`spec.json`:** the examples, extracted by `scripts/gfm_spec.py`
   from cmark-gfm's `test/spec.txt` (the GFM spec),
   `test/extensions.txt` (cmark-gfm's tests of the extensions, footnotes
-  included), and `test/regression.txt` (its regression tests, only
-  those with footnotes): source, number, section, the extensions each
-  needs, Markdown, and HTML.
+  included), and `test/regression.txt` (its regression tests): source,
+  number, section, the extensions each needs, Markdown, and HTML.
 - **`examples.temper.md`:** the same, as Temper, generated from
   `spec.json`.
 - **`spec-tests.temper.md`:** the tests: each example's rendered HTML

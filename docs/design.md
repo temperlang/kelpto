@@ -123,14 +123,28 @@ and rendering defaults.
 - **As cmark-gfm 0.29.0.gfm.13 does it,** odd corners included (tables
   stop filling short rows after 524,288 empty cells, `~` runs read 100
   at a time, emails found in text after the rest, a footnote
-  reference's label taken as written whatever markup it holds, `![^`
-  never an image), since GitHub renders by it. All of GFM's spec
-  examples, cmark-gfm's extension tests, and its footnote regression
-  tests pass, in `tests/gfm/`. Some choices differ: task list items
-  work inside block quotes and on a nested item's line, where
-  cmark-gfm, looking from the line's start, misses them; and a
-  footnote reference needs its `^` written as is and can't span a line
-  break, where cmark-gfm garbles or drops the text.
+  reference's label taken as written whatever markup it holds, and
+  `![^` never an image in a GFM document, footnotes or not), since
+  GitHub renders by it. All of GFM's spec examples, cmark-gfm's
+  extension tests, and all its regression tests pass, in `tests/gfm/`.
+  Some choices differ:
+  - Task list items work inside block quotes and on a nested item's
+    line, where cmark-gfm, looking from the line's start, misses them.
+  - A footnote reference needs its `^` written as is and can't span a
+    line break, where cmark-gfm garbles or drops the text.
+  - Raw HTML, in blocks or inline, renders with the line endings inside
+    it as written, `\r\n` and `\r` included, where cmark-gfm (and
+    cmark) write `\n`: kelpto-md writes the HTML as the source has it.
+    This holds in CommonMark documents too.
+  - Links don't nest. After a link, cmark-gfm makes the `[` openers
+    before it active again once a new `[` comes, so `[a [b](/c) [d]
+    e](/f)` is a link holding a link; kelpto-md keeps CommonMark's
+    rule, since its typed views say links can't nest
+    (`LinkTextChild`).
+  - `*~~ a \**` is emphasis, as CommonMark's delimiter rules give,
+    where cmark-gfm leaves plain text.
+
+  The kelpto-md README lists these for users.
 - **Lossless:** a table is a leaf block whose lines are row nodes, with
   `Pipe`, `TableDelimiter`, and cell nodes; a backslash before `|` in a
   cell is a `PipeEscape` token, since GFM drops it before reading the
@@ -154,9 +168,10 @@ and rendering defaults.
   first reference (in definitions too, used or not), with backlinks;
   a reference without a definition renders as its text.
 - **No cost when off:** each check is behind its flag, and only `~`,
-  `:`, and `w` gain cases in the inline scan. Footnotes add a check at
-  `]` after links fail, at `!`, and at the block starts, and one walk
-  of the tree when rendering, only in documents parsed with them.
+  `:`, and `w` gain cases in the inline scan, and `!` a check for `^`
+  in any GFM document. Footnotes add a check at `]` after links fail
+  and at the block starts, and one walk of the tree when rendering,
+  only in documents parsed with them.
   Nested references stay linear: inner ones are dropped, not
   rescanned.
 
@@ -188,15 +203,17 @@ checking every entry as the Temper code reads it:
    measure; deep nesting (thousands of block quotes or emphasis
    levels) without deep recursion.
 5. GFM's rest: more edits for tables (rows and columns). Footnotes
-   are done.
+   are done. Fix two differences from cmark-gfm in GFM documents: a
+   `\|` ending an extended autolink in a table cell should leave the
+   link (`www.x.y\|` links `www.x.y`), and a paragraph that is only a
+   link definition directly before a table stays text.
 6. Benchmarks of kelpto-md against each language's usual Markdown
    parsers: cmark (C), commonmark.js and markdown-it (JavaScript),
    markdown-it-py and mistune (Python), pulldown-cmark and comrak
    (Rust), commonmark-java and flexmark (Java), and Markdig (C#).
    Parse alone, and parse and render, on realistic documents (the
    CommonMark spec, READMEs, and a long document) and on cmark's
-   pathological shapes. Each package needs the user's approval before
-   it's installed.
+   pathological shapes.
 
 ## Libraries and layout
 
