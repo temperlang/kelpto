@@ -113,7 +113,10 @@ spec examples are in [tests/commonmark](tests/commonmark/README.md),
 and against GFM's, from cmark-gfm, in [tests/gfm](tests/gfm/README.md):
 test-only libraries, since the examples are CC-BY-SA 4.0; see
 [NOTICE](NOTICE). `scripts/commonmark_spec.py` and
-`scripts/gfm_spec.py` (run with `uv run`) regenerate them.
+`scripts/gfm_spec.py` (run with `uv run`) regenerate them. Real
+documents (the CommonMark spec and some READMEs), with worked examples
+walking and transforming them, are in
+[tests/samples](tests/samples/README.md), for benchmarks too.
 
 ## Building
 

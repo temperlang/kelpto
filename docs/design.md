@@ -39,7 +39,9 @@ it in use, and the top README shows them alone and together.
   `ParagraphChild`, and `LinkTextChild`); edits `Heading.withText` and
   `withLevel`, `CodeBlock.withInfo`, and `withDestination` on
   definitions, inline links, and images; rendering with raw HTML
-  escaped unless `withRawHtmlTrusted()`. All 652 of the spec's
+  escaped unless `withRawHtmlTrusted()`. Every view has
+  `descendants`, `parent`, and `depth`, and `MarkdownEditor` makes
+  many edits in one pass (see "Walking and batch edits", below). All 652 of the spec's
   examples pass, in `tests/commonmark/`. GFM's extensions are opt-in
   (see "kelpto-md's GFM extensions", below).
 - **kelpto-html:** a simplified tokenizer (start tags with attributes,
@@ -190,10 +192,31 @@ checking every entry as the Temper code reads it:
   named references, sorted and front-coded, 14,263 characters, read
   into a map when the library loads.
 
+### Walking and batch edits
+
+- **A flat list, not a visitor:** `descendants` gives every view
+  inside a node in document order, each before what it holds, made
+  straight from the green children. A list reads the same in all
+  seven languages, filters with each one's own tools, and needs no
+  callback mutating captured state, which Rust's `Fn` and Java's
+  lambdas make awkward. `parent` and `depth` walk up the red parents,
+  skipping `InlineContent`, so views hold no parent fields.
+- **Edits as replacements:** each `with…` edit works out a kelpto-core
+  `Replacement` (a red target and its new green element) and applies
+  it. `doc.editor()` collects them instead, and `toDocument()` calls
+  `replaceAll`, which sorts the targets' paths and copies each node on
+  them once: one pass, however many edits, all worked out against the
+  original document, so nothing is walked again. Overlapping edits
+  bubble, as do views from another document, as far as a check of
+  kinds and widths along each path sees.
+- **Real documents:** `tests/samples` runs a scrape and a transform on
+  the CommonMark spec and some READMEs, checking that only the edited
+  bytes change; the benchmarks will use the same files.
+
 **Next,** roughly in order:
 
-1. Edit batches (`doc.edit`), insert and remove, and more edits (link
-   text, titles, and emphasis).
+1. Insert and remove, in the editor too, and more edits (link text,
+   titles, and emphasis). Edit batches are done: `doc.editor()`.
 2. The WHATWG tokenizer in full, with kelpto-core's character
    references (and HTML's forms without `;`), then tree construction,
    against html5lib-tests and WPT.
@@ -214,6 +237,10 @@ checking every entry as the Temper code reads it:
    Parse alone, and parse and render, on realistic documents (the
    CommonMark spec, READMEs, and a long document) and on cmark's
    pathological shapes.
+7. Typed walks: descendants of one kind (`doc.descendantsOf…`, or a
+   filter per view type such as `headingsIn`), so users get typed views
+   without casts (Rust needs `temper_core::cast` today) and, if
+   benchmarks say so, without building the whole list.
 
 ## Libraries and layout
 
@@ -289,9 +316,10 @@ rust-analyzer's rowan:
   copy a long child list on each edit, so long lists can be chunked
   (children grouped into nodes of, say, 32) to keep that copying small.
 - **Many edits at once:** an editor object collects a batch of edits
-  and builds the new document once (`doc.edit(fn (e) { … })`, or a
-  builder), so a hundred changes don't make a hundred intermediate
-  documents.
+  and builds the new document once, so a hundred changes don't make a
+  hundred intermediate documents. Built as a builder,
+  `doc.editor()`, rather than a callback, for the same reasons as
+  `descendants` (see "Walking and batch edits").
 - **Building from scratch:** builders are mutable while building and
   produce immutable nodes at the end, so construction makes no extra
   garbage.

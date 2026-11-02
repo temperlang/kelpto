@@ -3,7 +3,9 @@
 // The same tour exists for each language Kelpto supports, and they all print
 // the same text. See demos/README.md for how to run them.
 
-import { LinkTarget, MarkdownParser, MarkdownRenderer, parseMarkdown } from "kelpto-md";
+import {
+  Heading, Link, LinkReferenceDefinition, LinkTarget, MarkdownParser, MarkdownRenderer, parseMarkdown,
+} from "kelpto-md";
 
 function section(title) {
   console.log();
@@ -128,3 +130,29 @@ try {
 } catch {
   console.log("label 'two words': throws");
 }
+
+section("6. Walk and transform");
+
+const guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n";
+const guideDoc = parseMarkdown(guide);
+// Every view inside the document, in order, each knowing its depth.
+for (const view of guideDoc.descendants) {
+  if (view instanceof Heading) {
+    console.log(`depth ${view.depth}, heading ${view.level}: ${view.text}`);
+  } else if (view instanceof Link) {
+    console.log(`depth ${view.depth}, link ${view.text} -> ${view.destination.url}`);
+  }
+}
+// Many edits, one new document: headings a level down, relative links absolute.
+const base = "https://example.com/docs/";
+const editor = guideDoc.editor();
+for (const view of guideDoc.descendants) {
+  if (view instanceof Heading) {
+    editor.setLevel(view, view.level + 1);
+  } else if (view instanceof Link && view.style === "inline" && !view.destination.url.startsWith("#")) {
+    editor.setDestination(view, new LinkTarget(base + view.destination.url));
+  } else if (view instanceof LinkReferenceDefinition) {
+    editor.setDestination(view, new LinkTarget(base + view.destination.url));
+  }
+}
+changes(guide, editor.toDocument().asWritten);

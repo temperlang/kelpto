@@ -145,3 +145,39 @@ catch (Exception)
 {
     Console.WriteLine("label 'two words': throws");
 }
+
+Section("6. Walk and transform");
+
+var guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n";
+var guideDoc = ParseMarkdown(guide);
+// Every view inside the document, in order, each knowing its depth.
+foreach (var view in guideDoc.Descendants)
+{
+    if (view is Heading h)
+    {
+        Console.WriteLine($"depth {h.Depth}, heading {h.Level}: {h.Text}");
+    }
+    else if (view is Link link)
+    {
+        Console.WriteLine($"depth {link.Depth}, link {link.Text} -> {link.Destination!.Url}");
+    }
+}
+// Many edits, one new document: headings a level down, relative links absolute.
+var baseUrl = "https://example.com/docs/";
+var editor = guideDoc.Editor();
+foreach (var view in guideDoc.Descendants)
+{
+    if (view is Heading h)
+    {
+        editor.SetLevel(h, h.Level + 1);
+    }
+    else if (view is Link link && link.Style == "inline" && !link.Destination!.Url.StartsWith("#"))
+    {
+        editor.SetDestination(link, new LinkTarget(baseUrl + link.Destination.Url));
+    }
+    else if (view is LinkReferenceDefinition d)
+    {
+        editor.SetDestination(d, new LinkTarget(baseUrl + d.Destination.Url));
+    }
+}
+Changes(guide, editor.ToDocument().AsWritten);

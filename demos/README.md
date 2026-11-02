@@ -7,7 +7,9 @@ back exactly, odd input included; editing a heading, a table cell, a task
 list item, and a link definition's destination, with only those lines
 changing; rendering, with raw HTML escaped by default, then trusted, then
 through GFM's filter; GitHub Flavored Markdown's extensions, all at once
-or one at a time; and footnotes, renamed by label. Every version prints
+or one at a time; footnotes, renamed by label; and walking a document,
+then moving its headings down a level and making its relative links
+absolute, in one batch of edits. Every version prints
 the same text, `tour/expected.txt`, so the tours double as a
 cross-language test.
 

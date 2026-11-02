@@ -4,7 +4,9 @@ The same tour exists for each language Kelpto supports, and they all print
 the same text. See demos/README.md for how to run them.
 """
 
-from kelpto_md import LinkTarget, MarkdownParser, MarkdownRenderer, parse_markdown
+from kelpto_md import (
+    Heading, Link, LinkReferenceDefinition, LinkTarget, MarkdownParser, MarkdownRenderer, parse_markdown,
+)
 
 
 def section(title):
@@ -127,3 +129,25 @@ try:
     print("label 'two words': done")
 except RuntimeError:
     print("label 'two words': throws")
+
+section("6. Walk and transform")
+
+guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n"
+doc = parse_markdown(guide)
+# Every view inside the document, in order, each knowing its depth.
+for view in doc.descendants:
+    if isinstance(view, Heading):
+        print(f"depth {view.depth}, heading {view.level}: {view.text}")
+    elif isinstance(view, Link):
+        print(f"depth {view.depth}, link {view.text} -> {view.destination.url}")
+# Many edits, one new document: headings a level down, relative links absolute.
+base = "https://example.com/docs/"
+editor = doc.editor()
+for view in doc.descendants:
+    if isinstance(view, Heading):
+        editor.set_level(view, view.level + 1)
+    elif isinstance(view, Link) and view.style == "inline" and not view.destination.url.startswith("#"):
+        editor.set_destination(view, LinkTarget(base + view.destination.url))
+    elif isinstance(view, LinkReferenceDefinition):
+        editor.set_destination(view, LinkTarget(base + view.destination.url))
+changes(guide, editor.to_document().as_written)

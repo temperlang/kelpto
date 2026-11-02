@@ -78,3 +78,19 @@ definition renamed: reference finds nothing
 reference renamed: reference finds bytes
 Lossless[^bytes], always.\n\n[^bytes]: Every byte.\n
 label 'two words': throws
+
+## 6. Walk and transform
+depth 1, heading 1: Guide
+depth 2, link this -> start.md
+depth 2, link that -> api.md
+depth 2, link top -> #top
+depth 1, heading 2: More
+- # Guide
++ ## Guide
+- Read [this](start.md), [that][t], and [top](#top).
++ Read [this](https://example.com/docs/start.md), [that][t], and [top](#top).
+- ## More
++ ### More
+- [t]: api.md
++ [t]: https://example.com/docs/api.md
+4 of 7 lines changed, the rest byte for byte

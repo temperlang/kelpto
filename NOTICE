@@ -12,6 +12,12 @@ a test-only library kept apart from Kelpto's own code, which nothing
 imports and which isn't published. scripts/commonmark_spec.py extracts
 them the way the spec's own test tools (test/spec_tests.py) read them.
 
+The whole of spec.txt, unchanged, is also in
+tests/samples/docs/commonmark-spec.md and, as Temper strings, in
+tests/samples/documents.temper.md, written by scripts/sample_docs.py: real Markdown
+for tests and benchmarks, in another test-only library that nothing
+imports and that isn't published.
+
 spec.txt is:
 
     Copyright (C) 2014-16 John MacFarlane
@@ -19,8 +25,8 @@ spec.txt is:
     Released under the Creative Commons CC-BY-SA 4.0 license:
     <https://creativecommons.org/licenses/by-sa/4.0/>.
 
-so the extracted examples, adapted from it, are also under CC-BY-SA 4.0,
-not under Kelpto's Apache-2.0 OR MIT license.
+so the extracted examples, adapted from it, and those copies are also
+under CC-BY-SA 4.0, not under Kelpto's Apache-2.0 OR MIT license.
 
 The spec's test software, in its test/ and tools/ directories, is under
 the following license:

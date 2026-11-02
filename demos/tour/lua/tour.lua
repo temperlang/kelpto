@@ -6,7 +6,9 @@
 local md = require("kelpto-md")
 local LinkTarget, MarkdownParser, MarkdownRenderer = md.LinkTarget, md.MarkdownParser, md.MarkdownRenderer
 local parseMarkdown = md.parseMarkdown
+local Heading, Link, LinkReferenceDefinition = md.Heading, md.Link, md.LinkReferenceDefinition
 local null_to_nil = require("temper-core").null_to_nil
+local instance_of = require("temper-core").instance_of
 
 local function section(title)
   print()
@@ -154,3 +156,29 @@ if pcall(footnote.withLabel, footnote, "two words") then
 else
   print("label 'two words': throws")
 end
+
+section("6. Walk and transform")
+
+local guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n"
+local guideDoc = parseMarkdown(guide)
+-- Every view inside the document, in order, each knowing its depth.
+for _, view in ipairs(guideDoc.descendants) do
+  if instance_of(view, Heading) then
+    print("depth " .. view.depth .. ", heading " .. view.level .. ": " .. view.text)
+  elseif instance_of(view, Link) then
+    print("depth " .. view.depth .. ", link " .. view.text .. " -> " .. view.destination.url)
+  end
+end
+-- Many edits, one new document: headings a level down, relative links absolute.
+local base = "https://example.com/docs/"
+local editor = guideDoc:editor()
+for _, view in ipairs(guideDoc.descendants) do
+  if instance_of(view, Heading) then
+    editor:setLevel(view, view.level + 1)
+  elseif instance_of(view, Link) and view.style == "inline" and view.destination.url:sub(1, 1) ~= "#" then
+    editor:setDestination(view, LinkTarget(base .. view.destination.url))
+  elseif instance_of(view, LinkReferenceDefinition) then
+    editor:setDestination(view, LinkTarget(base .. view.destination.url))
+  end
+end
+changes(guide, editor:toDocument().asWritten)

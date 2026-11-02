@@ -83,6 +83,10 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   `LinkReferenceDefinition`, and on inline `Link` and `Image`,
   `TableCell.withText`, `TaskListItem.withChecked`, and `withLabel` on
   footnote definitions and references.
+- **Walking and batch edits:** every view has `descendants` (all the
+  views inside it, in document order), `parent`, and `depth`; a
+  document's `editor()` collects edits to many nodes and builds one new
+  document from them. See [Walking and transforming](#walking-and-transforming).
 - **Raw HTML,** inline and in HTML blocks, is found by CommonMark's
   rules and handed to a `RawHtmlHandler` (opaque text by default), and
   rendered by a `RawHtmlRenderer` (escaped by default). The `kelpto`
@@ -90,6 +94,48 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
 - **Destinations stay as written** in the tree, as a `LinkTarget`
   (escapes and character references resolved, nothing else); the
   renderer percent-encodes them only as it writes `href` and `src`.
+
+## Walking and transforming
+
+`descendants` is every view inside a node, each before what it holds,
+as one flat list: blocks, list items, table rows and cells, and
+inlines. Filter it with a type test, as you would any list. An
+editor takes edits to views of one document (`setText`, `setLevel`,
+`setInfo`, `setDestination`, `setChecked`, and `setLabel`, as the
+views' `with…` edits), and `toDocument()` makes them all in one pass,
+copying each changed path once and leaving every other byte as
+written. Edits that overlap, such as two to one heading, bubble.
+
+```temper
+let doc = parseMarkdown("# Guide\n\nRead [this](start.md) and [that][t].\n\n[t]: /api\n");
+let editor = doc.editor();
+let all = doc.descendants;
+for (var i = 0; i < all.length; i += 1) {
+  let view = all[i];
+  when (view) {
+    is Heading -> editor.setLevel(view, view.level + 1) orelse panic();
+    is Link -> if (view.style == "inline") {
+      editor.setDestination(view, new LinkTarget("https://x.test/${view.destination?.url ?? ""}")) orelse panic();
+    };
+    is LinkReferenceDefinition -> editor.setDestination(view, new LinkTarget("https://x.test${view.destination.url}")) orelse panic();
+    else -> do {};
+  }
+}
+(editor.toDocument() orelse panic()).asWritten;
+  // "## Guide\n\nRead [this](https://x.test/start.md) and [that][t].\n\n[t]: https://x.test/api\n"
+```
+
+In Python, the same walk is a loop with `isinstance`:
+
+```python
+toc = [(v.level, v.text) for v in doc.descendants if isinstance(v, Heading)]
+urls = [v.destination.url for v in doc.descendants if isinstance(v, Link) and v.destination]
+```
+
+Worked examples, a table of contents with every link destination, and
+the transform above checked to change only what it should, run on the
+CommonMark spec and some READMEs in
+[tests/samples](../tests/samples/README.md).
 
 ## Differences from cmark-gfm
 

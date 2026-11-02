@@ -3,7 +3,11 @@
 //! The same tour exists for each language Kelpto supports, and they all
 //! print the same text. See demos/README.md for how to run them.
 
-use kelpto_md::{parse_markdown, FootnoteDefinition, LinkTarget, MarkdownParser, MarkdownRenderer, TableCell};
+use kelpto_md::{
+    parse_markdown, FootnoteDefinition, Heading, Link, LinkReferenceDefinition, LinkTarget, MarkdownNodeTrait, MarkdownParser,
+    MarkdownRenderer, TableCell,
+};
+use temper_core::cast;
 
 fn section(title: &str) {
     println!();
@@ -140,4 +144,35 @@ Read [the docs][docs].
         Ok(_) => println!("label 'two words': done"),
         Err(_) => println!("label 'two words': throws"),
     }
+
+    section("6. Walk and transform");
+
+    let guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n";
+    let guide_doc = parse_markdown(guide, None);
+    // Every view inside the document, in order, each knowing its depth.
+    let views = guide_doc.descendants();
+    for view in views.iter() {
+        if let Some(heading) = cast::<Heading>(view.clone()) {
+            println!("depth {}, heading {}: {}", heading.depth(), heading.level(), heading.text());
+        } else if let Some(link) = cast::<Link>(view.clone()) {
+            println!("depth {}, link {} -> {}", link.depth(), link.text(), link.destination().expect("defined").url());
+        }
+    }
+    // Many edits, one new document: headings a level down, relative links absolute.
+    let base = "https://example.com/docs/";
+    let editor = guide_doc.editor();
+    for view in views.iter() {
+        if let Some(heading) = cast::<Heading>(view.clone()) {
+            editor.set_level(heading.clone(), heading.level() + 1).expect("a level from 1 to 6");
+        } else if let Some(link) = cast::<Link>(view.clone()) {
+            let url = link.destination().expect("defined").url();
+            if link.style().as_str() == "inline" && !url.starts_with('#') {
+                editor.set_destination(view.clone(), LinkTarget::new(format!("{base}{url}"))).expect("one line");
+            }
+        } else if let Some(definition) = cast::<LinkReferenceDefinition>(view.clone()) {
+            let url = definition.destination().url();
+            editor.set_destination(view.clone(), LinkTarget::new(format!("{base}{url}"))).expect("one line");
+        }
+    }
+    changes(guide, &editor.to_document().expect("no overlapping edits").as_written());
 }

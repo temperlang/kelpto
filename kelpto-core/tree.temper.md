@@ -358,6 +358,127 @@ own parent, up to a new root.
       }
     }
 
+## Many replacements at once
+
+One edit to make: `target`, a node or token, and the green element to
+put in its place.
+
+    export class Replacement(public target: RedElement, public replacement: GreenElement) {
+
+A new tree with just this replacement, as `replaceWith` makes it.
+
+      public apply(): RedNode {
+        let parent = target.parent;
+        if (parent == null) {
+          redRoot(replacement as GreenNode orelse panic())
+        } else {
+          replaceAt(parent, target.index, replacement)
+        }
+      }
+    }
+
+A new tree with every one of `replacements` made at once: each node on
+a path from a target to the root is copied once, however many targets
+are under it, and every other green element is shared, so a hundred
+edits don't make a hundred intermediate trees. The order of
+`replacements` doesn't matter. This tree is unchanged.
+
+Bubbles if two targets overlap (one is, or holds, another), or if a
+target isn't in this tree, as far as a cheap check sees: each step of
+its path must have the kind and width it has here.
+
+    export let replaceAll(root: RedNode, replacements: List<Replacement>): RedNode throws Bubble {
+      let n = replacements.length;
+      if (n == 0) { return root; }
+      let paths = new ListBuilder<List<Int>>();
+      for (var i = 0; i < n; i += 1) {
+        paths.add(pathTo(root.green, replacements[i].target));
+      }
+      let order = new ListBuilder<Int>();
+      for (var i = 0; i < n; i += 1) { order.add(i); }
+      let sorted = order.toList().sorted { (a: Int, b: Int): Int => comparePaths(paths[a], paths[b]) };
+      if (paths[sorted[0]].isEmpty) {
+
+The root itself: nothing else can change with it.
+
+        if (n > 1) { bubble(); }
+        return redRoot(replacements[0].replacement as GreenNode orelse bubble());
+      }
+      redRoot(rebuild(root.green, 0, paths.toList(), sorted, replacements, 0, n))
+    }
+
+The child indices from the root down to `target`, checked against
+`root`'s tree.
+
+    let pathTo(root: GreenNode, target: RedElement): List<Int> throws Bubble {
+      let reversed = new ListBuilder<Int>();
+      let greens = new ListBuilder<GreenElement>();
+      greens.add(when (target) {
+        is RedNode -> target.green;
+        is RedToken -> target.green;
+      });
+      var up: RedElement = target;
+      var parent = target.parent;
+      while (parent != null) {
+        let node = parent as RedNode orelse panic();
+        reversed.add(up.index);
+        greens.add(node.green);
+        up = node;
+        parent = node.parent;
+      }
+      let top = greens[greens.length - 1];
+      if (top.kind.id != root.kind.id || top.width != root.width) { bubble(); }
+      let path = new ListBuilder<Int>();
+      var at: GreenElement = root;
+      for (var i = reversed.length - 1; i >= 0; i -= 1) {
+        let index = reversed[i];
+        let node = at as GreenNode orelse bubble();
+        if (index >= node.children.length) { bubble(); }
+        at = node.children[index];
+        let expected = greens[i];
+        if (at.kind.id != expected.kind.id || at.width != expected.width) { bubble(); }
+        path.add(index);
+      }
+      path.toList()
+    }
+
+Lexicographic, so a path comes just before the paths inside it.
+
+    let comparePaths(a: List<Int>, b: List<Int>): Int {
+      let shorter = if (a.length < b.length) { a.length } else { b.length };
+      for (var i = 0; i < shorter; i += 1) {
+        if (a[i] != b[i]) { return a[i] - b[i]; }
+      }
+      a.length - b.length
+    }
+
+`green` with the replacements in `sorted[from]` to `sorted[to - 1]`,
+whose paths all pass through it, at `depth`, made: each child holding
+targets is rebuilt once, and the child list is copied once.
+
+    let rebuild(
+      green: GreenNode, depth: Int, paths: List<List<Int>>, sorted: List<Int>,
+      replacements: List<Replacement>, from: Int, to: Int,
+    ): GreenNode throws Bubble {
+      let kids = green.children.toListBuilder();
+      var i = from;
+      while (i < to) {
+        let path = paths[sorted[i]];
+        let index = path[depth];
+        var j = i + 1;
+        while (j < to && paths[sorted[j]][depth] == index) { j += 1; }
+        if (path.length == depth + 1) {
+          if (j - i > 1) { bubble(); }
+          kids.set(index, replacements[sorted[i]].replacement);
+        } else {
+          let child = green.children[index] as GreenNode orelse panic();
+          kids.set(index, rebuild(child, depth + 1, paths, sorted, replacements, i, j));
+        }
+        i = j;
+      }
+      new GreenNode(green.kind, kids.toList())
+    }
+
 ## Tests
 
     let tokenKind = new Kind(2, "Token");
@@ -410,4 +531,34 @@ own parent, up to a new root.
       assert(token.span.toString() == "5+1") { token.span.toString() };
       let swapped = token.replaceWith(new GreenToken(tokenKind, "!"));
       assert(swapped.asWritten == "aXYZW!") { swapped.asWritten };
+    }
+
+    test("replaceAll makes many replacements in one pass") {
+      let root = redRoot(sample());
+      let inner = root.childNodes[0];
+      let a = root.children[0] as RedToken orelse panic();
+      let c = inner.children[1] as RedToken orelse panic();
+      let d = root.children[2] as RedToken orelse panic();
+      let edits = [
+        new Replacement(d, new GreenToken(tokenKind, "D")),
+        new Replacement(a, new GreenToken(tokenKind, "AA")),
+        new Replacement(c, new GreenToken(tokenKind, "C")),
+      ];
+      let edited = replaceAll(root, edits) orelse panic();
+      assert(edited.asWritten == "AAbéCD") { edited.asWritten };
+      assert(root.asWritten == "abécd") { "the old tree is unchanged" };
+      let none: List<Replacement> = [];
+      assert((replaceAll(root, none) orelse panic()).asWritten == "abécd") { "no edits" };
+      assert(edits[1].apply().asWritten == "AAbécd") { "one edit" };
+      let overlap = do {
+        replaceAll(root, [edits[2], new Replacement(inner, new GreenNode(nodeKind, []))]);
+        "accepted"
+      } orelse "bubbled";
+      assert(overlap == "bubbled") { "a target inside another" };
+      let twice = do { replaceAll(root, [edits[0], edits[0]]); "accepted" } orelse "bubbled";
+      assert(twice == "bubbled") { "the same target twice" };
+      let other = redRoot(new GreenNode(nodeKind, [new GreenToken(tokenKind, "zz")]));
+      let foreign = new Replacement(other.children[0], new GreenToken(tokenKind, "y"));
+      let stranger = do { replaceAll(root, [foreign]); "accepted" } orelse "bubbled";
+      assert(stranger == "bubbled") { "a target from another tree" };
     }

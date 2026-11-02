@@ -22,19 +22,43 @@ text and sharing every untouched green node; the old document stays as
 it was.
 
     let {
-      GreenElement, GreenNode, GreenToken, Kind, RedElement, RedNode, RedToken, SourceText, Span,
+      GreenElement, GreenNode, GreenToken, Kind, RedElement, RedNode, RedToken, Replacement,
+      SourceText, Span, replaceAll,
     } = import("../kelpto-core");
 
     export sealed interface MarkdownNode {
 
-The red node this views.
+The red node this views. A getter here, though each view holds it as
+a field: an interface's own getters can't pass on an abstract property
+(Temper, 2026-11-02).
 
-      public node: RedNode;
+      public get node(): RedNode;
 
 The text exactly as written, and where.
 
       public get asWritten(): String;
       public get span(): Span;
+
+The view holding this one, or null for a document: a top-level
+block's document, an item's list, a cell's row, a link's paragraph or
+emphasis, and so on. See `walk.temper.md`.
+
+      public get parent(): MarkdownNode? { parentViewOf(node) }
+
+How many views hold this one: 0 for a document, 1 for its top-level
+blocks, 2 for what they hold, and so on.
+
+      public get depth(): Int { depthOf(node) }
+
+Every view inside this one, each before what it holds, in document
+order: blocks, list items, table rows and cells, and inlines, at any
+depth, but not this one. One flat list, without a list per level.
+
+      public get descendants(): List<MarkdownNode> {
+        let result = new ListBuilder<MarkdownNode>();
+        addDescendants(node, result);
+        result.toList()
+      }
     }
 
     export sealed interface BlockChild extends MarkdownNode {}
@@ -82,6 +106,15 @@ HTML.
 The top-level blocks, in order, blank lines included.
 
       public get children(): List<BlockChild> { blockChildrenOf(node) }
+
+As `MarkdownNode.descendants`, here too so Rust code in other crates
+finds it without importing `MarkdownNodeTrait` (2026-11-02).
+
+      public get descendants(): List<MarkdownNode> {
+        let result = new ListBuilder<MarkdownNode>();
+        addDescendants(node, result);
+        result.toList()
+      }
 
 Every block, depth first: each container before what it holds, and
 list items' blocks, but not the items themselves.
@@ -224,6 +257,11 @@ blocks are in `htmlBlocks`.
 HTML with the default, escaping raw HTML. See `MarkdownRenderer`.
 
       public toHtml(): String { new MarkdownRenderer().render(this) }
+
+An editor collecting many edits to this document, made at once by its
+`toDocument()`. See `MarkdownEditor`.
+
+      public editor(): MarkdownEditor { new MarkdownEditor(this) }
     }
 
     let addBlocks(blocks: List<BlockChild>, result: ListBuilder<BlockChild>): Void {
@@ -515,51 +553,57 @@ URL in it still links, as GitHub shows it). Only the heading's content changes; 
 markers, closing sequence, and whitespace stay as written. Line breaks
 in `text` become spaces, so a setext heading becomes one line.
 
-      public withText(text: String): MarkdownDocument {
-        let content = contentOf(node);
-        let extensions = inlineExtensionsOf(node);
-        let newContent = inlineContentGreen(
-          escapeInline(text, extensions.strikethrough, false), extensions, false,
-        );
-        let kids = node.green.children.toListBuilder();
-        kids.set(content.index, newContent);
-        if (newContent.width > 0) {
-
-Keep the content apart from the marker and any closing sequence, so
-`#` with no text becomes `# New`, not `#New`.
-
-          let after = content.index + 1;
-          if (after < kids.length && kids[after].kind.id == closingSequenceKind.id) {
-            kids.add(new GreenToken(whitespaceKind, " "), after);
-          }
-          if (content.index > 0 && kids[content.index - 1].kind.id == atxMarkerKind.id) {
-            kids.add(new GreenToken(whitespaceKind, " "), content.index);
-          }
-        }
-        new MarkdownDocument(node.replaceWith(new GreenNode(node.kind, kids.toList())))
-      }
+      public withText(text: String): MarkdownDocument { applied(headingTextEdit(node, text)) }
 
 A new document with this heading at `level`, changing only its
 marker: the number of `#`, or a setext underline's character, kept
 the same length. Bubbles for a level outside 1 to 6, or past 2 for a
 setext heading, which has no such levels.
 
-      public withLevel(level: Int): MarkdownDocument throws Bubble {
-        if (level < 1 || level > 6) { bubble(); }
-        let underline = node.childOfKind(setextMarkerKind);
-        if (underline != null) {
-          if (level > 2) { bubble(); }
-          let token = underline as RedToken orelse panic();
-          let mark = if (level == 1) { "=" } else { "-" };
-          let out = new StringBuilder();
-          for (var i = 0; i < token.span.length; i += 1) { out.append(mark); }
-          return new MarkdownDocument(token.replaceWith(new GreenToken(setextMarkerKind, out.toString())));
+      public withLevel(level: Int): MarkdownDocument throws Bubble { applied(headingLevelEdit(node, level)) }
+    }
+
+    let applied(edit: Replacement): MarkdownDocument { new MarkdownDocument(edit.apply()) }
+
+    let headingTextEdit(node: RedNode, text: String): Replacement {
+      let content = contentOf(node);
+      let extensions = inlineExtensionsOf(node);
+      let newContent = inlineContentGreen(
+        escapeInline(text, extensions.strikethrough, false), extensions, false,
+      );
+      let kids = node.green.children.toListBuilder();
+      kids.set(content.index, newContent);
+      if (newContent.width > 0) {
+
+Keep the content apart from the marker and any closing sequence, so
+`#` with no text becomes `# New`, not `#New`.
+
+        let after = content.index + 1;
+        if (after < kids.length && kids[after].kind.id == closingSequenceKind.id) {
+          kids.add(new GreenToken(whitespaceKind, " "), after);
         }
-        let marker = node.childOfKind(atxMarkerKind) as RedToken orelse panic();
-        let out = new StringBuilder();
-        for (var i = 0; i < level; i += 1) { out.append("#"); }
-        new MarkdownDocument(marker.replaceWith(new GreenToken(atxMarkerKind, out.toString())))
+        if (content.index > 0 && kids[content.index - 1].kind.id == atxMarkerKind.id) {
+          kids.add(new GreenToken(whitespaceKind, " "), content.index);
+        }
       }
+      new Replacement(node, new GreenNode(node.kind, kids.toList()))
+    }
+
+    let headingLevelEdit(node: RedNode, level: Int): Replacement throws Bubble {
+      if (level < 1 || level > 6) { bubble(); }
+      let underline = node.childOfKind(setextMarkerKind);
+      if (underline != null) {
+        if (level > 2) { bubble(); }
+        let token = underline as RedToken orelse panic();
+        let mark = if (level == 1) { "=" } else { "-" };
+        let out = new StringBuilder();
+        for (var i = 0; i < token.span.length; i += 1) { out.append(mark); }
+        return new Replacement(token, new GreenToken(setextMarkerKind, out.toString()));
+      }
+      let marker = node.childOfKind(atxMarkerKind) as RedToken orelse panic();
+      let out = new StringBuilder();
+      for (var i = 0; i < level; i += 1) { out.append("#"); }
+      new Replacement(marker, new GreenToken(atxMarkerKind, out.toString()))
     }
 
 A paragraph.
@@ -619,38 +663,40 @@ Only the info string changes; the fences, whitespace, and code stay as
 written. Bubbles if `info` has a line break, or a backtick after a
 backtick fence, which would change what the fence means.
 
-      public withInfo(info: String): MarkdownDocument throws Bubble {
-        let source = new SourceText(info);
-        var start = 0;
-        while (start < source.length && isSpaceOrTab(source.codeAt(start))) { start += 1; }
-        let end = trimBlanksBack(source, start, source.length);
-        let trimmed = source.slice(start, end);
-        let backtickFence = new SourceText(openingFence.childOfKind(fenceKind)?.asWritten ?? "").codeAt(0) == char'`';
-        for (var i = start; i < end; i += 1) {
-          let c = source.codeAt(i);
-          if (c == char'\n' || c == char'\r' || (c == char'`' && backtickFence)) {
-            bubble();
-          }
+      public withInfo(info: String): MarkdownDocument throws Bubble { applied(infoEdit(node, info)) }
+    }
+
+    let infoEdit(node: RedNode, info: String): Replacement throws Bubble {
+      let opening = node.childNodes[0];
+      let source = new SourceText(info);
+      var start = 0;
+      while (start < source.length && isSpaceOrTab(source.codeAt(start))) { start += 1; }
+      let end = trimBlanksBack(source, start, source.length);
+      let trimmed = source.slice(start, end);
+      let backtickFence = new SourceText(opening.childOfKind(fenceKind)?.asWritten ?? "").codeAt(0) == char'`';
+      for (var i = start; i < end; i += 1) {
+        let c = source.codeAt(i);
+        if (c == char'\n' || c == char'\r' || (c == char'`' && backtickFence)) {
+          bubble();
         }
-        let opening = openingFence;
-        let kids = opening.green.children.toListBuilder();
-        let old = opening.childOfKind(infoKind);
-        if (old != null) {
-          if (trimmed.isEmpty) {
-            kids.splice(old.index, 1);
-          } else {
-            kids.set(old.index, new GreenToken(infoKind, trimmed));
-          }
-        } else if (!trimmed.isEmpty) {
+      }
+      let kids = opening.green.children.toListBuilder();
+      let old = opening.childOfKind(infoKind);
+      if (old != null) {
+        if (trimmed.isEmpty) {
+          kids.splice(old.index, 1);
+        } else {
+          kids.set(old.index, new GreenToken(infoKind, trimmed));
+        }
+      } else if (!trimmed.isEmpty) {
 
 No info before: put it after the fence and any whitespace there.
 
-          var at = (opening.childOfKind(fenceKind) as RedToken orelse panic()).index + 1;
-          if (at < kids.length && kids[at].kind.id == whitespaceKind.id) { at += 1; }
-          kids.add(new GreenToken(infoKind, trimmed), at);
-        }
-        new MarkdownDocument(opening.replaceWith(new GreenNode(openingFenceKind, kids.toList())))
+        var at = (opening.childOfKind(fenceKind) as RedToken orelse panic()).index + 1;
+        if (at < kids.length && kids[at].kind.id == whitespaceKind.id) { at += 1; }
+        kids.add(new GreenToken(infoKind, trimmed), at);
       }
+      new Replacement(opening, new GreenNode(openingFenceKind, kids.toList()))
     }
 
 An indented code block: lines indented four or more columns.
@@ -731,7 +777,7 @@ angle brackets if it needs them. Only the destination changes.
 Bubbles if `target` has a line break, which a destination can't hold.
 
       public withDestination(target: LinkTarget): MarkdownDocument throws Bubble {
-        withDestinationIn(node, target)
+        applied(destinationEdit(node, target))
       }
     }
 
@@ -774,11 +820,11 @@ Like `tokenTextOf`, but with each line ending as `\n`.
 Replaces the destination of a definition or inline link with `target`,
 or puts one in after `(` and any whitespace if there was none.
 
-    let withDestinationIn(node: RedNode, target: LinkTarget): MarkdownDocument throws Bubble {
+    let destinationEdit(node: RedNode, target: LinkTarget): Replacement throws Bubble {
       let written = new GreenToken(linkDestinationKind, writeDestination(target.url));
       let old = node.childOfKind(linkDestinationKind);
       if (old != null) {
-        return new MarkdownDocument((old as RedToken orelse panic()).replaceWith(written));
+        return new Replacement(old, written);
       }
       let kids = node.green.children.toListBuilder();
       let paren = node.childOfKind(openParenKind);
@@ -786,7 +832,7 @@ or puts one in after `(` and any whitespace if there was none.
       var at = (paren as RedElement orelse panic()).index + 1;
       if (at < kids.length && kids[at].kind.id == whitespaceKind.id) { at += 1; }
       kids.add(written, at);
-      new MarkdownDocument(node.replaceWith(new GreenNode(node.kind, kids.toList())))
+      new Replacement(node, new GreenNode(node.kind, kids.toList()))
     }
 
 `url` as a link destination: as is if it can be, or else in angle
@@ -1010,12 +1056,17 @@ A new document with the box checked (`[x]`) or not (`[ ]`), changing
 only the marker. An `[X]` stays as written if `checked`.
 
       public withChecked(checked: Boolean): MarkdownDocument {
-        if (checked == this.checked) { return new MarkdownDocument(node.root); }
-        let marker = node.childOfKind(taskMarkerKind) as RedToken orelse panic();
-        new MarkdownDocument(
-          marker.replaceWith(new GreenToken(taskMarkerKind, if (checked) { "[x]" } else { "[ ]" })),
-        )
+        let edit = checkedEdit(node, checked);
+        if (edit == null) { new MarkdownDocument(node.root) } else { applied(edit) }
       }
+    }
+
+The edit checking or unchecking a task, or null if it already is.
+
+    let checkedEdit(node: RedNode, checked: Boolean): Replacement? {
+      let marker = node.childOfKind(taskMarkerKind) as RedToken orelse panic();
+      if (checked == (marker.text != "[ ]")) { return null; }
+      new Replacement(marker, new GreenToken(taskMarkerKind, if (checked) { "[x]" } else { "[ ]" }))
     }
 
 One or more blank lines' worth: a line of only spaces and tabs.
@@ -1053,10 +1104,14 @@ label. References to the old label no longer reach it. Bubbles unless
 `label` is a valid one (see `checkFootnoteLabel`).
 
       public withLabel(label: String): MarkdownDocument throws Bubble {
-        checkFootnoteLabel(label);
-        let token = node.childOfKind(labelTextKind) as RedToken orelse panic();
-        new MarkdownDocument(token.replaceWith(new GreenToken(labelTextKind, label)))
+        applied(footnoteDefinitionLabelEdit(node, label))
       }
+    }
+
+    let footnoteDefinitionLabelEdit(node: RedNode, label: String): Replacement throws Bubble {
+      checkFootnoteLabel(label);
+      let token = node.childOfKind(labelTextKind) as RedToken orelse panic();
+      new Replacement(token, new GreenToken(labelTextKind, label))
     }
 
 A label an edit can write for a footnote definition or reference:
@@ -1135,7 +1190,7 @@ Each column's alignment, from the delimiter row: `"left"` for `:--`,
 
 A row of a table, the header or another.
 
-    export class TableRow {
+    export class TableRow extends MarkdownNode {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
@@ -1156,7 +1211,7 @@ in empty ones.
 A table cell: inlines between pipes, without the whitespace around
 them.
 
-    export class TableCell {
+    export class TableCell extends MarkdownNode {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
@@ -1190,14 +1245,16 @@ A new document with this cell's text replaced by `text`, escaped so it
 reads as plain text, `|` included, as for `Heading.withText`. Only the
 cell's content changes; its whitespace and pipes stay as written.
 
-      public withText(text: String): MarkdownDocument {
-        let content = contentOf(node);
-        let extensions = inlineExtensionsOf(node);
-        let newContent = inlineContentGreen(
-          escapeInline(text, extensions.strikethrough, true), extensions, true,
-        );
-        new MarkdownDocument(content.replaceWith(newContent))
-      }
+      public withText(text: String): MarkdownDocument { applied(cellTextEdit(node, text)) }
+    }
+
+    let cellTextEdit(node: RedNode, text: String): Replacement {
+      let content = contentOf(node);
+      let extensions = inlineExtensionsOf(node);
+      let newContent = inlineContentGreen(
+        escapeInline(text, extensions.strikethrough, true), extensions, true,
+      );
+      new Replacement(content, newContent)
     }
 
 ## Inlines
@@ -1385,8 +1442,7 @@ changes. Bubbles if `target` has a line break, or for a reference
 link, whose destination is its definition's: edit that instead.
 
       public withDestination(target: LinkTarget): MarkdownDocument throws Bubble {
-        if (linkStyleOf(node) != "inline") { bubble(); }
-        withDestinationIn(node, target)
+        applied(linkDestinationEdit(node, target))
       }
     }
 
@@ -1412,9 +1468,13 @@ The description as plain text, as `alt` gets it.
 As `Link.withDestination`.
 
       public withDestination(target: LinkTarget): MarkdownDocument throws Bubble {
-        if (linkStyleOf(node) != "inline") { bubble(); }
-        withDestinationIn(node, target)
+        applied(linkDestinationEdit(node, target))
       }
+    }
+
+    let linkDestinationEdit(node: RedNode, target: LinkTarget): Replacement throws Bubble {
+      if (linkStyleOf(node) != "inline") { bubble(); }
+      destinationEdit(node, target)
     }
 
     let linkStyleOf(node: RedNode): String {
@@ -1625,21 +1685,25 @@ label. Bubbles unless `label` is a valid one (see
 `checkFootnoteLabel`).
 
       public withLabel(label: String): MarkdownDocument throws Bubble {
-        checkFootnoteLabel(label);
-        let kids = node.green.children;
-        let out = new ListBuilder<GreenElement>();
-        var placed = false;
-        for (var i = 0; i < kids.length; i += 1) {
-          let id = kids[i].kind.id;
-          if (id == labelTextKind.id || id == pipeEscapeKind.id) {
-            if (!placed) { out.add(new GreenToken(labelTextKind, label)); }
-            placed = true;
-          } else {
-            out.add(kids[i]);
-          }
-        }
-        new MarkdownDocument(node.replaceWith(new GreenNode(node.kind, out.toList())))
+        applied(footnoteReferenceLabelEdit(node, label))
       }
+    }
+
+    let footnoteReferenceLabelEdit(node: RedNode, label: String): Replacement throws Bubble {
+      checkFootnoteLabel(label);
+      let kids = node.green.children;
+      let out = new ListBuilder<GreenElement>();
+      var placed = false;
+      for (var i = 0; i < kids.length; i += 1) {
+        let id = kids[i].kind.id;
+        if (id == labelTextKind.id || id == pipeEscapeKind.id) {
+          if (!placed) { out.add(new GreenToken(labelTextKind, label)); }
+          placed = true;
+        } else {
+          out.add(kids[i]);
+        }
+      }
+      new Replacement(node, new GreenNode(node.kind, out.toList()))
     }
 
     let footnoteLabelOf(node: RedNode): String {

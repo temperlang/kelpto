@@ -60,4 +60,5 @@ name = "tour"
 version = "0.0.0"
 dependencies = [
  "kelpto-md",
+ "temper-core",
 ]

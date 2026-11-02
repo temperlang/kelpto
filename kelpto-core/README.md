@@ -11,7 +11,8 @@ use it directly.
 - **Red elements** (`RedNode`, `RedToken`): cheap views with a parent,
   an offset, a `span`, and `asWritten`, made as you walk.
 - **`replaceWith`:** a new root, copying only the path to the
-  replaced node.
+  replaced node; **`replaceAll`** makes many `Replacement`s at once,
+  copying each shared path once.
 - **`Span`** (start and length in code points), **`Kind`** (an id and
   a name), and **`SourceText`** (text indexed by code point).
 

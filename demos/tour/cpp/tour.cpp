@@ -12,6 +12,9 @@
 #include "kelpto-md/init.hpp"
 
 using kelpto_md::FootnoteDefinition;
+using kelpto_md::Heading;
+using kelpto_md::Link;
+using kelpto_md::LinkReferenceDefinition;
 using kelpto_md::LinkTarget;
 using kelpto_md::MarkdownParser;
 using kelpto_md::MarkdownRenderer;
@@ -172,4 +175,34 @@ Read [the docs][docs].
   } catch (TemperBubble const &) {
     std::cout << "label 'two words': throws\n";
   }
+
+  section("6. Walk and transform");
+
+  std::string guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n";
+  auto guideDoc = parseMarkdown(guide);
+  // Every view inside the document, in order, each knowing its depth.
+  auto views = guideDoc->get_descendants();
+  for (auto const &view : *views) {
+    if (auto heading = std::dynamic_pointer_cast<Heading>(view)) {
+      std::cout << "depth " << heading->get_depth() << ", heading " << heading->get_level() << ": " << heading->get_text() << "\n";
+    } else if (auto link = std::dynamic_pointer_cast<Link>(view)) {
+      std::cout << "depth " << link->get_depth() << ", link " << link->get_text() << " -> " << link->get_destination()->get_url() << "\n";
+    }
+  }
+  // Many edits, one new document: headings a level down, relative links absolute.
+  std::string base = "https://example.com/docs/";
+  auto editor = guideDoc->editor();
+  for (auto const &view : *views) {
+    if (auto heading = std::dynamic_pointer_cast<Heading>(view)) {
+      editor->setLevel(heading, heading->get_level() + 1);
+    } else if (auto link = std::dynamic_pointer_cast<Link>(view)) {
+      auto url = link->get_destination()->get_url();
+      if (link->get_style() == "inline" && url.rfind("#", 0) != 0) {
+        editor->setDestination(link, LinkTarget::make(base + url));
+      }
+    } else if (auto definition = std::dynamic_pointer_cast<LinkReferenceDefinition>(view)) {
+      editor->setDestination(definition, LinkTarget::make(base + definition->get_destination()->get_url()));
+    }
+  }
+  changes(guide, editor->toDocument()->get_asWritten());
 }

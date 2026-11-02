@@ -10,9 +10,12 @@ import java.util.stream.Collectors;
 import kelpto_md.FootnoteDefinition;
 import kelpto_md.FootnoteReference;
 import kelpto_md.Heading;
+import kelpto_md.Link;
 import kelpto_md.LinkReferenceDefinition;
 import kelpto_md.LinkTarget;
 import kelpto_md.MarkdownDocument;
+import kelpto_md.MarkdownEditor;
+import kelpto_md.MarkdownNode;
 import kelpto_md.MarkdownParser;
 import kelpto_md.MarkdownRenderer;
 import kelpto_md.Table;
@@ -158,5 +161,31 @@ public final class Tour {
         } catch (RuntimeException e) {
             System.out.println("label 'two words': throws");
         }
+    
+        section("6. Walk and transform");
+
+        String guide = "# Guide\n\nRead [this](start.md), [that][t], and [top](#top).\n\n## More\n\n[t]: api.md\n";
+        MarkdownDocument guideDoc = parseMarkdown(guide);
+        // Every view inside the document, in order, each knowing its depth.
+        for (MarkdownNode view : guideDoc.getDescendants()) {
+            if (view instanceof Heading h) {
+                System.out.println("depth " + h.getDepth() + ", heading " + h.getLevel() + ": " + h.getText());
+            } else if (view instanceof Link link) {
+                System.out.println("depth " + link.getDepth() + ", link " + link.getText() + " -> " + link.getDestination().getUrl());
+            }
+        }
+        // Many edits, one new document: headings a level down, relative links absolute.
+        String base = "https://example.com/docs/";
+        MarkdownEditor editor = guideDoc.editor();
+        for (MarkdownNode view : guideDoc.getDescendants()) {
+            if (view instanceof Heading h) {
+                editor.setLevel(h, h.getLevel() + 1);
+            } else if (view instanceof Link link && link.getStyle().equals("inline") && !link.getDestination().getUrl().startsWith("#")) {
+                editor.setDestination(link, new LinkTarget(base + link.getDestination().getUrl()));
+            } else if (view instanceof LinkReferenceDefinition d) {
+                editor.setDestination(d, new LinkTarget(base + d.getDestination().getUrl()));
+            }
+        }
+        changes(guide, editor.toDocument().getAsWritten());
     }
 }
