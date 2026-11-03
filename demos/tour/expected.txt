@@ -94,3 +94,26 @@ depth 1, heading 2: More
 - [t]: api.md
 + [t]: https://example.com/docs/api.md
 4 of 7 lines changed, the rest byte for byte
+
+## 7. Build from plain strings
+markdown:
+## Report for \<Ana> #1
+
+Said: *\*really\** see [the \[docs\]](<docs/read me.md>)
+
+- 1\. first, \`x\`
+- ````py
+  print('```')
+  ````
+heading: Report for <Ana> #1
+link: the [docs] -> docs/read me.md
+html:
+<h2>Report for &lt;Ana&gt; #1</h2>
+<p>Said: <em>*really*</em> see <a href="docs/read%20me.md">the [docs]</a></p>
+<ul>
+<li>1. first, `x`</li>
+<li>
+<pre><code class="language-py">print('```')
+</code></pre>
+</li>
+</ul>

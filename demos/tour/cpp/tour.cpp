@@ -13,9 +13,11 @@
 
 using kelpto_md::FootnoteDefinition;
 using kelpto_md::Heading;
+using kelpto_md::Inlines;
 using kelpto_md::Link;
 using kelpto_md::LinkReferenceDefinition;
 using kelpto_md::LinkTarget;
+using kelpto_md::MarkdownBuilder;
 using kelpto_md::MarkdownParser;
 using kelpto_md::MarkdownRenderer;
 using kelpto_md::TableCell;
@@ -205,4 +207,26 @@ Read [the docs][docs].
     }
   }
   changes(guide, editor->toDocument()->get_asWritten());
+
+  section("7. Build from plain strings");
+
+  // Text from anywhere, escaped so it reads back as written.
+  std::string name = "<Ana> #1";
+  std::string said = "*really*";
+  auto b = MarkdownBuilder::make();
+  b->heading(2, Inlines::empty()->text("Report for " + name));
+  b->paragraph(Inlines::empty()->text("Said: ")->emphasis(Inlines::empty()->text(said))->text(" see ")
+                   ->link(Inlines::empty()->text("the [docs]"), LinkTarget::make("docs/read me.md")));
+  auto first = MarkdownBuilder::make();
+  first->paragraph(Inlines::empty()->text("1. first, `x`"));
+  auto second = MarkdownBuilder::make();
+  second->codeBlock("py", "print('```')\n");
+  b->bulletList(std::make_shared<std::vector<std::shared_ptr<MarkdownBuilder>>>(
+      std::vector<std::shared_ptr<MarkdownBuilder>>{first, second}));
+  rendered("markdown", b->toMarkdown());
+  auto built = b->toDocument();
+  std::cout << "heading: " << built->get_headings()->at(0)->get_text() << "\n";
+  auto link = built->get_links()->at(0);
+  std::cout << "link: " << link->get_text() << " -> " << link->get_destination()->get_url() << "\n";
+  rendered("html", built->toHtml());
 }

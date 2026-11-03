@@ -84,6 +84,9 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   `LinkReferenceDefinition`, and on inline `Link` and `Image`,
   `TableCell.withText`, `TaskListItem.withChecked`, and `withLabel` on
   footnote definitions and references.
+- **Building from scratch:** `MarkdownBuilder` and `Inlines` write a
+  document from plain strings, escaped so they read back as written.
+  See [Building from scratch](#building-from-scratch).
 - **Walking and batch edits:** every view has `descendants` (all the
   views inside it, in document order), `parent`, and `depth`; a
   document's `editor()` collects edits to many nodes and builds one new
@@ -95,6 +98,42 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
 - **Destinations stay as written** in the tree, as a `LinkTarget`
   (escapes and character references resolved, nothing else); the
   renderer percent-encodes them only as it writes `href` and `src`.
+
+## Building from scratch
+
+`MarkdownBuilder` writes a new document from plain strings, escaping
+them so they read back as written, whatever they hold: a `#` or `1.`
+at a line's start, `*`, `<b>`, or a backslash. `Inlines` is a
+heading's or paragraph's content: a value, from `Inlines.empty`, with
+each method giving new content, so calls chain.
+
+```temper
+let b = new MarkdownBuilder();
+b.heading(2, Inlines.empty.text("Report for <Ana> #1")) orelse panic();
+b.paragraph(Inlines.empty.text("Said: ").emphasis(Inlines.empty.text("*really*"))
+  .text(" see ").link(Inlines.empty.text("the [docs]"), new LinkTarget("docs/read me.md")));
+let item = new MarkdownBuilder();
+item.paragraph(Inlines.empty.text("1. first, `x`"));
+b.bulletList([item]);
+b.toMarkdown();
+  // "## Report for \\<Ana> #1\n\nSaid: *\\*really\\** see [the \\[docs\\]](<docs/read me.md>)\n\n- 1\\. first, \\`x\\`\n"
+b.toDocument().links[0].text;   // "the [docs]"
+```
+
+Blocks: `heading`, `paragraph`, `codeBlock(info, code)` (its fence
+longer than any in the code), `thematicBreak`, `blockQuote`,
+`bulletList`, and `orderedList(start, items)`, the containers taking
+other builders. Inlines: `text`, `code`, `emphasis`, `strong`,
+`link(content, target, title)`, `image(alt, target, title)`, and
+`lineBreak`; titles are optional. Line breaks in text become spaces
+(`lineBreak()` makes a real one). What Markdown can't hold is left
+out: empty emphasis and code spans, a break ending a paragraph, and a
+link inside a link, which keeps only its text. The Markdown reads the
+same in CommonMark and GFM. Emphasis directly or indirectly inside
+emphasis of its own kind (`<em>` in `<em>`) can, rarely, read back
+otherwise when punctuation or markup is at its edges; the builder
+checks and retries, but CommonMark can't always say it. Tables and
+task list items are still to come.
 
 ## Speed
 

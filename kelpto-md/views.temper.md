@@ -846,7 +846,8 @@ or puts one in after `(` and any whitespace if there was none.
     }
 
 `url` as a link destination: as is if it can be, or else in angle
-brackets, with `<`, `>`, and `\` escaped.
+brackets, with `<`, `>`, and `\` escaped, and `&` where it would start
+a character reference.
 
     let writeDestination(url: String): String throws Bubble {
       var plain = !url.isEmpty && firstCodeOf(url) != char'<';
@@ -854,7 +855,7 @@ brackets, with `<`, `>`, and `\` escaped.
       for (var i = String.begin; url.hasIndex(i); i = url.next(i)) {
         let c = url[i];
         if (c == char'\n' || c == char'\r') { bubble(); }
-        if (c <= 0x20 || c == 0x7F || c == char'\\') { plain = false; }
+        if (c <= 0x20 || c == 0x7F || c == char'\\' || startsReference(url, i)) { plain = false; }
         if (c == char'(') { depth += 1; }
         if (c == char')') {
           depth -= 1;
@@ -867,7 +868,7 @@ brackets, with `<`, `>`, and `\` escaped.
       var runStart = String.begin;
       for (var i = String.begin; url.hasIndex(i); i = url.next(i)) {
         let c = url[i];
-        if (c == char'<' || c == char'>' || c == char'\\') {
+        if (c == char'<' || c == char'>' || c == char'\\' || startsReference(url, i)) {
           out.append(url.slice(runStart, i));
           out.append("\\");
           runStart = i;
@@ -876,6 +877,10 @@ brackets, with `<`, `>`, and `\` escaped.
       out.append(url.slice(runStart, url.end));
       out.append(">");
       out.toString()
+    }
+
+    let startsReference(text: String, i: StringIndex): Boolean {
+      text[i] == char'&' && characterReferenceEnd(text, i, text.end) != i
     }
 
 A block quote: lines starting with `>`, holding blocks.

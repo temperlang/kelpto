@@ -10,9 +10,11 @@ import java.util.stream.Collectors;
 import kelpto_md.FootnoteDefinition;
 import kelpto_md.FootnoteReference;
 import kelpto_md.Heading;
+import kelpto_md.Inlines;
 import kelpto_md.Link;
 import kelpto_md.LinkReferenceDefinition;
 import kelpto_md.LinkTarget;
+import kelpto_md.MarkdownBuilder;
 import kelpto_md.MarkdownDocument;
 import kelpto_md.MarkdownEditor;
 import kelpto_md.MarkdownNode;
@@ -187,5 +189,27 @@ public final class Tour {
             }
         }
         changes(guide, editor.toDocument().getAsWritten());
+    
+        section("7. Build from plain strings");
+
+        // Text from anywhere, escaped so it reads back as written.
+        String name = "<Ana> #1";
+        String said = "*really*";
+        MarkdownBuilder b = new MarkdownBuilder();
+        b.heading(2, Inlines.empty.text("Report for " + name));
+        b.paragraph(
+            Inlines.empty.text("Said: ").emphasis(Inlines.empty.text(said)).text(" see ")
+                .link(Inlines.empty.text("the [docs]"), new LinkTarget("docs/read me.md")));
+        MarkdownBuilder first = new MarkdownBuilder();
+        first.paragraph(Inlines.empty.text("1. first, `x`"));
+        MarkdownBuilder second = new MarkdownBuilder();
+        second.codeBlock("py", "print('```')\n");
+        b.bulletList(List.of(first, second));
+        rendered("markdown", b.toMarkdown());
+        MarkdownDocument built = b.toDocument();
+        System.out.println("heading: " + built.getHeadings().get(0).getText());
+        Link link = built.getLinks().get(0);
+        System.out.println("link: " + link.getText() + " -> " + link.getDestination().getUrl());
+        rendered("html", built.toHtml());
     }
 }

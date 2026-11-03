@@ -4,7 +4,8 @@
 //! print the same text. See demos/README.md for how to run them.
 
 use kelpto_md::{
-    parse_markdown, FootnoteDefinition, Heading, Link, LinkReferenceDefinition, LinkTarget, MarkdownNodeTrait, MarkdownParser,
+    parse_markdown, FootnoteDefinition, Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownNodeTrait,
+    MarkdownParser,
     MarkdownRenderer, TableCell,
 };
 use temper_core::cast;
@@ -175,4 +176,30 @@ Read [the docs][docs].
         }
     }
     changes(guide, &editor.to_document().expect("no overlapping edits").as_written());
+
+    section("7. Build from plain strings");
+
+    // Text from anywhere, escaped so it reads back as written.
+    let name = "<Ana> #1";
+    let said = "*really*";
+    let b = MarkdownBuilder::new();
+    b.heading(2, Inlines::empty().text(format!("Report for {name}"))).expect("a level from 1 to 6");
+    b.paragraph(
+        Inlines::empty().text("Said: ").emphasis(Inlines::empty().text(said)).text(" see ").link(
+            Inlines::empty().text("the [docs]"),
+            LinkTarget::new("docs/read me.md"),
+            None::<String>,
+        ),
+    );
+    let first = MarkdownBuilder::new();
+    first.paragraph(Inlines::empty().text("1. first, `x`"));
+    let second = MarkdownBuilder::new();
+    second.code_block("py", "print('```')\n");
+    b.bullet_list(vec![first, second]);
+    rendered("markdown", &b.to_markdown());
+    let built = b.to_document();
+    println!("heading: {}", built.headings()[0].text());
+    let link = built.links()[0].clone();
+    println!("link: {} -> {}", link.text(), link.destination().expect("inline").url());
+    rendered("html", &built.to_html());
 }

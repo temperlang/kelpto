@@ -181,3 +181,24 @@ foreach (var view in guideDoc.Descendants)
     }
 }
 Changes(guide, editor.ToDocument().AsWritten);
+
+Section("7. Build from plain strings");
+
+// Text from anywhere, escaped so it reads back as written.
+var name = "<Ana> #1";
+var said = "*really*";
+var b = new MarkdownBuilder();
+b.Heading(2, Inlines.Empty.Text($"Report for {name}"));
+b.Paragraph(
+    Inlines.Empty.Text("Said: ").Emphasis(Inlines.Empty.Text(said)).Text(" see ")
+        .Link(Inlines.Empty.Text("the [docs]"), new LinkTarget("docs/read me.md")));
+var first = new MarkdownBuilder();
+first.Paragraph(Inlines.Empty.Text("1. first, `x`"));
+var second = new MarkdownBuilder();
+second.CodeBlock("py", "print('```')\n");
+b.BulletList(new[] { first, second });
+Rendered("markdown", b.ToMarkdown());
+var built = b.ToDocument();
+Console.WriteLine($"heading: {built.Headings[0].Text}");
+Console.WriteLine($"link: {built.Links[0].Text} -> {built.Links[0].Destination!.Url}");
+Rendered("html", built.ToHtml());

@@ -221,10 +221,53 @@ checking every entry as the Temper code reads it:
   the CommonMark spec and some READMEs, checking that only the edited
   bytes change; the benchmarks will use the same files.
 
+### Building documents
+
+Built (2026-11-03), open to review: `MarkdownBuilder` and `Inlines`, in
+`kelpto-md/build.temper.md`, write a document from plain strings, so
+user text never needs hand-escaping.
+
+- **Shape:** builders, as `doc.editor()` is, not named arguments or
+  first-class symbols. `MarkdownBuilder`'s methods add a block each
+  and return nothing (`heading(level, content)`, which bubbles outside
+  1 to 6, `paragraph`, `codeBlock(info, code)`, `thematicBreak`,
+  `blockQuote(builder)`, `bulletList(builders)`, and
+  `orderedList(start, builders)`), then `toMarkdown()` or
+  `toDocument()`. `Inlines` is a value, like `MarkdownParser`: from
+  `Inlines.empty`, each of `text`, `code`, `emphasis`, `strong`,
+  `link(content, target, title?)`, `image(alt, target, title?)`, and
+  `lineBreak` gives new content, so calls chain. Content is always an
+  `Inlines`, so there's one way to pass it.
+- **A tree, then text:** `Inlines` keeps a small tree and writes it
+  when a block takes it, since escaping depends on neighbors: `*` or
+  `_` alternate so no two delimiter runs join, letters and digits
+  next to a delimiter, and blanks where Markdown would drop them,
+  become character references, so every delimiter flanks as needed;
+  ASCII punctuation at a paragraph line's start is escaped, so no line
+  starts a block. What can't be written (empty emphasis or code, a
+  break ending a paragraph, a link in a link) is left out or flattened.
+  Emphasis two deep is parsed back and, if it reads otherwise, written
+  again with other delimiter choices; emphasis inside emphasis of its
+  own kind can still, rarely, read back otherwise (a delimiter run
+  that can both open and close, which CommonMark's rule of 3 then lets
+  close the outer one).
+- **The same in CommonMark and GFM:** `~` is escaped, and `@`, `:/`,
+  and `www.` never start an extended autolink.
+- **Checked** by building hostile strings into every place text goes,
+  and 400 random inline trees (emphasis never inside its own kind),
+  parsing them with both parsers and comparing the views, and the
+  HTML for plain text, with what was built.
+- **Later:** tables and task list items (cells are `Inlines`
+  already escaping `|`), strikethrough, link reference definitions,
+  raw HTML from a trusted or kelpto-html source, and Mike's context
+  for anchors and shared link names.
+
 **Next,** roughly in order:
 
 1. Insert and remove, in the editor too, and more edits (link text,
-   titles, and emphasis). Edit batches are done: `doc.editor()`.
+   titles, and emphasis), maybe taking builders' `Inlines`. Edit
+   batches are done: `doc.editor()`, and building from scratch:
+   `MarkdownBuilder`.
 2. The WHATWG tokenizer in full, with kelpto-core's character
    references (and HTML's forms without `;`), then tree construction,
    against html5lib-tests and WPT.

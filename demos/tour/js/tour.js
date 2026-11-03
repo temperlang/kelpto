@@ -4,7 +4,8 @@
 // the same text. See demos/README.md for how to run them.
 
 import {
-  Heading, Link, LinkReferenceDefinition, LinkTarget, MarkdownParser, MarkdownRenderer, parseMarkdown,
+  Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownParser, MarkdownRenderer,
+  parseMarkdown,
 } from "kelpto-md";
 
 function section(title) {
@@ -156,3 +157,25 @@ for (const view of guideDoc.descendants) {
   }
 }
 changes(guide, editor.toDocument().asWritten);
+
+section("7. Build from plain strings");
+
+// Text from anywhere, escaped so it reads back as written.
+const name = "<Ana> #1";
+const said = "*really*";
+const b = new MarkdownBuilder();
+b.heading(2, Inlines.empty.text(`Report for ${name}`));
+b.paragraph(
+  Inlines.empty.text("Said: ").emphasis(Inlines.empty.text(said)).text(" see ")
+    .link(Inlines.empty.text("the [docs]"), new LinkTarget("docs/read me.md")),
+);
+const first = new MarkdownBuilder();
+first.paragraph(Inlines.empty.text("1. first, `x`"));
+const second = new MarkdownBuilder();
+second.codeBlock("py", "print('```')\n");
+b.bulletList([first, second]);
+rendered("markdown", b.toMarkdown());
+const built = b.toDocument();
+console.log(`heading: ${built.headings[0].text}`);
+console.log(`link: ${built.links[0].text} -> ${built.links[0].destination.url}`);
+rendered("html", built.toHtml());

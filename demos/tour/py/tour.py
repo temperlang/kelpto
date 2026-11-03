@@ -5,7 +5,8 @@ the same text. See demos/README.md for how to run them.
 """
 
 from kelpto_md import (
-    Heading, Link, LinkReferenceDefinition, LinkTarget, MarkdownParser, MarkdownRenderer, parse_markdown,
+    Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownParser, MarkdownRenderer,
+    parse_markdown,
 )
 
 
@@ -151,3 +152,25 @@ for view in doc.descendants:
     elif isinstance(view, LinkReferenceDefinition):
         editor.set_destination(view, LinkTarget(base + view.destination.url))
 changes(guide, editor.to_document().as_written)
+
+section("7. Build from plain strings")
+
+# Text from anywhere, escaped so it reads back as written.
+name = "<Ana> #1"
+said = "*really*"
+b = MarkdownBuilder()
+b.heading(2, Inlines.empty.text(f"Report for {name}"))
+b.paragraph(
+    Inlines.empty.text("Said: ").emphasis(Inlines.empty.text(said)).text(" see ")
+    .link(Inlines.empty.text("the [docs]"), LinkTarget("docs/read me.md"))
+)
+first = MarkdownBuilder()
+first.paragraph(Inlines.empty.text("1. first, `x`"))
+second = MarkdownBuilder()
+second.code_block("py", "print('```')\n")
+b.bullet_list([first, second])
+rendered("markdown", b.to_markdown())
+built = b.to_document()
+print(f"heading: {built.headings[0].text}")
+print(f"link: {built.links[0].text} -> {built.links[0].destination.url}")
+rendered("html", built.to_html())

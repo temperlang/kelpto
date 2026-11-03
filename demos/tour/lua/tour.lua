@@ -7,6 +7,7 @@ local md = require("kelpto-md")
 local LinkTarget, MarkdownParser, MarkdownRenderer = md.LinkTarget, md.MarkdownParser, md.MarkdownRenderer
 local parseMarkdown = md.parseMarkdown
 local Heading, Link, LinkReferenceDefinition = md.Heading, md.Link, md.LinkReferenceDefinition
+local Inlines, MarkdownBuilder = md.Inlines, md.MarkdownBuilder
 local null_to_nil = require("temper-core").null_to_nil
 local instance_of = require("temper-core").instance_of
 
@@ -182,3 +183,25 @@ for _, view in ipairs(guideDoc.descendants) do
   end
 end
 changes(guide, editor:toDocument().asWritten)
+
+section("7. Build from plain strings")
+
+-- Text from anywhere, escaped so it reads back as written.
+local name = "<Ana> #1"
+local said = "*really*"
+local b = MarkdownBuilder()
+b:heading(2, Inlines.empty:text("Report for " .. name))
+b:paragraph(
+  Inlines.empty:text("Said: "):emphasis(Inlines.empty:text(said)):text(" see ")
+    :link(Inlines.empty:text("the [docs]"), LinkTarget("docs/read me.md"))
+)
+local first = MarkdownBuilder()
+first:paragraph(Inlines.empty:text("1. first, `x`"))
+local second = MarkdownBuilder()
+second:codeBlock("py", "print('```')\n")
+b:bulletList({ first, second })
+rendered("markdown", b:toMarkdown())
+local built = b:toDocument()
+print("heading: " .. built.headings[1].text)
+print("link: " .. built.links[1].text .. " -> " .. built.links[1].destination.url)
+rendered("html", built:toHtml())
