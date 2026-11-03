@@ -200,6 +200,25 @@ becomes its children.
         starts.add(children.length);
       }
 
+Where the next element added goes, for `startNodeAt`.
+
+      public checkpoint(): Int { children.length }
+
+Starts a node of `kind` holding everything added since `checkpoint`,
+as rowan's `start_node_at` does, for parsers that learn a node's kind
+only after reading its first tokens: an HTML attribute once its name
+says whether it's a duplicate, or a tag cut off by the end of the
+input. `checkpoint` must not come before the start of the innermost
+open node.
+
+      public startNodeAt(checkpoint: Int, kind: Kind): Void {
+        if (checkpoint > children.length || (!starts.isEmpty && checkpoint < starts[starts.length - 1])) {
+          panic()
+        }
+        kinds.add(kind);
+        starts.add(checkpoint);
+      }
+
 Adds a token. Empty text adds nothing, so parsers needn't check.
 
       public token(kind: Kind, text: String): Void {
@@ -661,6 +680,22 @@ rebuilt once; the child list is copied once.
       assert(green.text == "abécd") { green.text };
       assert(green.width == 5) { green.width.toString() };
       assert(green.children.length == 3) { "empty tokens are dropped" };
+    }
+
+    test("startNodeAt wraps what was added since a checkpoint") {
+      let builder = new GreenNodeBuilder();
+      builder.startNode(nodeKind);
+      builder.token(tokenKind, "a");
+      let mark = builder.checkpoint();
+      builder.token(tokenKind, "bc");
+      builder.token(tokenKind, "d");
+      builder.startNodeAt(mark, nodeKind);
+      builder.finishNode();
+      builder.finishNode();
+      let green = builder.finish();
+      assert(green.children.length == 2) { green.children.length.toString() };
+      let inner = green.children[1] as GreenNode orelse panic();
+      assert(inner.text == "bcd" && green.text == "abcd") { inner.text };
     }
 
     test("shared tokens and nodes keep their kinds") {

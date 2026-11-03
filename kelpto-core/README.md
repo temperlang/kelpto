@@ -7,7 +7,8 @@ use it directly.
   kind, and children or text, and a width in code points, but no
   position, so versions of a document share them.
 - **`GreenNodeBuilder`:** start a node, add tokens, finish the node,
-  as rust-analyzer's rowan does; mutable while building. Identical
+  as rust-analyzer's rowan does, or wrap what was added since a
+  `checkpoint` with `startNodeAt`; mutable while building. Identical
   small tokens (a line ending, a `*`), and nodes holding only one, are
   shared within a build.
 - **Red elements** (`RedNode`, `RedToken`): cheap views with a parent,

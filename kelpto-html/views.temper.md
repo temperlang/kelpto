@@ -2,7 +2,10 @@
 
 Typed views over the red tree, each wrapping one red node, as in
 kelpto-md. `HtmlToken` is what the tokenizer gives at the top level:
-`StartTag`, `EndTag`, `Comment`, and `Text`.
+`StartTag`, `EndTag`, `Comment`, `Text`, `Doctype`, and `DroppedTag`.
+Each reads its parts as browsers do (names lowercased, character
+references decoded, line endings as `\n`), while `asWritten` stays the
+input.
 
 Why `StartTag` and not `Element`: an element is what tree construction
 builds, from a start tag, its end tag (or none), and what's between,
@@ -10,8 +13,7 @@ and it can differ from the source's nesting. The name `Element` is kept
 for that view, which comes later.
 
     let {
-      GreenNode, GreenToken, RedNode, Span, asciiLowercase,
-      escapeHtml,
+      GreenNode, GreenToken, Kind, RedNode, Span, escapeHtml,
     } = import("../kelpto-core");
 
     export sealed interface HtmlNode {
@@ -56,11 +58,13 @@ The typed view of a token node.
       if (node.hasKind(startTagKind)) { return new StartTag(node); }
       if (node.hasKind(endTagKind)) { return new EndTag(node); }
       if (node.hasKind(commentKind)) { return new Comment(node); }
+      if (node.hasKind(doctypeKind) || node.hasKind(quirksDoctypeKind)) { return new Doctype(node); }
+      if (node.hasKind(droppedTagKind)) { return new DroppedTag(node); }
       new Text(node)
     }
 
     let tagNameOf(node: RedNode): String {
-      asciiLowercase(node.childOfKind(tagNameKind)?.asWritten ?? "")
+      htmlName(node.childOfKind(tagNameKind)?.asWritten ?? "")
     }
 
 A start tag, such as `<a href="/x">`.
@@ -75,11 +79,14 @@ The name, ASCII-lowercased, as HTML compares it.
 
       public get name(): String { tagNameOf(node) }
 
+The attributes, in order, without repeats of an earlier one's name,
+which browsers drop.
+
       public get attributes(): List<Attribute> {
         let result = new ListBuilder<Attribute>();
         let nodes = node.childNodes;
         for (var i = 0; i < nodes.length; i += 1) {
-          result.add(new Attribute(nodes[i]));
+          if (nodes[i].hasKind(attributeKind)) { result.add(new Attribute(nodes[i])); }
         }
         result.toList()
       }
@@ -109,19 +116,13 @@ An attribute in a start tag, such as `href="/x"`.
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
 
-      public get name(): String { asciiLowercase(node.childOfKind(attributeNameKind)?.asWritten ?? "") }
+      public get name(): String { htmlName(node.childOfKind(attributeNameKind)?.asWritten ?? "") }
 
-The value without its quotes, or empty if there's none. Not yet:
-character references, such as `&amp;`, are left as written.
+The value as browsers read it, or empty if there's none: without its
+quotes, and with character references, such as `&amp;`, decoded.
 
       public get value(): String {
-        let written = node.childOfKind(attributeValueKind)?.asWritten ?? "";
-        let first = if (written.isEmpty) { -1 } else { written[String.begin] };
-        if (first == char'"' || first == char'\'') {
-          written.slice(written.next(String.begin), written.prev(written.end))
-        } else {
-          written
-        }
+        decodeAttributeValue(unquote(node.childOfKind(attributeValueKind)?.asWritten ?? ""))
       }
 
       public get hasValue(): Boolean { node.childOfKind(equalsKind) != null }
@@ -147,6 +148,21 @@ such as a Markdown document, the new top is that tree's: wrap
       }
     }
 
+Text without the quotes around it, if any: one at each end, or only
+at the start for text the end of the input cut off.
+
+    let unquote(written: String): String {
+      let first = if (written.isEmpty) { -1 } else { written[String.begin] };
+      if (first != char'"' && first != char'\'') { return written; }
+      let start = written.next(String.begin);
+      let last = written.prev(written.end);
+      if (start <= last && written[last] == first) {
+        written.slice(start, last)
+      } else {
+        written.slice(start, written.end)
+      }
+    }
+
 An end tag, such as `</a>`.
 
     export class EndTag extends HtmlToken {
@@ -165,20 +181,88 @@ A comment, such as `<!-- note -->`.
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
 
-The text between `<!--` and `-->`.
+The text between `<!--` and `-->`, as browsers read it.
 
-      public get text(): String { node.childOfKind(commentTextKind)?.asWritten ?? "" }
+      public get text(): String { normalizeText(node.childOfKind(commentTextKind)?.asWritten ?? "", true) }
     }
 
-Text between markup. Not yet: character references are left as
-written, so `text` is `&amp;` where a browser reads `&`.
+Text between markup, as browsers read it: character references, such
+as `&amp;`, decoded, and line endings as `\n`.
 
     export class Text extends HtmlToken {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
       public get asWritten(): String { node.asWritten }
       public get span(): Span { node.span }
-      public get text(): String { node.asWritten }
+
+      public get text(): String {
+        let children = node.green.children;
+        if (children.length == 1 && children[0].kind.id == charsKind.id) {
+          return normalizeText(node.asWritten, false);
+        }
+        let out = new StringBuilder();
+        for (var i = 0; i < children.length; i += 1) {
+          let child = children[i];
+          when (child) {
+            is GreenToken -> do {
+              let id = child.kind.id;
+              if (id == charsKind.id) {
+                out.append(normalizeText(child.text, false));
+              } else if (id == characterReferenceKind.id) {
+                out.append(decodeReference(child.text));
+              } else if (id == replacedCharKind.id) {
+                out.append("\u{FFFD}");
+              }
+            }
+            else -> do {}
+          }
+        }
+        out.toString()
+      }
+    }
+
+A DOCTYPE, such as `<!DOCTYPE html>`.
+
+    export class Doctype extends HtmlToken {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+The name, lowercased, or null if it has none.
+
+      public get name(): String? {
+        let written = node.childOfKind(doctypeNameKind);
+        if (written == null) { null } else { htmlName(written.asWritten) }
+      }
+
+The public and system identifiers, without quotes, or null.
+
+      public get publicId(): String? { identifier(publicIdKind) }
+      public get systemId(): String? { identifier(systemIdKind) }
+
+      private identifier(kind: Kind): String? {
+        let written = node.childOfKind(kind);
+        if (written == null) { null } else { normalizeText(unquote(written.asWritten), true) }
+      }
+
+Whether the tokenizer set the force-quirks flag, as for a DOCTYPE
+without a name or cut off by the end of the input, which puts the
+document in quirks mode.
+
+      public get forceQuirks(): Boolean { node.hasKind(quirksDoctypeKind) }
+    }
+
+A tag browsers drop: one cut off by the end of the input, or `</>`.
+It's not a token to them, but its text stays, and `tag` is its
+`StartTag` or `EndTag` view.
+
+    export class DroppedTag extends HtmlToken {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+      public get tag(): HtmlToken { htmlTokenOf(node.childNodes[0]) }
     }
 
 ## Tests
@@ -215,4 +299,25 @@ written, so `text` is `&amp;` where a browser reads `&`.
       assert(tokens.asWritten == text) { "the old tree is unchanged" };
       let bare = tokenizeHtml("<input disabled>").startTags[0].attributes[0].withValue("");
       assert(bare.asWritten == "<input disabled=\"\">") { bare.asWritten };
+    }
+
+    test("views read as browsers read") {
+      let tokens = tokenizeHtml(
+        "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"><a href='?a=1&amp;b=2&copy=3' ID=x id=y>Fish &amp chips &#x80;\r\n</a ><!--a\r\nb--><div"
+      );
+      let children = tokens.children;
+      let doctype = children[0] as Doctype orelse panic();
+      assert(doctype.name == "html" && doctype.systemId == null && !doctype.forceQuirks) { "doctype" };
+      assert(doctype.publicId == "-//W3C//DTD HTML 4.01//EN") { doctype.publicId ?? "null" };
+      let a = children[1] as StartTag orelse panic();
+      let names = a.attributes.join(",") { (x: Attribute): String => "${x.name}=${x.value}" };
+      assert(names == "href=?a=1&b=2&copy=3,id=x") { names };
+      let text = children[2] as Text orelse panic();
+      assert(text.text == "Fish & chips €\n") { text.text };
+      let comment = children[4] as Comment orelse panic();
+      assert(comment.text == "a\nb") { comment.text };
+      let dropped = children[5] as DroppedTag orelse panic();
+      assert((dropped.tag as StartTag orelse panic()).name == "div") { "dropped" };
+      assert(tokenizeHtml("<!doctype>").children[0] is Doctype) { "quirks doctype" };
+      assert((tokenizeHtml("<!doctype>").children[0] as Doctype orelse panic()).forceQuirks) { "quirks" };
     }

@@ -45,10 +45,11 @@ it in use, and the top README shows them alone and together.
   many edits in one pass (see "Walking and batch edits", below). All 652 of the spec's
   examples pass, in `tests/commonmark/`. GFM's extensions are opt-in
   (see "kelpto-md's GFM extensions", below).
-- **kelpto-html:** a simplified tokenizer (start tags with attributes,
-  end tags, comments, and text), typed views (`StartTag`, `EndTag`,
-  `Comment`, `Text`, and `Attribute`), and `Attribute.withValue`.
-  `Element` is saved for the built tree.
+- **kelpto-html:** the WHATWG tokenizer in full, lossless, with parse
+  errors kept beside the tree (see "kelpto-html's tokenizer", below),
+  typed views (`StartTag`, `EndTag`, `Comment`, `Text`, `Doctype`,
+  `DroppedTag`, and `Attribute`), and `Attribute.withValue`. `Element`
+  is saved for the built tree.
 - **kelpto:** `ParsedRawHtml`, `parseMarkdownWithHtml`, `htmlOf`, and
   a `renderSafe` sketch giving `SafeHtml`.
 
@@ -185,6 +186,53 @@ and rendering defaults.
   Nested references stay linear: inner ones are dropped, not
   rescanned.
 
+### kelpto-html's tokenizer
+
+Built 2026-11-03, against html5lib-tests' tokenizer tests (in
+`tests/html5lib-tokenizer/`).
+
+- **The standard's state machine, one loop:** states are `Int`s, for
+  `when`, and one loop in `run` reads the input by `StringIndex`, with
+  the positions it needs (where a tag, name, or comment's closing
+  dashes start) in locals. Hot states (data, RCDATA, tag and attribute
+  names, values, comments) scan ahead in an inner loop. Character
+  references, the RCDATA and script end tag states, and the script
+  double escape states read ahead instead of being states: what they
+  read only ever becomes text or the tag they find, so the tokens and
+  errors are the same.
+- **Slices, not buffers:** the standard builds each token a character
+  at a time; here each part (a tag name, an attribute value with its
+  quotes, a comment's text) is one slice of the input, added through
+  the builder's cache, and what browsers read from it (lowercase
+  names, decoded references, `\n` for `\r\n` and `\r`, U+FFFD for NUL
+  where the standard replaces it) is worked out by the views when
+  asked. Nothing is allocated per character; an attribute's name is
+  lowercased once, to find duplicates.
+- **Kinds decided late:** a node's kind is sometimes known only after
+  its tokens: a repeated attribute (`HtmlDuplicateAttribute`, which
+  `attributes` skips, as browsers drop it), a tag cut off by the end of
+  the input (wrapped in `HtmlDroppedTag`, with `</>`), and a DOCTYPE
+  with force-quirks set (`HtmlQuirksDoctype`). kelpto-core's builder
+  gained `checkpoint` and `startNodeAt` for this, as rowan has.
+- **Parse errors beside the tree:** `HtmlTokenizer.tokenize` gives
+  `TokenizedHtml`, the tokens and a list of `HtmlParseError` (the
+  standard's code, and an offset in code points, counted once at the
+  end). Errors don't take text, so they aren't tokens; `tokenizeHtml`
+  gives only the tokens, as before.
+- **Until tree construction:** it switches the tokenizer's state after
+  a start tag, and decides whether `<![CDATA[` is CDATA (in SVG and
+  MathML). Meanwhile `HtmlTokenizer.html` switches after the start
+  tags tree construction switches after in HTML content (`script`,
+  `style`, `title`, `textarea`, and the others), and CDATA is always
+  a bogus comment. `withStateSwitching(false)`, `withInitialState`,
+  and `withLastStartTag` set it up as html5lib-tests do. Tree
+  construction will drive the same loop, telling it the state after
+  each start tag.
+- **Different from html5lib-tests:** at commit c777c408b610 it expects
+  `<?` to start a processing instruction, which the standard Kelpto
+  follows reads as a bogus comment (and domjs.test there still
+  expects that); those tests fail until the standard is checked.
+
 ### Generated tables
 
 Scripts in `scripts/` write them into kelpto-core from pinned sources,
@@ -295,6 +343,33 @@ user text never needs hand-escaping.
   already escaping `|`), strikethrough, link reference definitions,
   raw HTML from a trusted or kelpto-html source, and Mike's context
   for anchors and shared link names.
+- **Later, from Mike's design ideas** (a plan, 2026-11-03; the views
+  already follow his sealed interfaces by where a node may go:
+  `BlockChild`, `ListChild`, `ParagraphChild`, `LinkTextChild`):
+  - **Typed nesting when building:** content types per position, so
+    invalid nesting fails to compile rather than escaping or bubbling
+    (link text can't hold a link, a heading holds no blocks). Today
+    one `Inlines` serves every inline position.
+  - **Foreign content:** HTML from a kelpto-html tree or builder, or a
+    `SafeHtml` (secure-composition), as a block or inline; and fenced
+    blocks from any typed source (Mermaid, say) through a small
+    interface giving an info string and text, with the fence chosen
+    to fit, as `codeBlock` does now.
+  - **A link context,** shared by a page or a set of pages: anchors
+    allocated before their heading exists (usable by links before and
+    after it, and from other pages), never colliding; and named
+    external URLs, written as reference links with their definitions
+    gathered at the page's end. CommonMark headings have no ids, so
+    an anchor either predicts the slug a renderer gives (GitHub's,
+    with its `-1` suffixes; the context reserves slugs) or writes an
+    explicit HTML anchor; the context picks per target.
+  - **A block-style builder:** nested content as trailing blocks
+    (`b.blockQuote { q => ... }`) as well as sub-builders, close to a
+    Kotlin DSL while translating to plain lambdas everywhere.
+  - **Tagged strings:** an `md"..."` accumulator through
+    secure-composition's contextual autoescaping, escaping each
+    interpolation for where it lands (heading, link text, URL, code
+    span), using this builder's escaping rules per context.
 
 **Next,** roughly in order:
 
@@ -303,9 +378,8 @@ user text never needs hand-escaping.
    (`doc.editor()`), building from scratch (`MarkdownBuilder`), and
    inserting, replacing, and removing blocks, with `Inlines` content
    for headings, paragraphs, and cells (2026-11-03).
-2. The WHATWG tokenizer in full, with kelpto-core's character
-   references (and HTML's forms without `;`), then tree construction,
-   against html5lib-tests and WPT.
+2. The WHATWG tree construction, against WPT's `.dat` files, driving
+   the tokenizer's state. The tokenizer is done (2026-11-03).
 3. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
 4. Chunked children, once documents are big enough to measure;

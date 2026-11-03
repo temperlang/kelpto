@@ -23,8 +23,8 @@ renderSafe(doc).html;                     // "<p>Hi <b>there</b>alert(1)</p>\n"
       parseMarkdown,
     } = import("../kelpto-md");
     let {
-      Attribute, Comment, EndTag, HtmlTokens, StartTag, Text, htmlTokensKind, tokenizeHtml,
-      tokenizeHtmlGreen,
+      Attribute, Comment, Doctype, DroppedTag, EndTag, HtmlTokens, StartTag, Text, htmlTokensKind,
+      tokenizeHtml, tokenizeHtmlGreen,
     } = import("../kelpto-html");
 
 ## Parsing
@@ -109,7 +109,7 @@ an allowlist of elements and attributes and every URL checked.
             is StartTag -> if (isAllowed(token.name)) { out.append("<${token.name}>"); };
             is EndTag -> if (isAllowed(token.name)) { out.append("</${token.name}>"); };
             is Text -> out.append(escapeHtml(token.text));
-            is Comment -> do {};
+            is Comment, is Doctype, is DroppedTag -> do {};
           }
         }
         out.toString()

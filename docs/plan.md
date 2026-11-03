@@ -183,7 +183,11 @@ way in `tests/gfm/`.
    container, checked against a reparse. Left: list items as targets,
    link text, and titles.
 4. **HTML tokenizer,** then tree construction, against html5lib-tests
-   and WPT's `.dat` files.
+   and WPT's `.dat` files. The tokenizer is done (2026-11-03): every
+   state, lossless, with parse errors; all of html5lib-tests' tokenizer
+   tests pass, in `tests/html5lib-tokenizer/`, but those expecting
+   processing instructions (see "kelpto-html's tokenizer" in
+   [design.md](design.md)). Next: tree construction.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface
    filled in.
 6. **Tours and the site,** as in the other libraries.

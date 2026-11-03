@@ -184,6 +184,15 @@ stands for. The file itself isn't included; the script downloads it. It is
 under the MIT license, below: permissive, so compatible with Kelpto's
 Apache-2.0 OR MIT, asking only that this notice be kept with copies.
 
+Kelpto's tests also include html5lib-tests' tokenizer tests, from the
+tokenizer/*.test files at the same commit: each test's input, initial
+state, last start tag, and expected tokens and parse errors, rewritten
+as Temper by scripts/html5lib_tokenizer.py, in
+tests/html5lib-tokenizer/tests.temper.md and
+tests/html5lib-tokenizer/named-entities.temper.md, a test-only library
+that nothing imports and that isn't published. The test files
+themselves aren't included; the script downloads them.
+
 Copyright (c) 2006-2013 James Graham, Geoffrey Sneddon, and
 other contributors
 
