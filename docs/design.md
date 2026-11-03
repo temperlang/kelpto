@@ -223,7 +223,7 @@ checking every entry as the Temper code reads it:
 3. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
 4. Chunked children and interning, once documents are big enough to
-   measure; deep nesting (thousands of emphasis levels, and views and
+   measure (see "Less memory", below); deep nesting (thousands of emphasis levels, and views and
    rendering of deep blocks) without deep recursion. Parsing and
    printing deep block nesting are done: linear, with no recursion.
 5. GFM's rest: more edits for tables (rows and columns). Footnotes
@@ -237,10 +237,13 @@ checking every entry as the Temper code reads it:
    instead of decoding again (`SourceText.joinLines`), deep block
    nesting is linear, and the block and inline parsers' per-character
    loops work on locals, which Rust's translation locks for on every
-   field access. Next: the Rust translation's locks elsewhere (Rust is
-   still several times slower than C++ from the same source), C#'s
-   and Lua's garbage on long documents, Python's checked integer
-   arithmetic, and GFM benchmarks.
+   field access. Splitting into lines reuses the line breaks found
+   while decoding (2026-11-03). Next: parsers reading the string by
+   `StringIndex` rather than decoding it into arrays (block parser and
+   tree writer first; see benchmarks.md), the Rust translation's locks
+   elsewhere (Rust is still several times slower than C++ from the
+   same source), C#'s and Lua's garbage on long documents, Python's
+   checked integer arithmetic, and GFM benchmarks.
 7. Typed walks: descendants of one kind (`doc.descendantsOf…`, or a
    filter per view type such as `headingsIn`), so users get typed views
    without casts (Rust needs `temper_core::cast` today) and, if
@@ -341,6 +344,53 @@ Lean) reuse an immutable node's memory when nothing else holds it, so
 immutable updates cost little there; Rust's `Arc::make_mut` does the
 same opt-in. Temper's targets mostly can't, so the design above can't
 rely on it, though a backend could use it where it exists.
+
+## Less memory (a plan, 2026-11-03)
+
+A parse takes 40 to 190 bytes of memory per byte of input
+([benchmarks.md](benchmarks.md)), against under 8 for cmark, comrak,
+and pulldown-cmark. Most of it is small objects: a token and its
+string per marker, space, and line ending. In order, measuring peak
+memory and object counts after each step:
+
+1. **Measure what the decode holds.** `SourceText` still decodes the
+   whole document into two arrays, since the parsers find text by
+   `Int` position; reading by `StringIndex` instead
+   ([benchmarks.md](benchmarks.md)) would drop them, which may be much
+   of the peak. Steps 2 and 3 don't wait for it.
+2. **Share identical tokens:** `GreenNodeBuilder` keeps one cache by
+   kind and text, so each repeated short token (a space, a line ending,
+   `*`, `#`, `>`, an indent) is one shared object, as rowan does. No API
+   change.
+3. **Fewer, larger tokens,** where the parser splits text nothing
+   reads apart, such as runs of plain text. Also `children` lists sized
+   exactly.
+4. **If memory is still far off, a flat tree.** The parser fills one
+   store per document: arrays of kind, width, and where each node's
+   children start, plus the source string. A green node is either an
+   object, as now (what builders and edits make), or a position in a
+   store; edits build object nodes up to the root, which point at the
+   untouched flat subtrees, so a tree may mix both. Rendering and
+   printing read the arrays directly, so a parse and render builds no
+   node objects. That could bring memory near cmark's, and be faster
+   too. Costs: walking a flat subtree through the views builds objects
+   on the way (more garbage), node objects aren't the same object on
+   each read unless cached, and every function on green nodes handles
+   both forms. Prototype parse and render first, and measure before
+   going further.
+
+**Green's public surface, first:** the views, red nodes, editor, and
+rendering don't change with any of this. The green layer stays
+exported from kelpto-core, since kelpto-html's subtrees go into
+kelpto-md's tree (through `RawHtmlHandler`) and Temper has nothing
+between private to a library and exported. But it's the low-level
+layer for extending Kelpto (handlers, new syntaxes, building trees
+without text), and the READMEs show only the views. Before step 4,
+narrow it to what extending needs (a kind, a width, a visit of the
+children, a builder, and `writeTo`), dropping the public `children`
+list and the constructors that fix the object form: an API change of
+its own, with no change in behavior, while the libraries are
+unpublished.
 
 ## kelpto-md alone
 

@@ -35,6 +35,11 @@ frozen; elsewhere it's as fast either way.
 
       private copyFrom: Listed<Int>;
 
+Where each `\n` and `\r` is, in order: found while decoding, or a
+joined text's joins, since its lines have none.
+
+      private breaks: List<Int>;
+
 `text` decoded whole. `joinLines` passes the rest, for text it has
 already decoded; leave them out.
 
@@ -49,9 +54,15 @@ already decoded; leave them out.
         if (indices == null) {
           let decoded = new ListBuilder<Int>();
           let at = new ListBuilder<StringIndex>();
+          let breaks = new ListBuilder<Int>();
           var i = String.begin;
           while (text.hasIndex(i)) {
-            decoded.add(text[i]);
+            let c = text[i];
+            // One comparison for nearly every code point.
+            if (c <= char'\r') {
+              if (c == char'\n' || c == char'\r') { breaks.add(decoded.length); }
+            }
+            decoded.add(c);
             at.add(i);
             i = text.next(i);
           }
@@ -59,10 +70,12 @@ already decoded; leave them out.
           this.indices = at.toList();
           this.codes = decoded.toList();
           this.copyFrom = decoded;
+          this.breaks = breaks.toList();
         } else {
           this.indices = indices;
           this.codes = codes;
           this.copyFrom = codes;
+          this.breaks = joins;
         }
         this.joins = joins;
         this.bases = bases;
@@ -104,9 +117,13 @@ The code point at `at`, or -1 outside the text.
         if (at < 0 || at >= codes.length) { -1 } else { codes[at] }
       }
 
+Where each `\n` and `\r` is, in code points, in order, for splitting
+into lines without another pass over the code points.
+
+      public get lineBreaks(): List<Int> { breaks }
+
 Where the line from `from` ends: at the first `\n` or `\r` from there,
-or the end. One loop over the code points, for splitting long texts
-into lines.
+or the end.
 
       public lineEnd(from: Int): Int {
         let codes = this.codes;
@@ -254,6 +271,8 @@ attribute names.
       assert(source.slice(1, 3) == "😀b") { source.slice(1, 3) };
       assert(source.slice(0, 4) == "a😀b\n") { "whole" };
       assert(source.lineEnd(0) == 3 && source.lineEnd(4) == 4) { "line end" };
+      let breaks = new SourceText("a\r\nb\rc\n").lineBreaks;
+      assert(breaks.length == 4 && breaks[0] == 1 && breaks[1] == 2 && breaks[3] == 6) { "line breaks" };
     }
 
     test("lines joined from source text") {
@@ -267,6 +286,7 @@ attribute names.
       assert(joined.slice(2, 5) == "b\nc") { joined.slice(2, 5) };
       assert(joined.slice(3, 4) == "\n" && joined.slice(4, 6) == "cd") { "around a join" };
       assert(joined.slice(0, 8) == joined.text) { "whole" };
+      assert(joined.lineBreaks.length == 2 && joined.lineBreaks[1] == 6) { "joined line breaks" };
       let one = source.joinLines([9, 11]);
       assert(one.text == "cd" && one.slice(0, 1) == "c") { one.text };
       assert(source.joinLines([]).text == "") { "empty" };

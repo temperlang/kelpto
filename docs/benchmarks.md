@@ -125,9 +125,26 @@ and Python, about 16 to 65 times against comrak and Markdig, and about
   in Python (cProfile, the spec) and about 20% of the ticks in
   JavaScript (`node --prof`, Hrefine's README), with each paragraph
   decoded again. Paragraphs now share the document's; the one decode
-  is left. In JavaScript, copying a slice of a `List` is slower than
-  decoding, since Temper's lists are frozen arrays there, so
-  `joinLines` copies from the builder the document was decoded into.
+  is left: about 11% of a Python parse of the spec, and 22% of the
+  ticks in JavaScript (2026-11-03), nearly all of it building the two
+  arrays, since a plain pass over the string by `StringIndex` takes a
+  quarter of the time or less there. In JavaScript, copying a slice of
+  a `List` is slower than decoding, since Temper's lists are frozen
+  arrays there, so `joinLines` copies from the builder the document
+  was decoded into. Splitting into lines no longer takes a second
+  pass: the decode records each line break (9.5% fewer Python calls
+  per parse of the spec; about even in JavaScript).
+
+  The arrays stay because both parsers address text by `Int` code
+  point, in some 390 places, and nothing in Temper turns an `Int` into
+  a `StringIndex` without stepping there. So reading the string
+  directly means the parsers keep `StringIndex` positions themselves,
+  counting code points only for spans (tokens already count their own
+  width). That's the block parser and tree writer first: 47% of the
+  spec is fenced code, which only they read, so `joinLines` could then
+  decode each paragraph's lines from the string. Then the inline
+  parser. In Python the gain is smaller than the decode's share, since
+  `get` and `next` are helper calls there, as a list read is.
 - **Garbage collection** on long documents in C# and Lua: spec-x10
   takes 18 times the spec's time there for 10 times the bytes, against
   7 to 13 times elsewhere, with C#'s peak memory the highest.

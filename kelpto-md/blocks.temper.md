@@ -176,13 +176,19 @@ there, or 0.
     }
 
 Splits `source` into lines. A line ending (`\n`, `\r\n`, or `\r`) ends
-a line; text after the last one is a last line without one.
+a line; text after the last one is a last line without one. It goes by
+the line breaks `source` found while decoding, not code point by code
+point.
 
     let splitLines(source: SourceText): List<LineData> {
       let lines = new ListBuilder<LineData>();
+      let breaks = source.lineBreaks;
+      let length = source.length;
       var start = 0;
-      while (start < source.length) {
-        let end = source.lineEnd(start);
+      var b = 0;
+      while (start < length) {
+        while (b < breaks.length && breaks[b] < start) { b += 1; }
+        let end = if (b < breaks.length) { breaks[b] } else { length };
         let next = lineBreakEnd(source, end);
         lines.add(new LineData(start, end, next));
         start = next;
