@@ -7,7 +7,7 @@ local md = require("kelpto-md")
 local LinkTarget, MarkdownParser, MarkdownRenderer = md.LinkTarget, md.MarkdownParser, md.MarkdownRenderer
 local parseMarkdown = md.parseMarkdown
 local Heading, Link, LinkReferenceDefinition = md.Heading, md.Link, md.LinkReferenceDefinition
-local Inlines, MarkdownBuilder = md.Inlines, md.MarkdownBuilder
+local Inlines, MarkdownBuilder, Paragraph = md.Inlines, md.MarkdownBuilder, md.Paragraph
 local null_to_nil = require("temper-core").null_to_nil
 local instance_of = require("temper-core").instance_of
 
@@ -205,3 +205,29 @@ local built = b:toDocument()
 print("heading: " .. built.headings[1].text)
 print("link: " .. built.links[1].text .. " -> " .. built.links[1].destination.url)
 rendered("html", built:toHtml())
+
+section("8. Insert, replace, and remove blocks")
+
+local advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n"
+local adviceDoc = parseMarkdown(advice)
+local warning = MarkdownBuilder()
+warning:paragraph(Inlines.empty:strong(Inlines.empty:text("Careful:")):text(" it's *hot*."))
+local also = MarkdownBuilder()
+also:paragraph(Inlines.empty:text("Also: *this*."))
+-- Blocks from a builder, where they go, with the prefixes of the block
+-- quote or list item around them; the rest stays as written.
+local adviceEditor = adviceDoc:editor()
+for _, view in ipairs(adviceDoc.descendants) do
+  if instance_of(view, Paragraph) and view.text == "Old advice." then
+    adviceEditor:replace(view, warning)
+  elseif instance_of(view, Paragraph) and view.text == "two" then
+    adviceEditor:insertAfter(view, also)
+  elseif instance_of(view, Paragraph) and view.text == "Draft, remove me." then
+    adviceEditor:remove(view)
+  elseif instance_of(view, Heading) and view.text == "Tip" then
+    adviceEditor:setContent(view, Inlines.empty:text("Tip "):code("#1"))
+  end
+end
+local advised = adviceEditor:toDocument()
+rendered("markdown", advised.asWritten)
+print("heading: " .. advised.headings[2].text)

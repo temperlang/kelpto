@@ -464,24 +464,78 @@ target isn't in this tree, as far as a cheap check sees: each step of
 its path must have the kind and width it has here.
 
     export let replaceAll(root: RedNode, replacements: List<Replacement>): RedNode throws Bubble {
-      let n = replacements.length;
+      let none: List<Splice> = [];
+      editAll(root, replacements, none)
+    }
+
+One change to a node's list of children, for inserting and removing:
+the children from `from` up to `to` (none, to insert) give way to
+`elements` (none, to remove).
+
+    export class Splice(
+      public parent: RedNode, public from: Int, public to: Int, public elements: List<GreenElement>,
+    ) {}
+
+As `replaceAll`, with `splices` made too, in the same pass. A
+replacement is a splice of one child. Bubbles, as there, when edits
+overlap: a target inside a spliced range, ranges sharing a child, or
+two insertions at one place, whose order would be unclear.
+
+    export let editAll(
+      root: RedNode, replacements: List<Replacement>, splices: List<Splice>,
+    ): RedNode throws Bubble {
+      let n = replacements.length + splices.length;
       if (n == 0) { return root; }
       let paths = new ListBuilder<List<Int>>();
-      for (var i = 0; i < n; i += 1) {
-        paths.add(pathTo(root.green, replacements[i].target));
-      }
-      let order = new ListBuilder<Int>();
-      for (var i = 0; i < n; i += 1) { order.add(i); }
-      let sorted = order.toList().sorted { (a: Int, b: Int): Int => comparePaths(paths[a], paths[b]) };
-      if (paths[sorted[0]].isEmpty) {
+      let froms = new ListBuilder<Int>();
+      let tos = new ListBuilder<Int>();
+      let elements = new ListBuilder<List<GreenElement>>();
+      for (var i = 0; i < replacements.length; i += 1) {
+        let replacement = replacements[i];
+        let target = replacement.target;
+        let parent = target.parent;
+        if (parent == null) {
 
 The root itself: nothing else can change with it.
 
-        if (n > 1) { bubble(); }
-        return redRoot(replacements[0].replacement as GreenNode orelse bubble());
+          pathTo(root.green, target);
+          if (n > 1) { bubble(); }
+          return redRoot(replacement.replacement as GreenNode orelse bubble());
+        }
+        paths.add(pathTo(root.green, parent as RedNode orelse panic()));
+        froms.add(target.index);
+        tos.add(target.index + 1);
+        elements.add([replacement.replacement]);
       }
-      redRoot(rebuild(root.green, 0, paths.toList(), sorted, replacements, 0, n))
+      for (var i = 0; i < splices.length; i += 1) {
+        let splice = splices[i];
+        if (splice.from < 0 || splice.to < splice.from || splice.to > splice.parent.green.children.length) {
+          bubble();
+        }
+        paths.add(pathTo(root.green, splice.parent));
+        froms.add(splice.from);
+        tos.add(splice.to);
+        elements.add(splice.elements);
+      }
+      let order = new ListBuilder<Int>();
+      for (var i = 0; i < n; i += 1) { order.add(i); }
+      let edits = new Edits(paths.toList(), froms.toList(), tos.toList(), elements.toList());
+      let sorted = order.toList().sorted { (a: Int, b: Int): Int =>
+        let byPath = comparePaths(edits.paths[a], edits.paths[b]);
+        if (byPath != 0) { byPath } else if (edits.froms[a] != edits.froms[b]) {
+          edits.froms[a] - edits.froms[b]
+        } else { edits.tos[a] - edits.tos[b] }
+      };
+      redRoot(rebuild(root.green, 0, edits, sorted, 0, n))
     }
+
+Every edit as a splice of its parent's children: the parent's path,
+and the range and what replaces it.
+
+    class Edits(
+      public paths: List<List<Int>>, public froms: List<Int>, public tos: List<Int>,
+      public elements: List<List<GreenElement>>,
+    ) {}
 
 The child indices from the root down to `target`, checked against
 `root`'s tree.
@@ -528,31 +582,59 @@ Lexicographic, so a path comes just before the paths inside it.
       a.length - b.length
     }
 
-`green` with the replacements in `sorted[from]` to `sorted[to - 1]`,
-whose paths all pass through it, at `depth`, made: each child holding
-targets is rebuilt once, and the child list is copied once.
+`green` with the edits `sorted[from]` to `sorted[to - 1]`, whose paths
+all pass through it, at `depth`, made: the edits of its own children
+first (the shortest paths sort first), then each child holding edits,
+rebuilt once; the child list is copied once.
 
     let rebuild(
-      green: GreenNode, depth: Int, paths: List<List<Int>>, sorted: List<Int>,
-      replacements: List<Replacement>, from: Int, to: Int,
+      green: GreenNode, depth: Int, edits: Edits, sorted: List<Int>, from: Int, to: Int,
     ): GreenNode throws Bubble {
-      let kids = green.children.toListBuilder();
-      var i = from;
-      while (i < to) {
-        let path = paths[sorted[i]];
-        let index = path[depth];
-        var j = i + 1;
-        while (j < to && paths[sorted[j]][depth] == index) { j += 1; }
-        if (path.length == depth + 1) {
-          if (j - i > 1) { bubble(); }
-          kids.set(index, replacements[sorted[i]].replacement);
-        } else {
-          let child = green.children[index] as GreenNode orelse panic();
-          kids.set(index, rebuild(child, depth + 1, paths, sorted, replacements, i, j));
+      let kids = green.children;
+      var hereEnd = from;
+      while (hereEnd < to && edits.paths[sorted[hereEnd]].length == depth) { hereEnd += 1; }
+      for (var h = from; h < hereEnd; h += 1) {
+        let edit = sorted[h];
+        if (edits.tos[edit] > kids.length) { bubble(); }
+        if (h > from) {
+          let before = sorted[h - 1];
+          let empties = edits.froms[before] == edits.tos[before] && edits.froms[edit] == edits.tos[edit];
+          if (edits.tos[before] > edits.froms[edit] || (empties && edits.froms[before] == edits.froms[edit])) {
+            bubble();
+          }
         }
-        i = j;
       }
-      new GreenNode(green.kind, kids.toList())
+      let out = new ListBuilder<GreenElement>();
+      var i = 0;
+      var h = from;
+      var d = hereEnd;
+      while (true) {
+        var skipTo = i;
+        while (h < hereEnd && edits.froms[sorted[h]] == i) {
+          let added = edits.elements[sorted[h]];
+          for (var k = 0; k < added.length; k += 1) { out.add(added[k]); }
+          if (edits.tos[sorted[h]] > skipTo) { skipTo = edits.tos[sorted[h]]; }
+          h += 1;
+        }
+        if (skipTo > i) {
+          if (d < to && edits.paths[sorted[d]][depth] < skipTo) { bubble(); }
+          i = skipTo;
+          continue;
+        }
+        if (i >= kids.length) { break; }
+        if (d < to && edits.paths[sorted[d]][depth] == i) {
+          var e = d + 1;
+          while (e < to && edits.paths[sorted[e]][depth] == i) { e += 1; }
+          let child = kids[i] as GreenNode orelse bubble();
+          out.add(rebuild(child, depth + 1, edits, sorted, d, e));
+          d = e;
+        } else {
+          out.add(kids[i]);
+        }
+        i += 1;
+      }
+      if (h < hereEnd || d < to) { bubble(); }
+      new GreenNode(green.kind, out.toList())
     }
 
 ## Tests
@@ -670,4 +752,49 @@ targets is rebuilt once, and the child list is copied once.
       let foreign = new Replacement(other.children[0], new GreenToken(tokenKind, "y"));
       let stranger = do { replaceAll(root, [foreign]); "accepted" } orelse "bubbled";
       assert(stranger == "bubbled") { "a target from another tree" };
+    }
+
+    test("editAll inserts, removes, and replaces children with replacements") {
+      let root = redRoot(sample());
+      let inner = root.childNodes[0];
+      let a = root.children[0] as RedToken orelse panic();
+      let c = inner.children[1] as RedToken orelse panic();
+      let x: GreenElement = new GreenToken(tokenKind, "x");
+      let y: GreenElement = new GreenToken(tokenKind, "y");
+      let none: List<GreenElement> = [];
+      let edited = editAll(
+        root, [new Replacement(c, new GreenToken(tokenKind, "C"))],
+        [
+          new Splice(root, 3, 3, [x, y]), new Splice(inner, 0, 0, [y]), new Splice(root, 0, 0, [x]),
+          new Splice(root, 2, 3, none),
+        ],
+      ) orelse panic();
+      assert(edited.asWritten == "xaybéCxy") { edited.asWritten };
+      let removed = editAll(root, [], [new Splice(root, 0, 2, none)]) orelse panic();
+      assert(removed.asWritten == "d") { removed.asWritten };
+      let noReplacements: List<Replacement> = [];
+      let inside = do {
+        editAll(root, [new Replacement(a, x)], [new Splice(root, 0, 1, none)]);
+        "accepted"
+      } orelse "bubbled";
+      assert(inside == "bubbled") { "a target in a removed range" };
+      let deeper = do {
+        editAll(root, [new Replacement(c, x)], [new Splice(root, 1, 2, none)]);
+        "accepted"
+      } orelse "bubbled";
+      assert(deeper == "bubbled") { "a target inside a removed child" };
+      let samePlace = do {
+        editAll(root, noReplacements, [new Splice(root, 1, 1, [x]), new Splice(root, 1, 1, [y])]);
+        "accepted"
+      } orelse "bubbled";
+      assert(samePlace == "bubbled") { "two insertions at one place" };
+      let crossing = do {
+        editAll(root, noReplacements, [new Splice(root, 0, 2, none), new Splice(root, 1, 3, none)]);
+        "accepted"
+      } orelse "bubbled";
+      assert(crossing == "bubbled") { "ranges sharing a child" };
+      let beside = editAll(root, [new Replacement(a, x)], [new Splice(root, 1, 1, [y])]) orelse panic();
+      assert(beside.asWritten == "xybécd") { beside.asWritten };
+      let past = do { editAll(root, noReplacements, [new Splice(root, 4, 4, [x])]); "accepted" } orelse "bubbled";
+      assert(past == "bubbled") { "past the end" };
     }

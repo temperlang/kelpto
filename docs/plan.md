@@ -175,7 +175,13 @@ way in `tests/gfm/`.
    all of cmark-gfm's spec, extension, and regression examples (see
    "kelpto-md's GFM extensions" in [design.md](design.md)).
 3. **Edits:** a small, consistent API for changing parts, batches, and
-   insert and remove; roundtrip fuzzing is in place.
+   insert and remove; roundtrip fuzzing is in place. Mostly done
+   (2026-11-03): `with…` edits on views, `doc.editor()` batches with
+   matching `set…` edits, `setContent`/`withContent` taking the
+   builder's `Inlines`, and the editor's `insertBefore`, `insertAfter`,
+   `replace`, and `remove` taking `MarkdownBuilder` blocks, in any
+   container, checked against a reparse. Left: list items as targets,
+   link text, and titles.
 4. **HTML tokenizer,** then tree construction, against html5lib-tests
    and WPT's `.dat` files.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface

@@ -202,3 +202,37 @@ var built = b.ToDocument();
 Console.WriteLine($"heading: {built.Headings[0].Text}");
 Console.WriteLine($"link: {built.Links[0].Text} -> {built.Links[0].Destination!.Url}");
 Rendered("html", built.ToHtml());
+
+Section("8. Insert, replace, and remove blocks");
+
+var advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n";
+var adviceDoc = ParseMarkdown(advice);
+var warning = new MarkdownBuilder();
+warning.Paragraph(Inlines.Empty.Strong(Inlines.Empty.Text("Careful:")).Text(" it's *hot*."));
+var also = new MarkdownBuilder();
+also.Paragraph(Inlines.Empty.Text("Also: *this*."));
+// Blocks from a builder, where they go, with the prefixes of the block
+// quote or list item around them; the rest stays as written.
+var adviceEditor = adviceDoc.Editor();
+foreach (var view in adviceDoc.Descendants)
+{
+    if (view is Paragraph p && p.Text == "Old advice.")
+    {
+        adviceEditor.Replace(p, warning);
+    }
+    else if (view is Paragraph two && two.Text == "two")
+    {
+        adviceEditor.InsertAfter(two, also);
+    }
+    else if (view is Paragraph draft && draft.Text == "Draft, remove me.")
+    {
+        adviceEditor.Remove(draft);
+    }
+    else if (view is Heading tip && tip.Text == "Tip")
+    {
+        adviceEditor.SetContent(tip, Inlines.Empty.Text("Tip ").Code("#1"));
+    }
+}
+var advised = adviceEditor.ToDocument();
+Rendered("markdown", advised.AsWritten);
+Console.WriteLine($"heading: {advised.Headings[1].Text}");

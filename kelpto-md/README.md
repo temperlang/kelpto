@@ -79,18 +79,21 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   order, wherever they are; `normalizeLabel` matches labels as the spec
   does, with full Unicode case folding.
 - **Edits** give a new document, changing only the edited span and
-  sharing what didn't change: `Heading.withText` and `withLevel`,
+  sharing what didn't change: `withText` (plain) and `withContent`
+  (rich `Inlines`, as the builder writes them) on headings,
+  paragraphs, and table cells, `Heading.withLevel`,
   `CodeBlock.withInfo`, `withDestination` on
   `LinkReferenceDefinition`, and on inline `Link` and `Image`,
-  `TableCell.withText`, `TaskListItem.withChecked`, and `withLabel` on
-  footnote definitions and references.
+  `TaskListItem.withChecked`, and `withLabel` on footnote definitions
+  and references.
 - **Building from scratch:** `MarkdownBuilder` and `Inlines` write a
   document from plain strings, escaped so they read back as written.
   See [Building from scratch](#building-from-scratch).
 - **Walking and batch edits:** every view has `descendants` (all the
   views inside it, in document order), `parent`, and `depth`; a
-  document's `editor()` collects edits to many nodes and builds one new
-  document from them. See [Walking and transforming](#walking-and-transforming).
+  document's `editor()` collects edits to many nodes, inserts and
+  removes blocks anywhere, and builds one new document from them. See
+  [Walking and transforming](#walking-and-transforming).
 - **Raw HTML,** inline and in HTML blocks, is found by CommonMark's
   rules and handed to a `RawHtmlHandler` (opaque text by default), and
   rendered by a `RawHtmlRenderer` (escaped by default). The `kelpto`
@@ -186,6 +189,32 @@ In Python, the same walk is a loop with `isinstance`:
 toc = [(v.level, v.text) for v in doc.descendants if isinstance(v, Heading)]
 urls = [v.destination.url for v in doc.descendants if isinstance(v, Link) and v.destination]
 ```
+
+The editor also inserts, replaces, and removes blocks, taking what a
+`MarkdownBuilder` built: `insertBefore`, `insertAfter`, `replace`, and
+`remove`, on a block in the document, a block quote, a list item, or a
+footnote definition. New lines get their container's prefixes (`> `,
+or a list item's indentation), blank lines set new blocks apart, and
+every other byte stays as written. `setContent` and `withContent` take
+`Inlines`, so a heading, paragraph, or table cell reads back as built.
+
+```temper
+let doc = parseMarkdown("# Notes\n\n> Old advice.\n> # Tip\n\nThe end.\n");
+let quote = doc.children[2] as BlockQuote orelse panic();
+let warning = new MarkdownBuilder();
+warning.paragraph(Inlines.empty.strong(Inlines.empty.text("Careful:")).text(" it's *hot*."));
+let editor = doc.editor();
+editor.replace(quote.children[0], warning) orelse panic();
+editor.setContent(doc.headings[1], Inlines.empty.text("Tip ").code("#1")) orelse panic();
+editor.remove(doc.children[4]) orelse panic();
+(editor.toDocument() orelse panic()).asWritten;
+  // "# Notes\n\n> **Careful:** it's \\*hot\\*.\n>\n> # Tip `#1`\n"
+```
+
+Lists that would join (same marker), an indented block after a list,
+or anything after a fence that never closes, would read otherwise, so
+those edits bubble; so does removing the only definition a reference
+uses. List items themselves aren't targets yet: replace the list.
 
 Worked examples, a table of contents with every link destination, and
 the transform above checked to change only what it should, run on the

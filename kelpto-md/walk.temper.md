@@ -167,28 +167,46 @@ Each `with…` edit on a view gives a new document at once, so a second
 edit needs views of that new document, found again. An editor instead
 takes many edits of views of one document, each worked out against
 that document, and `toDocument()` builds the new one in one pass (see
-kelpto-core's `replaceAll`). Its methods match the views' edits, and
-bubble where those do, or for a view that has no such edit.
+kelpto-core's `editAll`). Its `set…` methods match the views' `with…`
+edits, and bubble where those do, or for a view that has no such edit.
+Its block edits take what a `MarkdownBuilder` built, as the editor
+finds it when the edit is made (see "Inserting, removing, and
+replacing blocks").
 
     export class MarkdownEditor {
       private root: RedNode;
       private edits: ListBuilder<Replacement>;
+      private blockEdits: ListBuilder<BlockEdit>;
 
       public constructor(document: MarkdownDocument) {
         this.root = document.node;
         this.edits = new ListBuilder<Replacement>();
+        this.blockEdits = new ListBuilder<BlockEdit>();
       }
 
 How many edits it holds.
 
-      public get length(): Int { edits.length }
+      public get length(): Int { edits.length + blockEdits.length }
 
-As `Heading.withText` or `TableCell.withText`.
+As `withText` on a `Heading`, a `Paragraph`, or a `TableCell`.
 
       public setText(view: MarkdownNode, text: String): Void throws Bubble {
         when (view) {
           is Heading -> edits.add(headingTextEdit(view.node, text));
+          is Paragraph -> edits.add(paragraphContentEdit(view.node, Inlines.empty.text(text)));
           is TableCell -> edits.add(cellTextEdit(view.node, text));
+          else -> bubble();
+        }
+      }
+
+As `withContent` on a `Heading`, a `Paragraph`, or a `TableCell`:
+rich content, written as `MarkdownBuilder` writes it.
+
+      public setContent(view: MarkdownNode, content: Inlines): Void throws Bubble {
+        when (view) {
+          is Heading -> edits.add(headingContentEdit(view.node, content));
+          is Paragraph -> edits.add(paragraphContentEdit(view.node, content));
+          is TableCell -> edits.add(cellContentEdit(view.node, content));
           else -> bubble();
         }
       }
@@ -234,14 +252,49 @@ As `withLabel` on a `FootnoteDefinition` or a `FootnoteReference`.
         }
       }
 
+`content`'s blocks before or after `block`, a block in the document,
+a block quote, a list item, or a footnote definition (not a blank
+line, a list item, or an inline: those bubble). Edits next to one
+block go in the order they're made, before ones first.
+
+      public insertBefore(block: MarkdownNode, content: MarkdownBuilder): Void throws Bubble {
+        blockEdits.add(blockEditOf(insertBeforeEdit, block, content.copy()));
+      }
+
+      public insertAfter(block: MarkdownNode, content: MarkdownBuilder): Void throws Bubble {
+        blockEdits.add(blockEditOf(insertAfterEdit, block, content.copy()));
+      }
+
+`content`'s blocks in place of `block`.
+
+      public replace(block: MarkdownNode, content: MarkdownBuilder): Void throws Bubble {
+        blockEdits.add(blockEditOf(replaceEdit, block, content.copy()));
+      }
+
+`block` gone, with the blank lines around it, but for one where its
+neighbors would otherwise touch.
+
+      public remove(block: MarkdownNode): Void throws Bubble {
+        blockEdits.add(blockEditOf(removeEdit, block, null));
+      }
+
 The new document, with every edit made. The editor's document is
 unchanged. Bubbles if two edits overlap, such as `setText` and
-`setLevel` on one heading, or the same edit twice, or if a view came
-from another document.
+`setLevel` on one heading, or `remove` and any other edit of one
+block, or the same edit twice, or if a view came from another
+document; and for block edits that can't sit as asked (see
+"Inserting, removing, and replacing blocks").
 
       public toDocument(): MarkdownDocument throws Bubble {
-        new MarkdownDocument(replaceAll(root, edits.toList()))
+        let splices = blockSplices(root, blockEdits.toList());
+        new MarkdownDocument(editAll(root, edits.toList(), splices))
       }
+    }
+
+    let blockEditOf(kind: Int, view: MarkdownNode, content: MarkdownBuilder?): BlockEdit throws Bubble {
+      let node = view.node;
+      if (!isEditableBlock(node)) { bubble(); }
+      new BlockEdit(kind, node, content)
     }
 
 ## Tests

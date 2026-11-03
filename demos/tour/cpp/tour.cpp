@@ -20,6 +20,7 @@ using kelpto_md::LinkTarget;
 using kelpto_md::MarkdownBuilder;
 using kelpto_md::MarkdownParser;
 using kelpto_md::MarkdownRenderer;
+using kelpto_md::Paragraph;
 using kelpto_md::TableCell;
 using kelpto_md::parseMarkdown;
 using temper::core::TemperBubble;
@@ -229,4 +230,33 @@ Read [the docs][docs].
   auto link = built->get_links()->at(0);
   std::cout << "link: " << link->get_text() << " -> " << link->get_destination()->get_url() << "\n";
   rendered("html", built->toHtml());
+
+  section("8. Insert, replace, and remove blocks");
+
+  std::string advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n";
+  auto adviceDoc = parseMarkdown(advice);
+  auto warning = MarkdownBuilder::make();
+  warning->paragraph(Inlines::empty()->strong(Inlines::empty()->text("Careful:"))->text(" it's *hot*."));
+  auto also = MarkdownBuilder::make();
+  also->paragraph(Inlines::empty()->text("Also: *this*."));
+  // Blocks from a builder, where they go, with the prefixes of the block
+  // quote or list item around them; the rest stays as written.
+  auto adviceEditor = adviceDoc->editor();
+  auto adviceViews = adviceDoc->get_descendants();
+  for (auto const &view : *adviceViews) {
+    auto paragraph = std::dynamic_pointer_cast<Paragraph>(view);
+    auto heading = std::dynamic_pointer_cast<Heading>(view);
+    if (paragraph && paragraph->get_text() == "Old advice.") {
+      adviceEditor->replace(paragraph, warning);
+    } else if (paragraph && paragraph->get_text() == "two") {
+      adviceEditor->insertAfter(paragraph, also);
+    } else if (paragraph && paragraph->get_text() == "Draft, remove me.") {
+      adviceEditor->remove(paragraph);
+    } else if (heading && heading->get_text() == "Tip") {
+      adviceEditor->setContent(heading, Inlines::empty()->text("Tip ")->code("#1"));
+    }
+  }
+  auto advised = adviceEditor->toDocument();
+  rendered("markdown", advised->get_asWritten());
+  std::cout << "heading: " << advised->get_headings()->at(1)->get_text() << "\n";
 }

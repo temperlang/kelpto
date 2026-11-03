@@ -117,3 +117,19 @@ html:
 </code></pre>
 </li>
 </ul>
+
+## 8. Insert, replace, and remove blocks
+markdown:
+# Notes
+
+> **Careful:** it's \*hot\*.
+>
+> # Tip `#1`
+
+- one
+- two
+
+  Also: \*this\*.
+
+The end.
+heading: Tip #1

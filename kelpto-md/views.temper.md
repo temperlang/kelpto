@@ -22,8 +22,8 @@ text and sharing every untouched green node; the old document stays as
 it was.
 
     let {
-      GreenElement, GreenNode, GreenToken, Kind, RedElement, RedNode, RedToken, Replacement, Span,
-      replaceAll,
+      GreenElement, GreenNode, GreenToken, Kind, RedElement, RedNode, RedToken, Replacement, Span, Splice,
+      editAll, replaceAll,
     } = import("../kelpto-core");
 
     export sealed interface MarkdownNode {
@@ -573,6 +573,12 @@ in `text` become spaces, so a setext heading becomes one line.
 
       public withText(text: String): MarkdownDocument { applied(headingTextEdit(node, text)) }
 
+A new document with this heading's content replaced by `content`,
+written as `MarkdownBuilder.heading` writes it, so it reads back as
+built. Line breaks become spaces, since a heading is one line.
+
+      public withContent(content: Inlines): MarkdownDocument { applied(headingContentEdit(node, content)) }
+
 A new document with this heading at `level`, changing only its
 marker: the number of `#`, or a setext underline's character, kept
 the same length. Bubbles for a level outside 1 to 6, or past 2 for a
@@ -584,11 +590,19 @@ setext heading, which has no such levels.
     let applied(edit: Replacement): MarkdownDocument { new MarkdownDocument(edit.apply()) }
 
     let headingTextEdit(node: RedNode, text: String): Replacement {
+      headingInlineEdit(node, escapeInline(text, inlineExtensionsOf(node).strikethrough, false))
+    }
+
+    let headingContentEdit(node: RedNode, content: Inlines): Replacement {
+      headingInlineEdit(node, writeInlines(content.pieces, headingContext))
+    }
+
+The heading with `markdown` as its content.
+
+    let headingInlineEdit(node: RedNode, markdown: String): Replacement {
       let content = contentOf(node);
       let extensions = inlineExtensionsOf(node);
-      let newContent = inlineContentGreen(
-        escapeInline(text, extensions.strikethrough, false), extensions, false,
-      );
+      let newContent = inlineContentGreen(markdown, extensions, false);
       let kids = node.green.children.toListBuilder();
       kids.set(content.index, newContent);
       if (newContent.width > 0) {
@@ -633,6 +647,24 @@ A paragraph.
       public get span(): Span { node.span }
       public get children(): List<ParagraphChild> { paragraphChildrenOf(contentOf(node)) }
       public get text(): String { plainTextOf(children) }
+
+A new document with this paragraph's text replaced by `text`, escaped
+as `Inlines.text` escapes it, so it reads as plain text. Line breaks
+become spaces. Only the paragraph's lines change, new ones taking
+their container's prefixes; its leading spaces stay. Bubbles for
+empty text, since a paragraph can't be empty (remove it with an
+editor instead).
+
+      public withText(text: String): MarkdownDocument throws Bubble {
+        applied(paragraphContentEdit(node, Inlines.empty.text(text)))
+      }
+
+As `withText`, with rich content, written as
+`MarkdownBuilder.paragraph` writes it.
+
+      public withContent(content: Inlines): MarkdownDocument throws Bubble {
+        applied(paragraphContentEdit(node, content))
+      }
     }
 
 A fenced code block, such as:
@@ -1266,15 +1298,23 @@ reads as plain text, `|` included, as for `Heading.withText`. Only the
 cell's content changes; its whitespace and pipes stay as written.
 
       public withText(text: String): MarkdownDocument { applied(cellTextEdit(node, text)) }
+
+As `withText`, with rich content, written as a heading's is, and
+with `|` escaped.
+
+      public withContent(content: Inlines): MarkdownDocument { applied(cellContentEdit(node, content)) }
     }
 
     let cellTextEdit(node: RedNode, text: String): Replacement {
-      let content = contentOf(node);
-      let extensions = inlineExtensionsOf(node);
-      let newContent = inlineContentGreen(
-        escapeInline(text, extensions.strikethrough, true), extensions, true,
-      );
-      new Replacement(content, newContent)
+      cellInlineEdit(node, escapeInline(text, inlineExtensionsOf(node).strikethrough, true))
+    }
+
+    let cellContentEdit(node: RedNode, content: Inlines): Replacement {
+      cellInlineEdit(node, writeInlines(content.pieces, cellContext))
+    }
+
+    let cellInlineEdit(node: RedNode, markdown: String): Replacement {
+      new Replacement(contentOf(node), inlineContentGreen(markdown, inlineExtensionsOf(node), true))
     }
 
 ## Inlines

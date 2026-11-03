@@ -153,15 +153,14 @@ Line breaks (`\r\n`, `\r`, or `\n`) as spaces.
 
 Builds a document block by block. Blocks are separated by blank
 lines; container blocks take another `MarkdownBuilder` for what they
-hold.
+hold. A document's editor takes builders too, as the blocks it
+inserts (see `MarkdownEditor.insertBefore`).
 
     export class MarkdownBuilder {
-      private blocks: ListBuilder<String>;
-      private var lastList: Int;
+      private built: ListBuilder<BuiltBlock>;
 
       public constructor() {
-        this.blocks = new ListBuilder<String>();
-        this.lastList = 0;
+        this.built = new ListBuilder<BuiltBlock>();
       }
 
 An ATX heading, `#` to `######`. Bubbles for a level outside 1 to 6.
@@ -176,7 +175,7 @@ An ATX heading, `#` to `######`. Bubbles for a level outside 1 to 6.
           out.append(text);
         }
         out.append("\n");
-        add(out.toString(), 0);
+        add(out.toString());
       }
 
 A paragraph. Empty content adds nothing, since there's no empty
@@ -184,7 +183,7 @@ paragraph.
 
       public paragraph(content: Inlines): Void {
         let text = writeInlines(content.pieces, paragraphContext);
-        if (!text.isEmpty) { add("${text}\n", 0); }
+        if (!text.isEmpty) { add("${text}\n"); }
       }
 
 A fenced code block with an info string (often a language, or empty)
@@ -213,17 +212,18 @@ it reads.
         if (!lines.isEmpty && lastCodeOf(lines) != char'\n') { out.append("\n"); }
         out.append(fence.toString());
         out.append("\n");
-        add(out.toString(), 0);
+        add(out.toString());
       }
 
-A thematic break, `***`.
+A thematic break, `***` (or `---` where it starts a `*` list item,
+which `* ***` would end).
 
-      public thematicBreak(): Void { add("***\n", 0); }
+      public thematicBreak(): Void { built.add(new BuiltBlock("***\n", thematicBlock, 0, [])); }
 
 A block quote holding `content`'s blocks.
 
       public blockQuote(content: MarkdownBuilder): Void {
-        add(prefixed(content.toMarkdown(), "> ", "> "), 0);
+        add(prefixed(content.toMarkdown(), "> ", "> "));
       }
 
 A bullet list, one item per builder. Its marker is `-`, `+`, or `*`,
@@ -231,57 +231,91 @@ whichever differs from a list just before it (so the two stay apart)
 and from what its items start with.
 
       public bulletList(items: List<MarkdownBuilder>): Void {
-        let texts = itemTexts(items);
-        var marker = char'-';
-        let markers = [char'-', char'+', char'*'];
-        for (var m = 0; m < markers.length; m += 1) {
-          let candidate = markers[m];
-          var ok = candidate != lastList;
-          for (var i = 0; i < texts.length; i += 1) {
-            if (firstCodeOf(texts[i]) == candidate) { ok = false; }
-          }
-          if (ok) {
-            marker = candidate;
-            break;
-          }
-        }
-        let markerText = if (marker == char'-') { "-" } else if (marker == char'+') { "+" } else { "*" };
-        let out = new StringBuilder();
-        for (var i = 0; i < texts.length; i += 1) {
-          out.append(prefixed(texts[i], "${markerText} ", "  "));
-        }
-        add(out.toString(), marker);
+        built.add(new BuiltBlock("", bulletBlock, 0, itemTexts(items)));
       }
 
 An ordered list numbered from `start`, one item per builder. Bubbles
-for a start outside 0 to 999,999,999, as Markdown allows.
+for a start outside 0 to 999,999,999, as Markdown allows. Its
+delimiter is `.`, or `)` after an ordered list using `.`.
 
       public orderedList(start: Int, items: List<MarkdownBuilder>): Void throws Bubble {
         if (start < 0 || start + items.length - 1 > 999999999) { bubble(); }
-        let texts = itemTexts(items);
-        let delimiter = if (lastList == char'.') { ")" } else { "." };
-        let out = new StringBuilder();
-        for (var i = 0; i < texts.length; i += 1) {
-          let marker = "${(start + i).toString()}${delimiter}";
-          let rest = new StringBuilder();
-          for (var k = 0; k <= marker.countBetween(String.begin, marker.end); k += 1) { rest.append(" "); }
-          out.append(prefixed(texts[i], "${marker} ", rest.toString()));
-        }
-        add(out.toString(), if (delimiter == ".") { char'.' } else { char')' });
+        built.add(new BuiltBlock("", orderedBlock, start, itemTexts(items)));
       }
 
 The Markdown, blocks separated by blank lines.
 
-      public toMarkdown(): String { blocks.join("\n") { (block: String): String => block } }
+      public toMarkdown(): String { markdownBetween(0, 0, false) orelse panic() }
 
 The document, parsed as CommonMark (GFM reads it the same).
 
       public toDocument(): MarkdownDocument { parseMarkdown(toMarkdown()) }
 
-      private add(block: String, list: Int): Void {
-        blocks.add(block);
-        lastList = list;
+A builder with the same blocks, which changes apart from this one.
+
+      public copy(): MarkdownBuilder {
+        let other = new MarkdownBuilder();
+        for (var i = 0; i < built.length; i += 1) { other.addBuilt(built[i]); }
+        other
       }
+
+For the library's own use, as an editor fits blocks between others:
+the Markdown, with a first list's marker (its bullet, or its
+delimiter after the numbers) other than `before`, a last list's other
+than `after`, so neither joins a list beside it, and with `starItem`,
+a first thematic break written so it can follow a `*` list marker.
+Bubbles if no marker fits: an ordered list between lists using `.`
+and `)`.
+
+      public markdownBetween(before: Int, after: Int, starItem: Boolean): String throws Bubble {
+        let out = new StringBuilder();
+        var lastList = before;
+        let n = built.length;
+        for (var b = 0; b < n; b += 1) {
+          let block = built[b];
+          if (b > 0) { out.append("\n"); }
+          let avoid = if (b == n - 1) { after } else { 0 };
+          if (block.kind == bulletBlock) {
+            let marker = bulletFor(block.items, lastList, avoid);
+            let markerText = if (marker == char'-') { "-" } else if (marker == char'+') { "+" } else { "*" };
+            for (var i = 0; i < block.items.length; i += 1) {
+              out.append(prefixed(block.items[i], "${markerText} ", "  "));
+            }
+            lastList = marker;
+          } else if (block.kind == orderedBlock) {
+            var delimiter = if (lastList == char'.') { char')' } else { char'.' };
+            if (delimiter == avoid) { delimiter = if (delimiter == char'.') { char')' } else { char'.' }; }
+            if (delimiter == lastList || delimiter == avoid) { bubble(); }
+            let delimiterText = if (delimiter == char'.') { "." } else { ")" };
+            for (var i = 0; i < block.items.length; i += 1) {
+              let marker = "${(block.start + i).toString()}${delimiterText}";
+              let rest = new StringBuilder();
+              for (var k = 0; k <= marker.countBetween(String.begin, marker.end); k += 1) { rest.append(" "); }
+              out.append(prefixed(block.items[i], "${marker} ", rest.toString()));
+            }
+            lastList = delimiter;
+          } else {
+            out.append(if (block.kind == thematicBlock && b == 0 && starItem) { "---\n" } else { block.text });
+            lastList = 0;
+          }
+        }
+        out.toString()
+      }
+
+For the library's own use: whether the last block is a list, which
+an indented block after it would join.
+
+      public get endsWithList(): Boolean {
+        !built.isEmpty && built[built.length - 1].kind != textBlock && built[built.length - 1].kind != thematicBlock
+      }
+
+For the library's own use: the blocks, and adding one.
+
+      public get blocks(): List<BuiltBlock> { built.toList() }
+
+      public addBuilt(block: BuiltBlock): Void { built.add(block); }
+
+      private add(block: String): Void { built.add(new BuiltBlock(block, textBlock, 0, [])); }
 
       private itemTexts(items: List<MarkdownBuilder>): List<String> {
         let texts = new ListBuilder<String>();
@@ -290,6 +324,40 @@ The document, parsed as CommonMark (GFM reads it the same).
         }
         texts.toList()
       }
+    }
+
+A block as built: its Markdown, or a list's items' Markdown, written
+with its markers only when the document is, since those depend on the
+blocks around it.
+
+    export class BuiltBlock(
+      public text: String, public kind: Int, public start: Int, public items: List<String>,
+    ) {}
+
+    let textBlock = 0;
+    let thematicBlock = 1;
+    let bulletBlock = 2;
+    let orderedBlock = 3;
+
+A bullet other than `before` and `avoid`, and if it can be, other than
+what an item starts with. Bubbles if none is left, which can't happen
+with only two to avoid.
+
+    let bulletFor(items: List<String>, before: Int, avoid: Int): Int throws Bubble {
+      let markers = [char'-', char'+', char'*'];
+      for (var pass = 0; pass < 2; pass += 1) {
+        for (var m = 0; m < markers.length; m += 1) {
+          let candidate = markers[m];
+          var ok = candidate != before && candidate != avoid;
+          if (pass == 0) {
+            for (var i = 0; i < items.length; i += 1) {
+              if (firstCodeOf(items[i]) == candidate) { ok = false; }
+            }
+          }
+          if (ok) { return candidate; }
+        }
+      }
+      bubble()
     }
 
 `text`'s lines, each ending `\n`, `\r\n`, or `\r`, with every line

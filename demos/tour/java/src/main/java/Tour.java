@@ -18,6 +18,7 @@ import kelpto_md.MarkdownBuilder;
 import kelpto_md.MarkdownDocument;
 import kelpto_md.MarkdownEditor;
 import kelpto_md.MarkdownNode;
+import kelpto_md.Paragraph;
 import kelpto_md.MarkdownParser;
 import kelpto_md.MarkdownRenderer;
 import kelpto_md.Table;
@@ -211,5 +212,32 @@ public final class Tour {
         Link link = built.getLinks().get(0);
         System.out.println("link: " + link.getText() + " -> " + link.getDestination().getUrl());
         rendered("html", built.toHtml());
+    
+
+        section("8. Insert, replace, and remove blocks");
+
+        String advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n";
+        MarkdownDocument adviceDoc = parseMarkdown(advice);
+        MarkdownBuilder warning = new MarkdownBuilder();
+        warning.paragraph(Inlines.empty.strong(Inlines.empty.text("Careful:")).text(" it's *hot*."));
+        MarkdownBuilder also = new MarkdownBuilder();
+        also.paragraph(Inlines.empty.text("Also: *this*."));
+        // Blocks from a builder, where they go, with the prefixes of the block
+        // quote or list item around them; the rest stays as written.
+        MarkdownEditor adviceEditor = adviceDoc.editor();
+        for (MarkdownNode view : adviceDoc.getDescendants()) {
+            if (view instanceof Paragraph p && p.getText().equals("Old advice.")) {
+                adviceEditor.replace(p, warning);
+            } else if (view instanceof Paragraph p && p.getText().equals("two")) {
+                adviceEditor.insertAfter(p, also);
+            } else if (view instanceof Paragraph p && p.getText().equals("Draft, remove me.")) {
+                adviceEditor.remove(p);
+            } else if (view instanceof Heading h && h.getText().equals("Tip")) {
+                adviceEditor.setContent(h, Inlines.empty.text("Tip ").code("#1"));
+            }
+        }
+        MarkdownDocument advised = adviceEditor.toDocument();
+        rendered("markdown", advised.getAsWritten());
+        System.out.println("heading: " + advised.getHeadings().get(1).getText());
     }
 }

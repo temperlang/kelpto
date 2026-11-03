@@ -5,7 +5,7 @@
 
 import {
   Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownParser, MarkdownRenderer,
-  parseMarkdown,
+  Paragraph, parseMarkdown,
 } from "kelpto-md";
 
 function section(title) {
@@ -179,3 +179,29 @@ const built = b.toDocument();
 console.log(`heading: ${built.headings[0].text}`);
 console.log(`link: ${built.links[0].text} -> ${built.links[0].destination.url}`);
 rendered("html", built.toHtml());
+
+section("8. Insert, replace, and remove blocks");
+
+const advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n";
+const adviceDoc = parseMarkdown(advice);
+const warning = new MarkdownBuilder();
+warning.paragraph(Inlines.empty.strong(Inlines.empty.text("Careful:")).text(" it's *hot*."));
+const also = new MarkdownBuilder();
+also.paragraph(Inlines.empty.text("Also: *this*."));
+// Blocks from a builder, where they go, with the prefixes of the block
+// quote or list item around them; the rest stays as written.
+const adviceEditor = adviceDoc.editor();
+for (const view of adviceDoc.descendants) {
+  if (view instanceof Paragraph && view.text === "Old advice.") {
+    adviceEditor.replace(view, warning);
+  } else if (view instanceof Paragraph && view.text === "two") {
+    adviceEditor.insertAfter(view, also);
+  } else if (view instanceof Paragraph && view.text === "Draft, remove me.") {
+    adviceEditor.remove(view);
+  } else if (view instanceof Heading && view.text === "Tip") {
+    adviceEditor.setContent(view, Inlines.empty.text("Tip ").code("#1"));
+  }
+}
+const advised = adviceEditor.toDocument();
+rendered("markdown", advised.asWritten);
+console.log(`heading: ${advised.headings[1].text}`);

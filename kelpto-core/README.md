@@ -14,7 +14,8 @@ use it directly.
   an offset, a `span`, and `asWritten`, made as you walk.
 - **`replaceWith`:** a new root, copying only the path to the
   replaced node; **`replaceAll`** makes many `Replacement`s at once,
-  copying each shared path once.
+  copying each shared path once, and **`editAll`** adds `Splice`s, which
+  insert and remove children, in the same pass.
 - **`Span`** (start and length in code points) and **`Kind`** (an id
   and a name). Everything reads text by `StringIndex`, so nothing is
   decoded.

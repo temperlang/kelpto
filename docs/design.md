@@ -217,6 +217,34 @@ checking every entry as the Temper code reads it:
   original document, so nothing is walked again. Overlapping edits
   bubble, as do views from another document, as far as a check of
   kinds and widths along each path sees.
+- **Inserting and removing blocks** (2026-11-03): the editor's
+  `insertBefore`, `insertAfter`, `replace`, and `remove` take a block
+  and a `MarkdownBuilder`, so the editor and builder share content
+  types, with one class to create and one to change. They become
+  kelpto-core `Splice`s (a range of a node's children and what replaces
+  it), made in the same pass as replacements by `editAll`. Edits are
+  grouped by container and worked out when `toDocument()` runs,
+  against the blocks the container will hold, so neighbors are judged
+  as they'll be. The new lines are parsed inside the same containers,
+  opened on a line of their own between two empty headings, so their
+  green nodes, container prefixes included, are what parsing the
+  edited text gives; the rest stays shared and byte for byte.
+  Blank lines set new blocks apart (making a tight list loose), and
+  removing a block leaves one where neighbors would touch; blank lines
+  after a list go inside it, as parsing puts them. What would still
+  read otherwise bubbles: lists joining (the builder picks a marker
+  unlike its neighbors' first), an indented block after a list, a
+  footnote definition, or indented code, anything after an unclosed
+  fence or HTML block, an emptied container, a task item's first
+  block, and removing a definition a reference still needs. A random
+  test checks edits in every kind of container against a full reparse.
+- **Content as `Inlines`:** `setContent` and `withContent` on
+  headings, paragraphs, and table cells write `Inlines` as the
+  builder does; `setText` and `withText` stay for plain strings.
+  A paragraph's new lines take its container's prefixes, parsed in
+  place as above. Not yet: link text, list items as targets (they need
+  the list's marker, numbering, and tightness), and tabs in a list
+  item's prefix (those bubble).
 - **Real documents:** `tests/samples` runs a scrape and a transform on
   the CommonMark spec and some READMEs, checking that only the edited
   bytes change; the benchmarks will use the same files.
@@ -228,7 +256,10 @@ Built (2026-11-03), open to review: `MarkdownBuilder` and `Inlines`, in
 user text never needs hand-escaping.
 
 - **Shape:** builders, as `doc.editor()` is, not named arguments or
-  first-class symbols. `MarkdownBuilder`'s methods add a block each
+  first-class symbols. The two share content: the editor inserts what
+  a `MarkdownBuilder` built, and sets a heading's, paragraph's, or
+  cell's content from `Inlines`, so a builder creates and an editor
+  changes, with the same escaping. `MarkdownBuilder`'s methods add a block each
   and return nothing (`heading(level, content)`, which bubbles outside
   1 to 6, `paragraph`, `codeBlock(info, code)`, `thematicBreak`,
   `blockQuote(builder)`, `bulletList(builders)`, and
@@ -237,7 +268,10 @@ user text never needs hand-escaping.
   `Inlines.empty`, each of `text`, `code`, `emphasis`, `strong`,
   `link(content, target, title?)`, `image(alt, target, title?)`, and
   `lineBreak` gives new content, so calls chain. Content is always an
-  `Inlines`, so there's one way to pass it.
+  `Inlines`, so there's one way to pass it. A builder keeps lists as
+  their items until it's written, so their markers can be picked to
+  differ from the blocks around them, in the builder or where an
+  editor puts them.
 - **A tree, then text:** `Inlines` keeps a small tree and writes it
   when a block takes it, since escaping depends on neighbors: `*` or
   `_` alternate so no two delimiter runs join, letters and digits
@@ -264,10 +298,11 @@ user text never needs hand-escaping.
 
 **Next,** roughly in order:
 
-1. Insert and remove, in the editor too, and more edits (link text,
-   titles, and emphasis), maybe taking builders' `Inlines`. Edit
-   batches are done: `doc.editor()`, and building from scratch:
-   `MarkdownBuilder`.
+1. More edits: link text, titles, and emphasis, and list items as
+   targets of the editor's block edits. Done: edit batches
+   (`doc.editor()`), building from scratch (`MarkdownBuilder`), and
+   inserting, replacing, and removing blocks, with `Inlines` content
+   for headings, paragraphs, and cells (2026-11-03).
 2. The WHATWG tokenizer in full, with kelpto-core's character
    references (and HTML's forms without `;`), then tree construction,
    against html5lib-tests and WPT.
@@ -380,7 +415,9 @@ rust-analyzer's rowan:
   and builds the new document once, so a hundred changes don't make a
   hundred intermediate documents. Built as a builder,
   `doc.editor()`, rather than a callback, for the same reasons as
-  `descendants` (see "Walking and batch edits").
+  `descendants` (see "Walking and batch edits"). Inserting and
+  removing children are splices of one child list, copied once with
+  the rest of the path.
 - **Building from scratch:** builders are mutable while building and
   produce immutable nodes at the end, so construction makes no extra
   garbage.

@@ -6,7 +6,7 @@ the same text. See demos/README.md for how to run them.
 
 from kelpto_md import (
     Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownParser, MarkdownRenderer,
-    parse_markdown,
+    Paragraph, parse_markdown,
 )
 
 
@@ -174,3 +174,27 @@ built = b.to_document()
 print(f"heading: {built.headings[0].text}")
 print(f"link: {built.links[0].text} -> {built.links[0].destination.url}")
 rendered("html", built.to_html())
+
+section("8. Insert, replace, and remove blocks")
+
+advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n"
+advice_doc = parse_markdown(advice)
+warning = MarkdownBuilder()
+warning.paragraph(Inlines.empty.strong(Inlines.empty.text("Careful:")).text(" it's *hot*."))
+also = MarkdownBuilder()
+also.paragraph(Inlines.empty.text("Also: *this*."))
+# Blocks from a builder, where they go, with the prefixes of the block
+# quote or list item around them; the rest stays as written.
+advice_editor = advice_doc.editor()
+for view in advice_doc.descendants:
+    if isinstance(view, Paragraph) and view.text == "Old advice.":
+        advice_editor.replace(view, warning)
+    elif isinstance(view, Paragraph) and view.text == "two":
+        advice_editor.insert_after(view, also)
+    elif isinstance(view, Paragraph) and view.text == "Draft, remove me.":
+        advice_editor.remove(view)
+    elif isinstance(view, Heading) and view.text == "Tip":
+        advice_editor.set_content(view, Inlines.empty.text("Tip ").code("#1"))
+advised = advice_editor.to_document()
+rendered("markdown", advised.as_written)
+print(f"heading: {advised.headings[1].text}")

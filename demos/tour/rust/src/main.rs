@@ -6,7 +6,7 @@
 use kelpto_md::{
     parse_markdown, FootnoteDefinition, Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownNodeTrait,
     MarkdownParser,
-    MarkdownRenderer, TableCell,
+    MarkdownRenderer, Paragraph, TableCell,
 };
 use temper_core::cast;
 
@@ -202,4 +202,33 @@ Read [the docs][docs].
     let link = built.links()[0].clone();
     println!("link: {} -> {}", link.text(), link.destination().expect("inline").url());
     rendered("html", &built.to_html());
+
+    section("8. Insert, replace, and remove blocks");
+
+    let advice = "# Notes\n\n> Old advice.\n> # Tip\n\n- one\n- two\n\nDraft, remove me.\n\nThe end.\n";
+    let advice_doc = parse_markdown(advice, None);
+    let warning = MarkdownBuilder::new();
+    warning.paragraph(Inlines::empty().strong(Inlines::empty().text("Careful:")).text(" it's *hot*."));
+    let also = MarkdownBuilder::new();
+    also.paragraph(Inlines::empty().text("Also: *this*."));
+    // Blocks from a builder, where they go, with the prefixes of the block
+    // quote or list item around them; the rest stays as written.
+    let advice_editor = advice_doc.editor();
+    for view in advice_doc.descendants().iter() {
+        if let Some(paragraph) = cast::<Paragraph>(view.clone()) {
+            match paragraph.text().as_str() {
+                "Old advice." => advice_editor.replace(view.clone(), warning.clone()).expect("a block"),
+                "two" => advice_editor.insert_after(view.clone(), also.clone()).expect("a block"),
+                "Draft, remove me." => advice_editor.remove(view.clone()).expect("a block"),
+                _ => {}
+            }
+        } else if let Some(heading) = cast::<Heading>(view.clone()) {
+            if heading.text().as_str() == "Tip" {
+                advice_editor.set_content(view.clone(), Inlines::empty().text("Tip ").code("#1")).expect("a heading");
+            }
+        }
+    }
+    let advised = advice_editor.to_document().expect("edits that fit");
+    rendered("markdown", &advised.as_written());
+    println!("heading: {}", advised.headings()[1].text());
 }
