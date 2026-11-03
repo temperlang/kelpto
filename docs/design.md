@@ -81,6 +81,11 @@ and rendering defaults.
   marker, and indentation, with the block it belongs to) and which
   leaf takes the rest. The second writes the green tree from that, so
   every code point lands in one token.
+- **Positions are `StringIndex`es** into the source string: both
+  passes read it directly, with no decoding, and a line table comes
+  from `indexOf` on `\n` and `\r`. Only paragraph-like text is decoded
+  (`sourceLines`), line by line, for the inline parser, which still
+  reads by `Int` code point; it's next.
 - **Prefixes where they fall:** a container's prefix on its first line
   is in its own node; on later lines it's a token in whatever node is
   open there, such as a paragraph spanning lines. Views skip them.
@@ -234,13 +239,13 @@ checking every entry as the Temper code reads it:
 6. Benchmarks: done (2026-11-02; [benchmarks.md](benchmarks.md),
    `bench/`, and `scripts/bench.py`). A first tuning followed the
    same day: paragraphs share the document's decoded code points
-   instead of decoding again (`SourceText.joinLines`), deep block
+   instead of decoding again, deep block
    nesting is linear, and the block and inline parsers' per-character
    loops work on locals, which Rust's translation locks for on every
-   field access. Splitting into lines reuses the line breaks found
-   while decoding (2026-11-03). Next: parsers reading the string by
-   `StringIndex` rather than decoding it into arrays (block parser and
-   tree writer first; see benchmarks.md), the Rust translation's locks
+   field access. The block parser and tree writer read the source
+   string by `StringIndex` (2026-11-03), so only paragraphs are
+   decoded. Next: the inline parser by `StringIndex` too (see
+   benchmarks.md), the Rust translation's locks
    elsewhere (Rust is still several times slower than C++ from the
    same source), C#'s and Lua's garbage on long documents, Python's
    checked integer arithmetic, and GFM benchmarks.
@@ -353,11 +358,14 @@ and pulldown-cmark. Most of it is small objects: a token and its
 string per marker, space, and line ending. In order, measuring peak
 memory and object counts after each step:
 
-1. **Measure what the decode holds.** `SourceText` still decodes the
-   whole document into two arrays, since the parsers find text by
-   `Int` position; reading by `StringIndex` instead
-   ([benchmarks.md](benchmarks.md)) would drop them, which may be much
-   of the peak. Steps 2 and 3 don't wait for it.
+1. **Drop the decode.** Done for the block parser and tree writer
+   (2026-11-03): they read the string by `StringIndex`, so the whole
+   document is no longer decoded into two arrays, and only paragraphs
+   are. That about halved peak memory on spec-x10 (Python 216 to 105
+   MiB, JavaScript 346 to 183 MiB, one noisy run each;
+   [benchmarks.md](benchmarks.md)). The inline parser is next, which
+   would drop the paragraphs' decoding too. Steps 2 and 3 don't wait
+   for it.
 2. **Share identical tokens:** `GreenNodeBuilder` keeps one cache by
    kind and text, so each repeated short token (a space, a line ending,
    `*`, `#`, `>`, an indent) is one shared object, as rowan does. No API

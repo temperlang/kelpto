@@ -73,11 +73,11 @@ A first tuning, measured before and after on the same machine in
 busy, so that file compares the two builds, not absolute times):
 
 - **Paragraphs share the document's decoding.** A paragraph's inline
-  text is `SourceText.joinLines` of the document's: its code points are
-  copied in slices, its string indices shared, and its slices taken
-  from the original string, line by line. Before, each paragraph was
-  joined into a new string and decoded again, twice (once to split off
-  link definitions, once to write it).
+  text was copied in slices from the document's decoded code points,
+  and its slices taken from the original string, line by line. Before,
+  each paragraph was joined into a new string and decoded again, twice
+  (once to split off link definitions, once to write it). The
+  document's decoding is gone since (below).
 - **Deep block nesting is linear.** Marking each block's last line
   stopped at the first block already marked, and opening a block's
   node checks its depth instead of searching the open nodes; neither
@@ -86,8 +86,6 @@ busy, so that file compares the two builds, not absolute times):
   translation takes a lock on every field read or write of a class
   with `var` fields: the block parser's indentation scans, the inline
   parser's main loop, and its whole-paragraph scans work on locals.
-  Splitting the document into lines is one loop in `SourceText`
-  (`lineEnd`).
 
 Parsing the CommonMark spec got 1.2 to 1.3 times faster in all three,
 and Hrefine's README 1.3 to 1.4 times; nested block quotes 11 to 15
@@ -96,6 +94,24 @@ like every other shape. In Rust, a one-round run of
 `scripts/bench.py` gave 84 ms for the spec (99 times pulldown-cmark's
 time, 27 times comrak's). The tables above are the run before; a full
 run of all seven languages needs a quiet machine.
+
+## Reading by `StringIndex` (2026-11-03)
+
+The block parser and tree writer keep `StringIndex` positions into the
+source string and read it directly, and lines are found with
+`indexOf`, so the document is no longer decoded into arrays of code
+points and string indices. Only paragraph-like text is decoded, line
+by line, for the inline parser (`sourceLines`), and a paragraph not
+starting with `[` isn't decoded to look for link definitions. On the
+spec, measured the same way before and after (the machine was busy,
+so shares and counts rather than times):
+
+- **Python** (cProfile): 6.93 million calls per parse, now 5.22
+  million (25% fewer); decoding was 22% of the time, now 12%.
+- **JavaScript** (`node --prof`, 40 parses): ticks with decoding on
+  the stack were 31%, now 17%.
+- **Peak memory** parsing spec-x10 (one run each, noisy): Python 216
+  to 105 MiB, JavaScript 346 to 183 MiB.
 
 ## Where kelpto-md is slower, and why
 
@@ -119,32 +135,16 @@ and Python, about 16 to 65 times against comrak and Markdig, and about
   slower than the C++ from the same source (94 ms against 24.5 ms on
   the spec; not profiled, since `perf` isn't installed here). Python adds checks to integer arithmetic (755,000
   calls to `int_add` in one parse of the spec, about 10% of it).
-- **`SourceText` decodes the document in full,** one character at a
-  time through the runtime's string functions, into two arrays (code
-  points and their indices): before the tuning above, 29% of a parse
-  in Python (cProfile, the spec) and about 20% of the ticks in
-  JavaScript (`node --prof`, Hrefine's README), with each paragraph
-  decoded again. Paragraphs now share the document's; the one decode
-  is left: about 11% of a Python parse of the spec, and 22% of the
-  ticks in JavaScript (2026-11-03), nearly all of it building the two
-  arrays, since a plain pass over the string by `StringIndex` takes a
-  quarter of the time or less there. In JavaScript, copying a slice of
-  a `List` is slower than decoding, since Temper's lists are frozen
-  arrays there, so `joinLines` copies from the builder the document
-  was decoded into. Splitting into lines no longer takes a second
-  pass: the decode records each line break (9.5% fewer Python calls
-  per parse of the spec; about even in JavaScript).
-
-  The arrays stay because both parsers address text by `Int` code
-  point, in some 390 places, and nothing in Temper turns an `Int` into
-  a `StringIndex` without stepping there. So reading the string
-  directly means the parsers keep `StringIndex` positions themselves,
-  counting code points only for spans (tokens already count their own
-  width). That's the block parser and tree writer first: 47% of the
-  spec is fenced code, which only they read, so `joinLines` could then
-  decode each paragraph's lines from the string. Then the inline
-  parser. In Python the gain is smaller than the decode's share, since
-  `get` and `next` are helper calls there, as a list read is.
+- **Paragraphs are decoded,** one code point at a time through the
+  runtime's string functions, into two arrays (code points and their
+  indices), since the inline parser addresses text by `Int` code
+  point. The rest of the document isn't (see above); before, the
+  whole document was, 29% of a Python parse of the spec at first, and
+  about 20% of the ticks in JavaScript. Next, the inline parser keeps
+  `StringIndex` positions too, counting code points only for spans
+  (tokens already count their own width), and the decoding goes. In
+  Python the gain is smaller than the decode's share, since `get` and
+  `next` are helper calls there, as a list read is.
 - **Garbage collection** on long documents in C# and Lua: spec-x10
   takes 18 times the spec's time there for 10 times the bytes, against
   7 to 13 times elsewhere, with C#'s peak memory the highest.

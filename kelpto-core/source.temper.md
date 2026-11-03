@@ -7,20 +7,20 @@ Python's C API). Slices come from the original string, so they're
 exactly as written, even for text that isn't valid Unicode, such as a
 lone surrogate.
 
-A `SourceText` can also be lines of another, joined by `\n`, as a
-paragraph's inline content is: `joinLines` copies the other's decoded
-code points rather than decoding the joined text again, and shares its
-string indices, so slices still come from the original string.
+A `SourceText` can also be ranges of a string, joined by `\n`, as a
+paragraph's inline content is: `sourceLines` decodes just those
+ranges, by `StringIndex`, and slices still come from the original
+string.
 
     export class SourceText {
 
-The string slices come from, and where each of its code points is in
-it (and its end), shared by every text joined from it.
+The string slices come from, and where each code point of each line
+is in it (and the line's end).
 
       private base: String;
       private indices: List<StringIndex>;
 
-The code points; for a joined text, where its `\n`s are, in order, and
+The code points; for joined lines, where its `\n`s are, in order, and
 where each line starts in `indices`. A whole string is one line,
 starting at 0.
 
@@ -28,20 +28,8 @@ starting at 0.
       private joins: List<Int>;
       private bases: List<Int>;
 
-The same code points, for `joinLines` to copy from. For a whole string,
-it's the builder they were decoded into: JavaScript copies a slice of
-a builder 50 to 100 times faster than one of a `List`, which it keeps
-frozen; elsewhere it's as fast either way.
-
-      private copyFrom: Listed<Int>;
-
-Where each `\n` and `\r` is, in order: found while decoding, or a
-joined text's joins, since its lines have none.
-
-      private breaks: List<Int>;
-
-`text` decoded whole. `joinLines` passes the rest, for text it has
-already decoded; leave them out.
+`text` decoded whole. `sourceLines` passes the rest, for lines it has
+decoded; leave them out.
 
       public constructor(
         text: String,
@@ -54,53 +42,21 @@ already decoded; leave them out.
         if (indices == null) {
           let decoded = new ListBuilder<Int>();
           let at = new ListBuilder<StringIndex>();
-          let breaks = new ListBuilder<Int>();
           var i = String.begin;
           while (text.hasIndex(i)) {
-            let c = text[i];
-            // One comparison for nearly every code point.
-            if (c <= char'\r') {
-              if (c == char'\n' || c == char'\r') { breaks.add(decoded.length); }
-            }
-            decoded.add(c);
+            decoded.add(text[i]);
             at.add(i);
             i = text.next(i);
           }
           at.add(text.end);
           this.indices = at.toList();
           this.codes = decoded.toList();
-          this.copyFrom = decoded;
-          this.breaks = breaks.toList();
         } else {
           this.indices = indices;
           this.codes = codes;
-          this.copyFrom = codes;
-          this.breaks = joins;
         }
         this.joins = joins;
         this.bases = bases;
-      }
-
-The text of `ranges` of this one, each a `start` and an `end` in code
-points within one line, joined by `\n`, without decoding again.
-
-      public joinLines(ranges: List<Int>): SourceText {
-        let joined = new ListBuilder<Int>();
-        let joins = new ListBuilder<Int>();
-        let bases = new ListBuilder<Int>();
-        for (var r = 0; r < ranges.length; r += 2) {
-          if (r > 0) {
-            joins.add(joined.length);
-            joined.add(char'\n');
-          }
-          let first = ranges[r];
-          bases.add(indexAt(lineOf(first), first));
-          if (ranges.length > 2) { addRange(joined, copyFrom, first, ranges[r + 1]); }
-        }
-        if (ranges.isEmpty) { bases.add(0); }
-        // One line, the usual case: one slice, nothing to join.
-        let joinedCodes = if (ranges.length == 2) { copyFrom.slice(ranges[0], ranges[1]) } else { joined.toList() };
-        new SourceText(base, indices, joinedCodes, joins.toList(), bases.toList())
       }
 
 The text, as a string.
@@ -117,23 +73,15 @@ The code point at `at`, or -1 outside the text.
         if (at < 0 || at >= codes.length) { -1 } else { codes[at] }
       }
 
-Where each `\n` and `\r` is, in code points, in order, for splitting
-into lines without another pass over the code points.
+Where each `\n` joining lines is, in code points, in order.
 
-      public get lineBreaks(): List<Int> { breaks }
+      public get joinedAt(): List<Int> { joins }
 
-Where the line from `from` ends: at the first `\n` or `\r` from there,
-or the end.
+Where `at` is in the original string; at a `\n` joining lines, the end
+of the line before.
 
-      public lineEnd(from: Int): Int {
-        let codes = this.codes;
-        var i = from;
-        while (i < codes.length) {
-          let c = codes[i];
-          if (c == char'\n' || c == char'\r') { break; }
-          i += 1;
-        }
-        i
+      public stringIndex(at: Int): StringIndex {
+        indices[indexAt(lineOf(at), at)]
       }
 
 The text from `start` to `end`, in code points, exactly as written.
@@ -184,14 +132,35 @@ Where `at`, on `line`, is in `indices`.
       }
     }
 
-Adds `from`'s items from `start` to `end` to `to`, a few thousand at a
-time: JavaScript's `addAll` spreads them into one call's arguments,
-which overflows the stack past about 120,000.
+The `ranges` of `text`, each a `start` and an `end` within one line,
+joined by `\n`: only those ranges are decoded, so a parser reading the
+rest of `text` by `StringIndex` decodes no more than it needs.
 
-    let addRange<T>(to: ListBuilder<T>, from: Listed<T>, start: Int, end: Int): Void {
-      for (var at = start; at < end; at += 4096) {
-        to.addAll(from.slice(at, if (end - at < 4096) { end } else { at + 4096 }));
+    export let sourceLines(text: String, ranges: List<StringIndex>): SourceText {
+      let codes = new ListBuilder<Int>();
+      let indices = new ListBuilder<StringIndex>();
+      let joins = new ListBuilder<Int>();
+      let bases = new ListBuilder<Int>();
+      for (var r = 0; r < ranges.length; r += 2) {
+        if (r > 0) {
+          joins.add(codes.length);
+          codes.add(char'\n');
+        }
+        bases.add(indices.length);
+        let end = ranges[r + 1];
+        var i = ranges[r];
+        while (i < end) {
+          codes.add(text[i]);
+          indices.add(i);
+          i = text.next(i);
+        }
+        indices.add(end);
       }
+      if (ranges.isEmpty) {
+        bases.add(0);
+        indices.add(String.begin);
+      }
+      new SourceText(text, indices.toList(), codes.toList(), joins.toList(), bases.toList())
     }
 
 Character classes both parsers need, on code points.
@@ -270,14 +239,16 @@ attribute names.
       assert(source.codeAt(4) == -1) { "past the end" };
       assert(source.slice(1, 3) == "😀b") { source.slice(1, 3) };
       assert(source.slice(0, 4) == "a😀b\n") { "whole" };
-      assert(source.lineEnd(0) == 3 && source.lineEnd(4) == 4) { "line end" };
-      let breaks = new SourceText("a\r\nb\rc\n").lineBreaks;
-      assert(breaks.length == 4 && breaks[0] == 1 && breaks[1] == 2 && breaks[3] == 6) { "line breaks" };
     }
 
     test("lines joined from source text") {
-      let source = new SourceText("> a😀b\r\n> cd\n> e");
-      let joined = source.joinLines([2, 5, 9, 11, 14, 15]);
+      let text = "> a😀b\r\n> cd\n> e";
+      let at = new ListBuilder<StringIndex>();
+      for (var i = String.begin; true; i = text.next(i)) {
+        at.add(i);
+        if (!text.hasIndex(i)) { break; }
+      }
+      let joined = sourceLines(text, [at[2], at[5], at[9], at[11], at[14], at[15]]);
       assert(joined.length == 8) { joined.length.toString() };
       assert(joined.text == "a😀b\ncd\ne") { joined.text };
       assert(joined.codeAt(3) == char'\n' && joined.codeAt(4) == char'c') { "code points" };
@@ -286,10 +257,12 @@ attribute names.
       assert(joined.slice(2, 5) == "b\nc") { joined.slice(2, 5) };
       assert(joined.slice(3, 4) == "\n" && joined.slice(4, 6) == "cd") { "around a join" };
       assert(joined.slice(0, 8) == joined.text) { "whole" };
-      assert(joined.lineBreaks.length == 2 && joined.lineBreaks[1] == 6) { "joined line breaks" };
-      let one = source.joinLines([9, 11]);
+      assert(joined.joinedAt.length == 2 && joined.joinedAt[1] == 6) { "joins" };
+      assert(text.slice(joined.stringIndex(4), joined.stringIndex(6)) == "cd") { "string indices" };
+      assert(joined.stringIndex(3) == at[5]) { "at a join" };
+      let one = sourceLines(text, [at[9], at[11]]);
       assert(one.text == "cd" && one.slice(0, 1) == "c") { one.text };
-      assert(source.joinLines([]).text == "") { "empty" };
+      assert(sourceLines(text, []).text == "") { "empty" };
     }
 
     test("escaping and lowercasing") {

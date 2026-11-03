@@ -153,6 +153,7 @@ page("/README.md") {
 | Source | What | License |
 |---|---|---|
 | commonmark/commonmark-spec, 0.31.2 (latest tag) | `spec.txt`'s examples, input and expected HTML | spec text CC-BY-SA 4.0; test tools BSD-2-Clause |
+| github/cmark-gfm, 0.29.0.gfm.13 | GFM's spec, extension, and regression examples | CC-BY-SA 4.0 |
 | html5lib/html5lib-tests | tokenizer (named, numeric, and other character references, among others), serializer, and encoding tests | MIT |
 | web-platform-tests, `html/syntax/parsing/resources/` | tree-construction `.dat` files, maintained there now, not in html5lib-tests | BSD-3-Clause |
 
@@ -160,10 +161,8 @@ The CommonMark examples come from a CC-BY-SA document, so the extracted
 tests carry CC-BY-SA. They're vendored (2026-10-30) in
 `tests/commonmark/`, a test-only library apart from the libraries'
 code, which nothing imports and which isn't published, with
-attribution and both licenses in NOTICE.
-GitHub Flavored Markdown's extensions (tables, strikethrough, task
-lists, and autolinks) have their spec in github/cmark-gfm, which isn't
-in the allowed GitHub orgs yet.
+attribution and both licenses in NOTICE. GFM's are vendored the same
+way in `tests/gfm/`.
 
 ## Steps
 
@@ -171,7 +170,10 @@ in the allowed GitHub orgs yet.
    examples. Done (2026-10-30), with roundtrip fuzzing.
 2. **CommonMark inlines,** all of `spec.txt`, HTML rendering included,
    with character references in core. Done (2026-10-31): all 652
-   examples pass. GFM next, once its spec's org is allowed.
+   examples pass. Then GFM's extensions (tables, task list items,
+   strikethrough, extended autolinks, and footnotes), opt-in: done, with
+   all of cmark-gfm's spec, extension, and regression examples (see
+   "kelpto-md's GFM extensions" in [design.md](design.md)).
 3. **Edits:** a small, consistent API for changing parts, batches, and
    insert and remove; roundtrip fuzzing is in place.
 4. **HTML tokenizer,** then tree construction, against html5lib-tests
@@ -183,7 +185,6 @@ in the allowed GitHub orgs yet.
 ## Open questions
 
 - Names, for the set and each library.
-- Whether GFM's extensions come in step 2 or later.
 - HTML to Markdown: in the bridge, or not at all.
 - How a lossless node API reads in each language (immutable values with
   `with` methods, as Hrefine's `Url`, or a mutable tree).

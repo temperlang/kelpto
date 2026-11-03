@@ -14,7 +14,8 @@ use it directly.
   replaced node; **`replaceAll`** makes many `Replacement`s at once,
   copying each shared path once.
 - **`Span`** (start and length in code points), **`Kind`** (an id and
-  a name), and **`SourceText`** (text indexed by code point).
+  a name), and **`SourceText`** (text indexed by code point, whole or
+  just some ranges of a string, by `sourceLines`).
 
 ```temper
 let word = new Kind(1000, "Word");

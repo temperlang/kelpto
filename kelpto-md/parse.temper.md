@@ -410,18 +410,17 @@ Whether any is on, so the document is GFM's.
     let noExtensions = new Extensions(false, false, false, false, false);
 
     let parseWith(text: String, rawHtmlHandler: RawHtmlHandler, extensions: Extensions): GreenNode {
-      let source = new SourceText(text);
-      let blocks = new BlockParser(source, extensions);
+      let blocks = new BlockParser(text, extensions);
       blocks.parse();
-      let labels = definitionLabels(source, blocks.lines);
-      new TreeWriter(source, blocks.lines, rawHtmlHandler, labels, extensions)
+      let labels = definitionLabels(text, blocks.lines);
+      new TreeWriter(text, blocks.lines, rawHtmlHandler, labels, extensions)
         .writeDocument(blocks.document)
     }
 
 The labels of the document's link reference definitions, normalized,
 so the inline parser knows which `[text]` are links.
 
-    let definitionLabels(source: SourceText, lines: List<LineData>): Mapped<String, Boolean> {
+    let definitionLabels(source: String, lines: List<LineData>): Mapped<String, Boolean> {
       let labels = new MapBuilder<String, Boolean>();
       for (var n = 0; n < lines.length; n += 1) {
         let leaf = lines[n].leaf;
@@ -444,9 +443,8 @@ with the inline extensions of `extensions`, and in a table cell if
 `inCell`.
 
     let inlineContentGreen(text: String, extensions: Extensions, inCell: Boolean): GreenNode {
-      let source = new SourceText(text);
-      let line = new LineData(0, source.length, source.length);
-      new TreeWriter(source, [line], opaqueRawHtml, new Map<String, Boolean>([]), extensions)
+      let line = new LineData(String.begin, text.end, text.end);
+      new TreeWriter(text, [line], opaqueRawHtml, new Map<String, Boolean>([]), extensions)
         .inlinesOnly(inCell)
     }
 
@@ -458,7 +456,7 @@ their last line; each leaf writes all of its lines, including the
 prefix tokens on lines after its first.
 
     class TreeWriter {
-      private source: SourceText;
+      private source: String;
       private lines: List<LineData>;
       private handler: RawHtmlHandler;
       private labels: Mapped<String, Boolean>;
@@ -469,7 +467,7 @@ prefix tokens on lines after its first.
       private var inCell: Boolean = false;
 
       public constructor(
-        source: SourceText, lines: List<LineData>, handler: RawHtmlHandler,
+        source: String, lines: List<LineData>, handler: RawHtmlHandler,
         labels: Mapped<String, Boolean>, extensions: Extensions,
       ) {
         this.source = source;
@@ -515,8 +513,8 @@ prefix tokens on lines after its first.
       }
 
       public inlinesOnly(inCell: Boolean): GreenNode {
-        let content = rangeContent(source, 0, 0, source.length);
-        parseInlines(content, 0, source.length, inCell);
+        let content = rangeContent(source, 0, String.begin, source.end);
+        parseInlines(content, 0, content.text.length, inCell);
         builder.finish()
       }
 
@@ -543,7 +541,7 @@ its depth there.
         block.depth < open.length && open[block.depth].id == block.id
       }
 
-      private sourceToken(kind: Kind, start: Int, end: Int): Void {
+      private sourceToken(kind: Kind, start: StringIndex, end: StringIndex): Void {
         if (start < end) {
           builder.token(kind, source.slice(start, end));
         }
@@ -568,6 +566,7 @@ with each line break in it written as the line ending, the next line's
 prefix tokens, and its leading whitespace.
 
       private emit(content: Content, kind: Kind, start: Int, end: Int): Void {
+        let text = content.text;
         var at = start;
         while (at < end) {
           let i = content.lineOf(at);
@@ -575,8 +574,7 @@ prefix tokens, and its leading whitespace.
           let lineEnd = lineStart + content.lengths[i];
           if (at < lineEnd) {
             let stop = minInt(end, lineEnd);
-            let base = content.sourceStarts[i] - lineStart;
-            sourceToken(kind, base + at, base + stop);
+            builder.token(kind, text.slice(at, stop));
             at = stop;
           } else {
             let n = content.firstLine + i;
@@ -598,8 +596,8 @@ prefix tokens, and its leading whitespace.
           writeParagraph(leaf.firstLine, leaf.lastLine);
           prefixOf(leaf.lastLine);
           let line = lines[leaf.lastLine];
-          let start = skipBlanks(source, line.leafStart, line.contentEnd);
-          let end = trimBlanksBack(source, start, line.contentEnd);
+          let start = skipBlanksAt(source, line.leafStart, line.contentEnd);
+          let end = trimBlanksBackAt(source, start, line.contentEnd);
           sourceToken(indentKind, line.leafStart, start);
           sourceToken(setextMarkerKind, start, end);
           sourceToken(whitespaceKind, end, line.contentEnd);
@@ -608,8 +606,8 @@ prefix tokens, and its leading whitespace.
           writeAtxHeading(lines[leaf.firstLine], leaf.firstLine);
         } else if (type == typeThematicBreak) {
           let line = lines[leaf.firstLine];
-          let start = skipBlanks(source, line.leafStart, line.contentEnd);
-          let end = trimBlanksBack(source, start, line.contentEnd);
+          let start = skipBlanksAt(source, line.leafStart, line.contentEnd);
+          let end = trimBlanksBackAt(source, start, line.contentEnd);
           sourceToken(indentKind, line.leafStart, start);
           sourceToken(thematicBreakMarkerKind, start, end);
           sourceToken(whitespaceKind, end, line.contentEnd);
@@ -653,28 +651,29 @@ An ATX heading: indentation, one to six `#`, then the content, an
 optional closing sequence of `#`, and whitespace between.
 
       private writeAtxHeading(line: LineData, n: Int): Void {
+        let source = this.source;
         let end = line.contentEnd;
-        let indentEnd = skipBlanks(source, line.leafStart, end);
+        let indentEnd = skipBlanksAt(source, line.leafStart, end);
         let markerEnd = atxHeadingStart(source, indentEnd, end);
-        let contentStart = skipBlanks(source, markerEnd, end);
-        let trailStart = trimBlanksBack(source, contentStart, end);
+        let contentStart = skipBlanksAt(source, markerEnd, end);
+        let trailStart = trimBlanksBackAt(source, contentStart, end);
         var hashStart = trailStart;
-        while (hashStart > contentStart && source.codeAt(hashStart - 1) == char'#') {
-          hashStart -= 1;
+        while (hashStart > contentStart && source[source.prev(hashStart)] == char'#') {
+          hashStart = source.prev(hashStart);
         }
         var closeStart = trailStart;
         if (
           hashStart < trailStart &&
-          (hashStart == contentStart || isSpaceOrTab(source.codeAt(hashStart - 1)))
+          (hashStart == contentStart || isSpaceOrTab(source[source.prev(hashStart)]))
         ) {
           closeStart = hashStart;
         }
-        let contentEnd = trimBlanksBack(source, contentStart, closeStart);
+        let contentEnd = trimBlanksBackAt(source, contentStart, closeStart);
         sourceToken(indentKind, line.leafStart, indentEnd);
         sourceToken(atxMarkerKind, indentEnd, markerEnd);
         sourceToken(whitespaceKind, markerEnd, contentStart);
         let content = rangeContent(source, n, contentStart, contentEnd);
-        parseInlines(content, 0, contentEnd - contentStart, false);
+        parseInlines(content, 0, content.text.length, false);
         sourceToken(whitespaceKind, contentEnd, closeStart);
         sourceToken(closingSequenceKind, closeStart, trailStart);
         sourceToken(whitespaceKind, trailStart, end);
@@ -688,10 +687,10 @@ container.
       private writeFencedCode(leaf: BlockData): Void {
         let line = lines[leaf.firstLine];
         let end = line.contentEnd;
-        let fenceStart = skipBlanks(source, line.leafStart, end);
+        let fenceStart = skipBlanksAt(source, line.leafStart, end);
         let fenceEnd = openingFenceEnd(source, fenceStart, end);
-        let infoStart = skipBlanks(source, fenceEnd, end);
-        let infoEnd = trimBlanksBack(source, infoStart, end);
+        let infoStart = skipBlanksAt(source, fenceEnd, end);
+        let infoEnd = trimBlanksBackAt(source, infoStart, end);
         builder.startNode(openingFenceKind);
         sourceToken(indentKind, line.leafStart, fenceStart);
         sourceToken(fenceKind, fenceStart, fenceEnd);
@@ -704,11 +703,9 @@ container.
           prefixOf(n);
           let row = lines[n];
           if (n == leaf.lastLine && leaf.closedByFence) {
-            let closeStart = skipBlanks(source, row.leafStart, row.contentEnd);
-            var closeEnd = closeStart;
-            while (closeEnd < row.contentEnd && source.codeAt(closeEnd) == leaf.fenceChar) {
-              closeEnd += 1;
-            }
+            // Only spaces and tabs follow the fence's code points.
+            let closeStart = skipBlanksAt(source, row.leafStart, row.contentEnd);
+            let closeEnd = trimBlanksBackAt(source, closeStart, row.contentEnd);
             builder.startNode(closingFenceKind);
             sourceToken(indentKind, row.leafStart, closeStart);
             sourceToken(fenceKind, closeStart, closeEnd);
@@ -728,8 +725,9 @@ the code, and the line ending.
         sourceToken(indentKind, line.leafStart, line.codeStart);
         var start = line.codeStart;
         if (line.tabRemainder > 0 && start < line.contentEnd) {
-          sourceToken(tabRemainderKind(line.tabRemainder), start, start + 1);
-          start += 1;
+          let next = source.next(start);
+          sourceToken(tabRemainderKind(line.tabRemainder), start, next);
+          start = next;
         }
         sourceToken(codeLineKind, start, line.contentEnd);
         lineEnding(line);
@@ -755,8 +753,9 @@ container prefixes split them; then each line is opaque text.
           sourceToken(indentKind, line.leafStart, line.codeStart);
           var start = line.codeStart;
           if (line.tabRemainder > 0 && start < line.contentEnd) {
-            sourceToken(tabRemainderKind(line.tabRemainder), start, start + 1);
-            start += 1;
+            let next = source.next(start);
+            sourceToken(tabRemainderKind(line.tabRemainder), start, next);
+            start = next;
           }
           sourceToken(htmlTextKind, start, line.contentEnd);
           lineEnding(line);
@@ -784,7 +783,7 @@ node, with container prefixes between them.
         for (var n = leaf.firstLine; n <= leaf.lastLine; n += 1) {
           if (n > leaf.firstLine) { prefixOf(n); }
           let line = lines[n];
-          let start = skipBlanks(source, line.leafStart, line.contentEnd);
+          let start = skipBlanksAt(source, line.leafStart, line.contentEnd);
           let kind = if (n == leaf.firstLine) {
             tableHeaderRowKind
           } else if (n == leaf.firstLine + 1) {
@@ -807,19 +806,20 @@ node, with container prefixes between them.
 A delimiter row's tokens: pipes, whitespace, and delimiters such as
 `:--`.
 
-      private writeDelimiters(start: Int, end: Int): Void {
+      private writeDelimiters(start: StringIndex, end: StringIndex): Void {
+        let source = this.source;
         var i = start;
         while (i < end) {
-          let c = source.codeAt(i);
-          var next = i + 1;
+          let c = source[i];
+          var next = source.next(i);
           if (c == char'|') {
             sourceToken(pipeKind, i, next);
           } else if (isTableSpace(c)) {
             next = skipTableSpaces(source, i, end);
             sourceToken(whitespaceKind, i, next);
           } else {
-            while (next < end && (source.codeAt(next) == char'-' || source.codeAt(next) == char':')) {
-              next += 1;
+            while (next < end && (source[next] == char'-' || source[next] == char':')) {
+              next = source.next(next);
             }
             sourceToken(tableDelimiterKind, i, next);
           }
@@ -830,11 +830,13 @@ A delimiter row's tokens: pipes, whitespace, and delimiters such as
 A row's cells, between pipes, as `tableRowCells` counts them: after
 the last pipe, only spaces are no cell.
 
-      private writeCells(n: Int, start: Int, end: Int): Void {
+      private writeCells(n: Int, start: StringIndex, end: StringIndex): Void {
+        let source = this.source;
         var i = start;
-        if (i < end && source.codeAt(i) == char'|') {
-          sourceToken(pipeKind, i, i + 1);
-          i += 1;
+        if (i < end && source[i] == char'|') {
+          let next = source.next(i);
+          sourceToken(pipeKind, i, next);
+          i = next;
         }
         while (true) {
           let pipe = nextPipe(source, i, end);
@@ -847,8 +849,9 @@ the last pipe, only spaces are no cell.
             break;
           }
           writeCell(n, i, pipe, i > start);
-          sourceToken(pipeKind, pipe, pipe + 1);
-          i = pipe + 1;
+          let next = source.next(pipe);
+          sourceToken(pipeKind, pipe, next);
+          i = next;
         }
       }
 
@@ -856,14 +859,14 @@ A cell: the whitespace around its content, and its inlines. After a
 pipe, cmark-gfm skips vertical tabs and form feeds too; then it trims
 spaces and tabs.
 
-      private writeCell(n: Int, start: Int, end: Int, afterPipe: Boolean): Void {
+      private writeCell(n: Int, start: StringIndex, end: StringIndex, afterPipe: Boolean): Void {
         builder.startNode(tableCellKind);
         let from = if (afterPipe) { skipTableSpaces(source, start, end) } else { start };
-        let contentStart = skipBlanks(source, from, end);
-        let contentEnd = trimBlanksBack(source, contentStart, end);
+        let contentStart = skipBlanksAt(source, from, end);
+        let contentEnd = trimBlanksBackAt(source, contentStart, end);
         sourceToken(whitespaceKind, start, contentStart);
         let content = rangeContent(source, n, contentStart, contentEnd);
-        parseInlines(content, 0, contentEnd - contentStart, true);
+        parseInlines(content, 0, content.text.length, true);
         sourceToken(whitespaceKind, contentEnd, end);
         builder.finishNode();
       }
@@ -1008,7 +1011,7 @@ stays opaque text between line breaks' prefixes if not.
           if (!next.prefix.isEmpty || content.sourceStarts[i + 1] != next.start) { whole = false; }
         }
         if (whole) {
-          rawHtmlChildren(source.slice(content.sourceAt(start), content.sourceAt(end - 1) + 1));
+          rawHtmlChildren(source.slice(content.text.stringIndex(start), content.text.stringIndex(end)));
         } else {
           emit(content, htmlTextKind, start, end);
         }
@@ -1049,14 +1052,12 @@ no match.
 
 After the line ending at `at`: `\n`, `\r\n`, or `\r`.
 
-    let lineBreakEnd(source: SourceText, at: Int): Int {
-      let c = source.codeAt(at);
-      if (c == char'\r' && source.codeAt(at + 1) == char'\n') {
-        at + 2
-      } else if (c == char'\r' || c == char'\n') {
-        at + 1
+    let lineBreakEnd(text: String, at: StringIndex): StringIndex {
+      let next = text.next(at);
+      if (text[at] == char'\r' && text.hasIndex(next) && text[next] == char'\n') {
+        text.next(next)
       } else {
-        at
+        next
       }
     }
 
@@ -1078,6 +1079,34 @@ Back over spaces and tabs before `end`, but not before `start`.
         i -= 1;
       }
       i
+    }
+
+The same on a string, by `StringIndex`, for the block parser and the
+tree writer, which read the source string directly. (The inline
+parser reads a paragraph's decoded text by `Int` for now.)
+
+    let skipBlanksAt(text: String, from: StringIndex, end: StringIndex): StringIndex {
+      var i = from;
+      while (i < end && isSpaceOrTab(text[i])) {
+        i = text.next(i);
+      }
+      i
+    }
+
+    let trimBlanksBackAt(text: String, start: StringIndex, end: StringIndex): StringIndex {
+      var i = end;
+      while (i > start) {
+        let before = text.prev(i);
+        if (!isSpaceOrTab(text[before])) { break; }
+        i = before;
+      }
+      i
+    }
+
+A code point before `end`, or -1.
+
+    let codeInAt(text: String, at: StringIndex, end: StringIndex): Int {
+      if (at < end) { text[at] } else { -1 }
     }
 
 Where a run of exactly `count` backticks starts, from `from`, or -1.

@@ -12,7 +12,7 @@ the rest. The tree comes from that in one pass (see `parse.temper.md`),
 so every code point lands in exactly one token.
 
     let {
-      Kind, SourceText, asciiLowercase, isAsciiAlpha, isAsciiAlphanumeric, isAsciiDigit,
+      Kind, SourceText, asciiLowercase, sourceLines, isAsciiAlpha, isAsciiAlphanumeric, isAsciiDigit,
       isAsciiWhitespace,
     } = import("../kelpto-core");
 
@@ -135,18 +135,20 @@ marker, or the whitespace after one.
     class PrefixToken(
       public owner: BlockData,
       public kind: Kind,
-      public start: Int,
-      public end: Int,
+      public start: StringIndex,
+      public end: StringIndex,
     ) {}
 
+A line, by where its parts are in the source string.
+
     class LineData {
-      public start: Int;
+      public start: StringIndex;
 
 Where the line's content ends, before its line ending, and where its
 line ending ends.
 
-      public contentEnd: Int;
-      public breakEnd: Int;
+      public contentEnd: StringIndex;
+      public breakEnd: StringIndex;
       public prefix: ListBuilder<PrefixToken> = new ListBuilder<PrefixToken>();
 
 The leaf block taking the rest of the line, or null if the line only
@@ -157,16 +159,16 @@ opens containers.
 Where the leaf's part of the line starts, after the container
 prefixes.
 
-      public var leafStart: Int;
+      public var leafStart: StringIndex;
 
 For code and HTML blocks: where the text starts after the block's own
 indentation, and how many columns are left of a partly used tab
 there, or 0.
 
-      public var codeStart: Int;
+      public var codeStart: StringIndex;
       public var tabRemainder: Int = 0;
 
-      public constructor(start: Int, contentEnd: Int, breakEnd: Int) {
+      public constructor(start: StringIndex, contentEnd: StringIndex, breakEnd: StringIndex) {
         this.start = start;
         this.contentEnd = contentEnd;
         this.breakEnd = breakEnd;
@@ -175,31 +177,43 @@ there, or 0.
       }
     }
 
-Splits `source` into lines. A line ending (`\n`, `\r\n`, or `\r`) ends
-a line; text after the last one is a last line without one. It goes by
-the line breaks `source` found while decoding, not code point by code
-point.
+Splits `text` into lines. A line ending (`\n`, `\r\n`, or `\r`) ends a
+line; text after the last one is a last line without one. It finds
+them with `indexOf`, which is native in every language, rather than
+reading code point by code point: each is searched for again only
+once passed, so text without `\r` is searched for it once.
 
-    let splitLines(source: SourceText): List<LineData> {
+    let splitLines(text: String): List<LineData> {
       let lines = new ListBuilder<LineData>();
-      let breaks = source.lineBreaks;
-      let length = source.length;
-      var start = 0;
-      var b = 0;
-      while (start < length) {
-        while (b < breaks.length && breaks[b] < start) { b += 1; }
-        let end = if (b < breaks.length) { breaks[b] } else { length };
-        let next = lineBreakEnd(source, end);
-        lines.add(new LineData(start, end, next));
+      let end = text.end;
+      var start = String.begin;
+      var newline = indexOrEnd(text, "\n", start);
+      var carriageReturn = indexOrEnd(text, "\r", start);
+      while (start < end) {
+        if (newline < start) { newline = indexOrEnd(text, "\n", start); }
+        if (carriageReturn < start) { carriageReturn = indexOrEnd(text, "\r", start); }
+        let at = if (carriageReturn < newline) { carriageReturn } else { newline };
+        let next = if (at < end) { lineBreakEnd(text, at) } else { end };
+        lines.add(new LineData(start, at, next));
         start = next;
       }
       lines.toList()
     }
 
+Where `target` is in `text` from `start`, or the end.
+
+    let indexOrEnd(text: String, target: String, start: StringIndex): StringIndex {
+      let found = text.indexOf(target, start);
+      when (found) {
+        is StringIndex -> found;
+        else -> text.end;
+      }
+    }
+
 ## The block parser
 
     class BlockParser {
-      public source: SourceText;
+      public text: String;
       public lines: List<LineData>;
       public document: BlockData;
       private extensions: Extensions;
@@ -207,14 +221,14 @@ point.
       private var current: BlockData;
 
 The state for the line being parsed, as cmark keeps it: `offset` is a
-position in code points and `column` counts tabs to tab stops; a
+position in the source string and `column` counts tabs to tab stops; a
 partly consumed tab leaves `offset` on the tab.
 
       private var lineNumber: Int = 0;
-      private var lineEnd: Int = 0;
-      private var offset: Int = 0;
+      private var lineEnd: StringIndex = String.begin;
+      private var offset: StringIndex = String.begin;
       private var column: Int = 0;
-      private var firstNonspace: Int = 0;
+      private var firstNonspace: StringIndex = String.begin;
       private var firstNonspaceColumn: Int = 0;
       private var indent: Int = 0;
       private var blank: Boolean = false;
@@ -223,12 +237,12 @@ partly consumed tab leaves `offset` on the tab.
 Where the leaf's part of the line starts: after the last container
 prefix matched or opened.
 
-      private var containerOffset: Int = 0;
+      private var containerOffset: StringIndex = String.begin;
 
-      public constructor(source: SourceText, extensions: Extensions) {
-        this.source = source;
+      public constructor(text: String, extensions: Extensions) {
+        this.text = text;
         this.extensions = extensions;
-        this.lines = splitLines(source);
+        this.lines = splitLines(text);
         let document = new BlockData(0, typeDocument, null, 0);
         this.document = document;
         this.current = document;
@@ -247,8 +261,8 @@ prefix matched or opened.
 
 The code point at `at`, as if each line ended in `\n`.
 
-      private peek(at: Int): Int {
-        if (at < lineEnd) { source.codeAt(at) } else { char'\n' }
+      private peek(at: StringIndex): Int {
+        if (at < lineEnd) { text[at] } else { char'\n' }
       }
 
 The loops below work on locals and set the fields once: in Rust, each
@@ -257,19 +271,19 @@ read or write of a field of a class with `var` fields takes a lock.
       private findFirstNonspace(): Void {
         var charsToTab = tabStop - column % tabStop;
         if (firstNonspace <= offset) {
-          let source = this.source;
+          let text = this.text;
           let lineEnd = this.lineEnd;
           var at = offset;
           var atColumn = column;
           while (at < lineEnd) {
-            let c = source.codeAt(at);
+            let c = text[at];
             if (c == char' ') {
-              at += 1;
+              at = text.next(at);
               atColumn += 1;
               charsToTab -= 1;
               if (charsToTab == 0) { charsToTab = tabStop; }
             } else if (c == char'\t') {
-              at += 1;
+              at = text.next(at);
               atColumn += charsToTab;
               charsToTab = tabStop;
             } else {
@@ -283,35 +297,26 @@ read or write of a field of a class with `var` fields takes a lock.
         blank = firstNonspace >= lineEnd;
       }
 
-Moves past `count` code points, or `count` columns if `columns`, in
-which case a tab can be partly consumed.
+Moves past `count` columns, where a tab can be partly consumed.
 
-      private advanceOffset(count: Int, columns: Boolean): Void {
-        let source = this.source;
+      private advanceColumns(count: Int): Void {
+        let text = this.text;
         let lineEnd = this.lineEnd;
         var at = offset;
         var atColumn = column;
         var partial = partiallyConsumedTab;
         var left = count;
         while (left > 0 && at < lineEnd) {
-          let c = source.codeAt(at);
-          if (c == char'\t') {
+          if (text[at] == char'\t') {
             let charsToTab = tabStop - atColumn % tabStop;
-            if (columns) {
-              partial = charsToTab > left;
-              let advance = if (left < charsToTab) { left } else { charsToTab };
-              atColumn += advance;
-              if (!partial) { at += 1; }
-              left -= advance;
-            } else {
-              partial = false;
-              atColumn += charsToTab;
-              at += 1;
-              left -= 1;
-            }
+            partial = charsToTab > left;
+            let advance = if (left < charsToTab) { left } else { charsToTab };
+            atColumn += advance;
+            if (!partial) { at = text.next(at); }
+            left -= advance;
           } else {
             partial = false;
-            at += 1;
+            at = text.next(at);
             atColumn += 1;
             left -= 1;
           }
@@ -321,7 +326,28 @@ which case a tab can be partly consumed.
         partiallyConsumedTab = partial;
       }
 
-      private prefixToken(owner: BlockData, kind: Kind, start: Int, end: Int): Void {
+Moves to `target`, on this line, a whole code point at a time.
+
+      private advanceTo(target: StringIndex): Void {
+        let text = this.text;
+        var at = offset;
+        var atColumn = column;
+        var partial = partiallyConsumedTab;
+        while (at < target) {
+          if (text[at] == char'\t') {
+            atColumn += tabStop - atColumn % tabStop;
+          } else {
+            atColumn += 1;
+          }
+          partial = false;
+          at = text.next(at);
+        }
+        offset = at;
+        column = atColumn;
+        partiallyConsumedTab = partial;
+      }
+
+      private prefixToken(owner: BlockData, kind: Kind, start: StringIndex, end: StringIndex): Void {
         if (start < end) {
           lines[lineNumber].prefix.add(new PrefixToken(owner, kind, start, end));
         }
@@ -375,7 +401,7 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
         if (type == typeBlockQuote) {
           if (indent <= 3 && peek(firstNonspace) == char'>') {
             let start = offset;
-            advanceOffset(indent + 1, true);
+            advanceColumns(indent + 1);
             prefixToken(block, indentKind, start, firstNonspace);
             prefixToken(block, blockQuoteMarkerKind, firstNonspace, offset);
             optionalSpace(block);
@@ -387,14 +413,14 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
         if (type == typeListItem) {
           if (indent >= block.markerOffset + block.padding) {
             let start = offset;
-            advanceOffset(block.markerOffset + block.padding, true);
+            advanceColumns(block.markerOffset + block.padding);
             prefixToken(block, indentKind, start, offset);
             containerOffset = offset;
             return 1;
           }
           if (blank && block.hasRealChild) {
             let start = offset;
-            advanceOffset(firstNonspace - offset, false);
+            advanceTo(firstNonspace);
             prefixToken(block, indentKind, start, offset);
             containerOffset = offset;
             return 1;
@@ -403,11 +429,11 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
         }
         if (type == typeIndentedCode) {
           if (indent >= 4) {
-            advanceOffset(4, true);
+            advanceColumns(4);
             return 1;
           }
           if (blank) {
-            advanceOffset(firstNonspace - offset, false);
+            advanceTo(firstNonspace);
             return 1;
           }
           return 0;
@@ -415,7 +441,7 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
         if (type == typeFencedCode) {
           var matched = 0;
           if (indent <= 3 && peek(firstNonspace) == block.fenceChar) {
-            matched = closingFenceLength(source, firstNonspace, lineEnd);
+            matched = closingFenceLength(text, firstNonspace, lineEnd);
           }
           if (matched >= block.fenceLength) {
             let line = lines[lineNumber];
@@ -428,7 +454,7 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
           }
           var i = block.fenceOffset;
           while (i > 0 && isSpaceOrTab(peek(offset))) {
-            advanceOffset(1, true);
+            advanceColumns(1);
             i -= 1;
           }
           return 1;
@@ -451,7 +477,7 @@ line ending, so not spaces, nor a container's prefix.
 
           if (indent >= 4) {
             let start = offset;
-            advanceOffset(4, true);
+            advanceColumns(4);
             prefixToken(block, indentKind, start, offset);
             containerOffset = offset;
             return 1;
@@ -474,7 +500,7 @@ column, so it stays for what comes next.
       private optionalSpace(owner: BlockData): Void {
         if (isSpaceOrTab(peek(offset))) {
           let start = offset;
-          advanceOffset(1, true);
+          advanceColumns(1);
           prefixToken(owner, whitespaceKind, start, offset);
         }
       }
@@ -505,55 +531,65 @@ Opens the blocks that start on this line, giving the innermost.
           findFirstNonspace();
           let indented = indent >= 4;
           let c = peek(firstNonspace);
+          // Each found once: `c` rules out the branches before them.
+          let atxEnd = if (!indented && c == char'#') {
+            atxHeadingStart(text, firstNonspace, lineEnd)
+          } else {
+            firstNonspace
+          };
+          let fenceEnd = if (!indented && (c == char'`' || c == char'~')) {
+            openingFenceEnd(text, firstNonspace, lineEnd)
+          } else {
+            firstNonspace
+          };
           if (!indented && c == char'>') {
             let quote = addChild(container, typeBlockQuote);
             prefixToken(quote, indentKind, offset, firstNonspace);
-            advanceOffset(firstNonspace + 1 - offset, false);
+            advanceTo(text.next(firstNonspace));
             prefixToken(quote, blockQuoteMarkerKind, firstNonspace, offset);
             optionalSpace(quote);
             containerOffset = offset;
             container = quote;
-          } else if (!indented && atxHeadingStart(source, firstNonspace, lineEnd) > 0) {
+          } else if (atxEnd > firstNonspace) {
             container = addChild(container, typeAtxHeading);
-            advanceOffset(atxHeadingStart(source, firstNonspace, lineEnd) - offset, false);
-          } else if (!indented && openingFenceEnd(source, firstNonspace, lineEnd) > 0) {
-            let fenceEnd = openingFenceEnd(source, firstNonspace, lineEnd);
+            advanceTo(atxEnd);
+          } else if (fenceEnd > firstNonspace) {
             let code = addChild(container, typeFencedCode);
-            code.fenceChar = source.codeAt(firstNonspace);
-            code.fenceLength = fenceEnd - firstNonspace;
-            code.fenceOffset = firstNonspace - offset;
-            advanceOffset(fenceEnd - offset, false);
+            code.fenceChar = text[firstNonspace];
+            code.fenceLength = text.countBetween(firstNonspace, fenceEnd);
+            code.fenceOffset = text.countBetween(offset, firstNonspace);
+            advanceTo(fenceEnd);
             container = code;
           } else if (
             !indented &&
-            htmlBlockStart(source, firstNonspace, lineEnd, containerType != typeParagraph) > 0
+            htmlBlockStart(text, firstNonspace, lineEnd, containerType != typeParagraph) > 0
           ) {
             let html = addChild(container, typeHtmlBlock);
-            html.htmlType = htmlBlockStart(source, firstNonspace, lineEnd, containerType != typeParagraph);
+            html.htmlType = htmlBlockStart(text, firstNonspace, lineEnd, containerType != typeParagraph);
             container = html;
           } else if (
             !indented && containerType == typeParagraph &&
-            setextUnderline(source, firstNonspace, lineEnd) > 0
+            setextUnderline(text, firstNonspace, lineEnd) > 0
           ) {
             toSetextHeading(container);
           } else if (
             !indented && !(containerType == typeParagraph && !allMatched) &&
-            isThematicBreak(source, firstNonspace, lineEnd)
+            isThematicBreak(text, firstNonspace, lineEnd)
           ) {
             container = addChild(container, typeThematicBreak);
-            advanceOffset(lineEnd - offset, false);
+            advanceTo(lineEnd);
           } else if (
             !indented && extensions.footnotes && depth < maxOpenDepth &&
-            footnoteLabelEnd(source, firstNonspace, lineEnd) > 0
+            footnoteLabelEnd(text, firstNonspace, lineEnd) > firstNonspace
           ) {
             container = openFootnoteDefinition(container);
           } else if (
             (!indented || containerType == typeList) && indent < 4 &&
-            listMarkerEnd(source, firstNonspace, lineEnd, containerType == typeParagraph) > 0
+            listMarkerEnd(text, firstNonspace, lineEnd, containerType == typeParagraph) > firstNonspace
           ) {
             container = openListItem(container);
           } else if (indented && !maybeLazy && !blank) {
-            advanceOffset(4, true);
+            advanceColumns(4);
             container = addChild(container, typeIndentedCode);
           } else if (
             !indented && containerType == typeParagraph && extensions.tables &&
@@ -564,16 +600,16 @@ Opens the blocks that start on this line, giving the innermost.
           } else if (
             !indented && containerType == typeListItem && extensions.taskListItems &&
             container.firstLine == lineNumber && !container.hasRealChild &&
-            taskMarkerEnd(source, firstNonspace, lineEnd) > 0
+            taskMarkerEnd(text, firstNonspace, lineEnd) > firstNonspace
           ) {
 
 A task list item's marker. The rest of the line is the item's
 paragraph, whatever it holds, as in cmark-gfm.
 
-            let markerEnd = firstNonspace + 3;
+            let markerEnd = taskMarkerEnd(text, firstNonspace, lineEnd);
             prefixToken(container, whitespaceKind, offset, firstNonspace);
             prefixToken(container, taskMarkerKind, firstNonspace, markerEnd);
-            advanceOffset(markerEnd - offset, false);
+            advanceTo(markerEnd);
             containerOffset = offset;
             break;
           } else {
@@ -591,11 +627,11 @@ the paragraph's last line, that line becomes a table's header row, and
 the lines before it stay a paragraph. Gives whether it did.
 
       private toTable(paragraph: BlockData): Boolean {
-        let columns = delimiterRowColumns(source, firstNonspace, lineEnd);
+        let columns = delimiterRowColumns(text, firstNonspace, lineEnd);
         if (columns == 0) { return false; }
         let headerLine = paragraph.endLine - 1;
         let header = lines[headerLine];
-        let cells = tableRowCells(source, skipBlanks(source, header.leafStart, header.contentEnd), header.contentEnd);
+        let cells = tableRowCells(text, skipBlanksAt(text, header.leafStart, header.contentEnd), header.contentEnd);
         if (cells != columns) {
           paragraph.tableVisited = true;
           return false;
@@ -624,7 +660,7 @@ Whether this line is another row of `table`: a row with cells, unless
 the table has filled in too many empty cells already.
 
       private continuesTable(table: BlockData): Boolean {
-        let cells = tableRowCells(source, firstNonspace, lineEnd);
+        let cells = tableRowCells(text, firstNonspace, lineEnd);
         cells > 0 && table.tableColumns * table.tableRows - table.tableCells <= maxFilledCells
       }
 
@@ -634,7 +670,7 @@ reference definitions; then the underline is a paragraph's text.
       private toSetextHeading(paragraph: BlockData): Void {
         if (splitDefinitions(paragraph)) {
           paragraph.blockType = typeSetextHeading;
-          advanceOffset(lineEnd - offset, false);
+          advanceTo(lineEnd);
         }
       }
 
@@ -643,17 +679,19 @@ it, as its prefix. Its blocks start after them, so its first line is
 never indented code.
 
       private openFootnoteDefinition(container: BlockData): BlockData {
-        let labelEnd = footnoteLabelEnd(source, firstNonspace, lineEnd);
-        let markerEnd = labelEnd + 2;
-        let contentStart = skipBlanks(source, markerEnd, lineEnd);
+        let labelStart = text.next(text.next(firstNonspace));
+        let labelEnd = footnoteLabelEnd(text, firstNonspace, lineEnd);
+        let colon = text.next(labelEnd);
+        let markerEnd = text.next(colon);
+        let contentStart = skipBlanksAt(text, markerEnd, lineEnd);
         let definition = addChild(container, typeFootnoteDefinition);
         prefixToken(definition, indentKind, offset, firstNonspace);
-        prefixToken(definition, footnoteOpenKind, firstNonspace, firstNonspace + 2);
-        prefixToken(definition, labelTextKind, firstNonspace + 2, labelEnd);
-        prefixToken(definition, linkCloseKind, labelEnd, labelEnd + 1);
-        prefixToken(definition, colonKind, labelEnd + 1, markerEnd);
+        prefixToken(definition, footnoteOpenKind, firstNonspace, labelStart);
+        prefixToken(definition, labelTextKind, labelStart, labelEnd);
+        prefixToken(definition, linkCloseKind, labelEnd, colon);
+        prefixToken(definition, colonKind, colon, markerEnd);
         prefixToken(definition, whitespaceKind, markerEnd, contentStart);
-        advanceOffset(contentStart - offset, false);
+        advanceTo(contentStart);
         containerOffset = offset;
         definition
       }
@@ -664,27 +702,27 @@ spaces; with 5 or more, or none before the line's end, after one.
 
       private openListItem(container: BlockData): BlockData {
         let markerStart = firstNonspace;
-        let markerEnd = listMarkerEnd(source, firstNonspace, lineEnd, container.blockType == typeParagraph);
+        let markerEnd = listMarkerEnd(text, firstNonspace, lineEnd, container.blockType == typeParagraph);
         let indentStart = offset;
         let markerOffset = indent;
-        let marker = source.codeAt(markerEnd - 1);
+        let marker = text[text.prev(markerEnd)];
         let ordered = marker == char'.' || marker == char')';
-        advanceOffset(markerEnd - offset, false);
+        advanceTo(markerEnd);
         let savePartial = partiallyConsumedTab;
         let saveOffset = offset;
         let saveColumn = column;
         while (column - saveColumn <= 5 && isSpaceOrTab(peek(offset))) {
-          advanceOffset(1, true);
+          advanceColumns(1);
         }
         let spaces = column - saveColumn;
-        let width = markerEnd - markerStart;
+        let width = text.countBetween(markerStart, markerEnd);
         var padding = width + spaces;
         if (spaces >= 5 || spaces < 1 || offset >= lineEnd) {
           padding = width + 1;
           offset = saveOffset;
           column = saveColumn;
           partiallyConsumedTab = savePartial;
-          if (spaces > 0) { advanceOffset(1, true); }
+          if (spaces > 0) { advanceColumns(1); }
         }
         var list = container;
         let sameList = container.blockType == typeList && container.ordered == ordered && (
@@ -759,7 +797,7 @@ goes to the container itself.
           }
         } else if (type == typeTable) {
           if (lineNumber > container.firstLine + 1) {
-            let cells = tableRowCells(source, firstNonspace, lineEnd);
+            let cells = tableRowCells(text, firstNonspace, lineEnd);
             container.tableRows += 1;
             container.tableCells += if (cells < container.tableColumns) { cells } else { container.tableColumns };
           }
@@ -778,7 +816,7 @@ Gives the block, or its parent if closed.
 
       private addHtmlLine(html: BlockData): BlockData {
         addLine(html);
-        if (htmlBlockEnds(source, html.htmlType, firstNonspace, lineEnd)) {
+        if (htmlBlockEnds(text, html.htmlType, firstNonspace, lineEnd)) {
           return finalize(html);
         }
         html
@@ -813,14 +851,19 @@ Moves link reference definitions at the start of `paragraph` into
 blocks of their own, before it. Gives whether any lines are left.
 
       private splitDefinitions(paragraph: BlockData): Boolean {
-        let content = paragraphContent(source, lines, paragraph.firstLine, paragraph.endLine);
-        let text = content.text;
+        // Each definition starts with `[`, so most paragraphs need no
+        // decoding here.
+        let firstText = lines[paragraph.firstLine];
+        let textStart = skipBlanksAt(text, firstText.leafStart, firstText.contentEnd);
+        if (codeInAt(text, textStart, firstText.contentEnd) != char'[') { return true; }
+        let content = paragraphContent(text, lines, paragraph.firstLine, paragraph.endLine);
+        let joined = content.text;
         let parent = paragraph.parent as BlockData orelse panic();
         var at = 0;
         var first = paragraph.firstLine;
         var insertAt = indexOfChild(parent, paragraph);
-        while (at < text.length && text.codeAt(at) == char'[') {
-          let end = definitionEnd(text, at);
+        while (at < joined.length && joined.codeAt(at) == char'[') {
+          let end = definitionEnd(joined, at);
           if (end < 0) { break; }
           let lastLine = content.lineOf(end - 1);
           let definition = new BlockData(nextId, typeDefinition, parent, first);
@@ -851,7 +894,7 @@ become blank lines after it.
         let parent = code.parent as BlockData orelse panic();
         var insertAt = indexOfChild(parent, code) + 1;
         var end = code.endLine;
-        while (end - 1 > code.firstLine && isBlankText(source, lines[end - 1].leafStart, lines[end - 1].contentEnd)) {
+        while (end - 1 > code.firstLine && isBlankText(text, lines[end - 1].leafStart, lines[end - 1].contentEnd)) {
           end -= 1;
         }
         for (var n = end; n < code.endLine; n += 1) {
@@ -946,8 +989,8 @@ Where the definition at `at` ends, or -1.
         type == typeFencedCode || type == typeIndentedCode || type == typeTable
     }
 
-    let isBlankText(source: SourceText, start: Int, end: Int): Boolean {
-      skipBlanks(source, start, end) == end
+    let isBlankText(text: String, start: StringIndex, end: StringIndex): Boolean {
+      skipBlanksAt(text, start, end) == end
     }
 
 ## Paragraph content
@@ -961,23 +1004,30 @@ it, with the line breaks between them.
       public text: SourceText;
 
 For each line: where it starts in `text`, its length, and where it
-starts in the source.
+starts in the source string.
 
       public starts: List<Int>;
       public lengths: List<Int>;
-      public sourceStarts: List<Int>;
+      public sourceStarts: List<StringIndex>;
 
 The line number of the first line.
 
       public firstLine: Int;
 
-      public constructor(
-        text: SourceText, starts: List<Int>, lengths: List<Int>, sourceStarts: List<Int>,
-        firstLine: Int,
-      ) {
+      public constructor(text: SourceText, sourceStarts: List<StringIndex>, firstLine: Int) {
         this.text = text;
-        this.starts = starts;
-        this.lengths = lengths;
+        let joins = text.joinedAt;
+        let starts = new ListBuilder<Int>();
+        let lengths = new ListBuilder<Int>();
+        var start = 0;
+        for (var i = 0; i <= joins.length; i += 1) {
+          let end = if (i < joins.length) { joins[i] } else { text.length };
+          starts.add(start);
+          lengths.add(end - start);
+          start = end + 1;
+        }
+        this.starts = starts.toList();
+        this.lengths = lengths.toList();
         this.sourceStarts = sourceStarts;
         this.firstLine = firstLine;
       }
@@ -993,43 +1043,28 @@ The index of the line holding `at`, or ending at it.
         }
         low
       }
-
-Where `at` is in the source. Not for the `\n` between lines.
-
-      public sourceAt(at: Int): Int {
-        let i = lineOf(at);
-        sourceStarts[i] + at - starts[i]
-      }
     }
 
-The content of lines `first` up to `end` of a paragraph-like leaf.
+The content of lines `first` up to `end` of a paragraph-like leaf,
+decoded from the source string.
 
-    let paragraphContent(source: SourceText, lines: List<LineData>, first: Int, end: Int): Content {
-      let ranges = new ListBuilder<Int>();
-      let starts = new ListBuilder<Int>();
-      let lengths = new ListBuilder<Int>();
-      let sourceStarts = new ListBuilder<Int>();
-      var at = 0;
+    let paragraphContent(text: String, lines: List<LineData>, first: Int, end: Int): Content {
+      let ranges = new ListBuilder<StringIndex>();
+      let sourceStarts = new ListBuilder<StringIndex>();
       for (var n = first; n < end; n += 1) {
         let line = lines[n];
-        let textStart = skipBlanks(source, line.leafStart, line.contentEnd);
-        if (n > first) { at += 1; }
-        starts.add(at);
-        lengths.add(line.contentEnd - textStart);
+        let textStart = skipBlanksAt(text, line.leafStart, line.contentEnd);
         sourceStarts.add(textStart);
         ranges.add(textStart);
         ranges.add(line.contentEnd);
-        at += line.contentEnd - textStart;
       }
-      new Content(
-        source.joinLines(ranges.toList()), starts.toList(), lengths.toList(), sourceStarts.toList(), first,
-      )
+      new Content(sourceLines(text, ranges.toList()), sourceStarts.toList(), first)
     }
 
 Content from one range of one line, as for an ATX heading.
 
-    let rangeContent(source: SourceText, line: Int, start: Int, end: Int): Content {
-      new Content(source.joinLines([start, end]), [0], [end - start], [start], line)
+    let rangeContent(text: String, line: Int, start: StringIndex, end: StringIndex): Content {
+      new Content(sourceLines(text, [start, end]), [start], line)
     }
 
 ## Link reference definitions
@@ -1179,30 +1214,36 @@ its end, or -1.
 ## Block starts
 
 Each scans the line from `at`, the first non-whitespace code point, to
-`end`, the end of its content.
+`end`, the end of its content, in the source string. Those that give
+where something ends give `at` if it isn't there.
 
-The end of an ATX heading's opening `#`s, or 0: one to six, then a
-space, a tab, or the end of the line.
+The end of an ATX heading's opening `#`s: one to six, then a space, a
+tab, or the end of the line.
 
-    let atxHeadingStart(source: SourceText, at: Int, end: Int): Int {
+    let atxHeadingStart(text: String, at: StringIndex, end: StringIndex): StringIndex {
       var i = at;
-      while (i < end && source.codeAt(i) == char'#') { i += 1; }
-      let count = i - at;
-      if (count >= 1 && count <= 6 && (i == end || isSpaceOrTab(source.codeAt(i)))) { i } else { 0 }
+      while (i < end && text[i] == char'#') { i = text.next(i); }
+      if (
+        i > at && !text.hasAtLeast(at, i, 7) && (i == end || isSpaceOrTab(text[i]))
+      ) {
+        i
+      } else {
+        at
+      }
     }
 
-The end of an opening code fence, or 0: three or more backticks or
-tildes. A backtick fence's info string can't hold a backtick.
+The end of an opening code fence: three or more backticks or tildes. A
+backtick fence's info string can't hold a backtick.
 
-    let openingFenceEnd(source: SourceText, at: Int, end: Int): Int {
-      let c = codeIn(source, at, end);
-      if (c != char'`' && c != char'~') { return 0; }
+    let openingFenceEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      let c = codeInAt(text, at, end);
+      if (c != char'`' && c != char'~') { return at; }
       var i = at;
-      while (i < end && source.codeAt(i) == c) { i += 1; }
-      if (i - at < 3) { return 0; }
+      while (i < end && text[i] == c) { i = text.next(i); }
+      if (!text.hasAtLeast(at, i, 3)) { return at; }
       if (c == char'`') {
-        for (var j = i; j < end; j += 1) {
-          if (source.codeAt(j) == char'`') { return 0; }
+        for (var j = i; j < end; j = text.next(j)) {
+          if (text[j] == char'`') { return at; }
         }
       }
       i
@@ -1211,34 +1252,34 @@ tildes. A backtick fence's info string can't hold a backtick.
 The length of a closing fence of the code point at `at`, with only
 spaces and tabs after it, or 0.
 
-    let closingFenceLength(source: SourceText, at: Int, end: Int): Int {
-      let c = source.codeAt(at);
+    let closingFenceLength(text: String, at: StringIndex, end: StringIndex): Int {
+      let c = text[at];
       var i = at;
-      while (i < end && source.codeAt(i) == c) { i += 1; }
-      if (skipBlanks(source, i, end) != end) { return 0; }
-      i - at
+      while (i < end && text[i] == c) { i = text.next(i); }
+      if (skipBlanksAt(text, i, end) != end) { return 0; }
+      text.countBetween(at, i)
     }
 
 A setext heading's underline: 1 for `=`, 2 for `-`, or 0.
 
-    let setextUnderline(source: SourceText, at: Int, end: Int): Int {
-      let c = codeIn(source, at, end);
+    let setextUnderline(text: String, at: StringIndex, end: StringIndex): Int {
+      let c = codeInAt(text, at, end);
       if (c != char'=' && c != char'-') { return 0; }
       var i = at;
-      while (i < end && source.codeAt(i) == c) { i += 1; }
-      if (skipBlanks(source, i, end) != end) { return 0; }
+      while (i < end && text[i] == c) { i = text.next(i); }
+      if (skipBlanksAt(text, i, end) != end) { return 0; }
       if (c == char'=') { 1 } else { 2 }
     }
 
 Three or more of one of `*`, `-`, or `_`, with only spaces and tabs
 between and after them.
 
-    let isThematicBreak(source: SourceText, at: Int, end: Int): Boolean {
-      let c = codeIn(source, at, end);
+    let isThematicBreak(text: String, at: StringIndex, end: StringIndex): Boolean {
+      let c = codeInAt(text, at, end);
       if (c != char'*' && c != char'-' && c != char'_') { return false; }
       var count = 0;
-      for (var i = at; i < end; i += 1) {
-        let d = source.codeAt(i);
+      for (var i = at; i < end; i = text.next(i)) {
+        let d = text[i];
         if (d == c) {
           count += 1;
         } else if (!isSpaceOrTab(d)) {
@@ -1248,27 +1289,33 @@ between and after them.
       count >= 3
     }
 
-The end of a list marker, or 0: `-`, `+`, or `*`, or one to nine
-digits and `.` or `)`, followed by a space, a tab, or the end of the
-line. One interrupting a paragraph needs content after it, and if
-ordered, must start at 1.
+The end of a list marker: `-`, `+`, or `*`, or one to nine digits and
+`.` or `)`, followed by a space, a tab, or the end of the line. One
+interrupting a paragraph needs content after it, and if ordered, must
+start at 1.
 
-    let listMarkerEnd(source: SourceText, at: Int, end: Int, interruptsParagraph: Boolean): Int {
-      let c = codeIn(source, at, end);
+    let listMarkerEnd(
+      text: String, at: StringIndex, end: StringIndex, interruptsParagraph: Boolean,
+    ): StringIndex {
+      let c = codeInAt(text, at, end);
       var i = at;
       if (c == char'-' || c == char'+' || c == char'*') {
-        i += 1;
+        i = text.next(i);
       } else if (isAsciiDigit(c)) {
-        while (i < end && i - at < 9 && isAsciiDigit(source.codeAt(i))) { i += 1; }
-        let d = codeIn(source, i, end);
-        if (d != char'.' && d != char')') { return 0; }
-        if (interruptsParagraph && source.slice(at, i) != "1") { return 0; }
-        i += 1;
+        var digits = 0;
+        while (i < end && digits < 9 && isAsciiDigit(text[i])) {
+          i = text.next(i);
+          digits += 1;
+        }
+        let d = codeInAt(text, i, end);
+        if (d != char'.' && d != char')') { return at; }
+        if (interruptsParagraph && text.slice(at, i) != "1") { return at; }
+        i = text.next(i);
       } else {
-        return 0;
+        return at;
       }
-      if (i < end && !isSpaceOrTab(source.codeAt(i))) { return 0; }
-      if (interruptsParagraph && skipBlanks(source, i, end) == end) { return 0; }
+      if (i < end && !isSpaceOrTab(text[i])) { return at; }
+      if (interruptsParagraph && skipBlanksAt(text, i, end) == end) { return at; }
       i
     }
 
@@ -1287,9 +1334,9 @@ scanners skip.
       c == char' ' || c == char'\t' || c == 0x0B || c == 0x0C
     }
 
-    let skipTableSpaces(source: SourceText, from: Int, end: Int): Int {
+    let skipTableSpaces(text: String, from: StringIndex, end: StringIndex): StringIndex {
       var i = from;
-      while (i < end && isTableSpace(source.codeAt(i))) { i += 1; }
+      while (i < end && isTableSpace(text[i])) { i = text.next(i); }
       i
     }
 
@@ -1297,22 +1344,22 @@ The columns of a delimiter row from `at` to `end`, or 0 if it isn't
 one: delimiters of `-`, each with an optional `:` before and after,
 between `|`, with spaces around, and optional `|` at each end.
 
-    let delimiterRowColumns(source: SourceText, at: Int, end: Int): Int {
+    let delimiterRowColumns(text: String, at: StringIndex, end: StringIndex): Int {
       var i = at;
       var count = 0;
-      if (codeIn(source, i, end) == char'|') { i += 1; }
+      if (codeInAt(text, i, end) == char'|') { i = text.next(i); }
       while (true) {
-        i = skipTableSpaces(source, i, end);
-        if (codeIn(source, i, end) == char':') { i += 1; }
-        if (codeIn(source, i, end) != char'-') { return 0; }
-        while (codeIn(source, i, end) == char'-') { i += 1; }
-        if (codeIn(source, i, end) == char':') { i += 1; }
-        i = skipTableSpaces(source, i, end);
+        i = skipTableSpaces(text, i, end);
+        if (codeInAt(text, i, end) == char':') { i = text.next(i); }
+        if (codeInAt(text, i, end) != char'-') { return 0; }
+        while (codeInAt(text, i, end) == char'-') { i = text.next(i); }
+        if (codeInAt(text, i, end) == char':') { i = text.next(i); }
+        i = skipTableSpaces(text, i, end);
         count += 1;
         if (i >= end) { return count; }
-        if (source.codeAt(i) != char'|') { return 0; }
-        i += 1;
-        if (skipTableSpaces(source, i, end) >= end) { return count; }
+        if (text[i] != char'|') { return 0; }
+        i = text.next(i);
+        if (skipTableSpaces(text, i, end) >= end) { return count; }
       }
       0
     }
@@ -1321,9 +1368,12 @@ The first `|` from `from` not right after a backslash, or `end`. A
 backslash before `|` keeps it in the cell, as in cmark-gfm, even if
 that backslash is escaped itself.
 
-    let nextPipe(source: SourceText, from: Int, end: Int): Int {
-      for (var i = from; i < end; i += 1) {
-        if (source.codeAt(i) == char'|' && (i == 0 || source.codeAt(i - 1) != char'\\')) { return i; }
+    let nextPipe(text: String, from: StringIndex, end: StringIndex): StringIndex {
+      var before = if (from > String.begin) { text[text.prev(from)] } else { -1 };
+      for (var i = from; i < end; i = text.next(i)) {
+        let c = text[i];
+        if (c == char'|' && before != char'\\') { return i; }
+        before = c;
       }
       end
     }
@@ -1333,31 +1383,35 @@ cmark-gfm counts them, or 0 if it isn't a row: cells between `|`,
 empty ones too, but after the last `|`, only if it holds more than
 spaces. At most 65,535.
 
-    let tableRowCells(source: SourceText, at: Int, end: Int): Int {
+    let tableRowCells(text: String, at: StringIndex, end: StringIndex): Int {
       var count = 0;
       var i = at;
-      if (codeIn(source, i, end) == char'|') { i += 1; }
+      if (codeInAt(text, i, end) == char'|') { i = text.next(i); }
       while (true) {
-        let pipe = nextPipe(source, i, end);
+        let pipe = nextPipe(text, i, end);
         if (pipe >= end) {
-          if (skipTableSpaces(source, i, end) < end) { count += 1; }
+          if (skipTableSpaces(text, i, end) < end) { count += 1; }
           break;
         }
         count += 1;
-        i = pipe + 1;
+        i = text.next(pipe);
       }
       if (count > 65535) { 0 } else { count }
     }
 
-The end of a task list item's marker at `at`, or 0: `[`, a space, `x`,
-or `X`, and `]`, then a space or tab before anything else.
+The end of a task list item's marker at `at`: `[`, a space, `x`, or
+`X`, and `]`, then a space or tab before anything else.
 
-    let taskMarkerEnd(source: SourceText, at: Int, end: Int): Int {
-      if (at + 3 >= end || source.codeAt(at) != char'[' || source.codeAt(at + 2) != char']') { return 0; }
-      let mark = source.codeAt(at + 1);
-      if (mark != char' ' && mark != char'x' && mark != char'X') { return 0; }
-      if (!isTableSpace(source.codeAt(at + 3))) { return 0; }
-      at + 3
+    let taskMarkerEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      if (codeInAt(text, at, end) != char'[') { return at; }
+      let markAt = text.next(at);
+      let mark = codeInAt(text, markAt, end);
+      if (mark != char' ' && mark != char'x' && mark != char'X') { return at; }
+      let close = text.next(markAt);
+      if (codeInAt(text, close, end) != char']') { return at; }
+      let markerEnd = text.next(close);
+      if (!isTableSpace(codeInAt(text, markerEnd, end))) { return at; }
+      markerEnd
     }
 
 ### GFM: footnote definitions
@@ -1367,22 +1421,25 @@ footnote definitions, so deep nesting on one line stays cheap.
 
     let maxOpenDepth = 100;
 
-Where the `]` of a footnote definition's `[^label]:` at `at` is, or 0:
-`[^`, a label of anything but `]`, spaces, tabs, line endings, and
-U+0000, then `]:`, as cmark-gfm scans it.
+Where the `]` of a footnote definition's `[^label]:` at `at` is: `[^`,
+a label of anything but `]`, spaces, tabs, line endings, and U+0000,
+then `]:`, as cmark-gfm scans it.
 
-    let footnoteLabelEnd(source: SourceText, at: Int, end: Int): Int {
-      if (codeIn(source, at, end) != char'[' || codeIn(source, at + 1, end) != char'^') { return 0; }
-      var i = at + 2;
+    let footnoteLabelEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      if (codeInAt(text, at, end) != char'[') { return at; }
+      let caret = text.next(at);
+      if (codeInAt(text, caret, end) != char'^') { return at; }
+      let labelStart = text.next(caret);
+      var i = labelStart;
       while (i < end) {
-        let c = source.codeAt(i);
+        let c = text[i];
         if (c == char']') {
-          return if (i > at + 2 && codeIn(source, i + 1, end) == char':') { i } else { 0 };
+          return if (i > labelStart && codeInAt(text, text.next(i), end) == char':') { i } else { at };
         }
-        if (c == char' ' || c == char'\t' || c == 0) { return 0; }
-        i += 1;
+        if (c == char' ' || c == char'\t' || c == 0) { return at; }
+        i = text.next(i);
       }
-      0
+      at
     }
 
 ### HTML blocks
@@ -1390,22 +1447,23 @@ U+0000, then `]:`, as cmark-gfm scans it.
 The kind of HTML block starting at `at`, 1 to 7, or 0. Kind 7 can't
 interrupt a paragraph, so `allowType7` is false there.
 
-    let htmlBlockStart(source: SourceText, at: Int, end: Int, allowType7: Boolean): Int {
-      if (codeIn(source, at, end) != char'<') { return 0; }
-      let next = codeIn(source, at + 1, end);
+    let htmlBlockStart(text: String, at: StringIndex, end: StringIndex, allowType7: Boolean): Int {
+      if (codeInAt(text, at, end) != char'<') { return 0; }
+      let afterOpen = text.next(at);
+      let next = codeInAt(text, afterOpen, end);
       if (next == char'!') {
-        if (startsWithText(source, at, end, "<!--")) { return 2; }
-        if (startsWithText(source, at, end, "<![CDATA[")) { return 5; }
-        if (isAsciiAlpha(codeIn(source, at + 2, end))) { return 4; }
+        if (matchesAt(text, at, end, "<!--", false)) { return 2; }
+        if (matchesAt(text, at, end, "<![CDATA[", false)) { return 5; }
+        if (isAsciiAlpha(codeInAt(text, text.next(afterOpen), end))) { return 4; }
         return 0;
       }
       if (next == char'?') { return 3; }
       let closing = next == char'/';
-      let nameStart = if (closing) { at + 2 } else { at + 1 };
+      let nameStart = if (closing) { text.next(afterOpen) } else { afterOpen };
       var nameEnd = nameStart;
-      while (nameEnd < end && isAsciiAlphanumeric(source.codeAt(nameEnd))) { nameEnd += 1; }
-      let name = asciiLowercase(source.slice(nameStart, nameEnd));
-      let after = codeIn(source, nameEnd, end);
+      while (nameEnd < end && isAsciiAlphanumeric(text[nameEnd])) { nameEnd = text.next(nameEnd); }
+      let name = asciiLowercase(text.slice(nameStart, nameEnd));
+      let after = codeInAt(text, nameEnd, end);
       if (
         !closing && isType1Name(name) &&
         (after == -1 || isSpaceOrTab(after) || after == char'>')
@@ -1415,21 +1473,49 @@ interrupt a paragraph, so `allowType7` is false there.
       if (
         isType6Name(name) && (
           after == -1 || isSpaceOrTab(after) || after == char'>' ||
-          (after == char'/' && codeIn(source, nameEnd + 1, end) == char'>')
+          (after == char'/' && codeInAt(text, text.next(nameEnd), end) == char'>')
         )
       ) {
         return 6;
       }
       if (allowType7) {
-        let tagEnd = if (closing) { closingTagEnd(source, at, end) } else { openTagEnd(source, at, end) };
-        if (tagEnd > at && skipBlanks(source, tagEnd, end) == end) {
-          if (closing || !isType1Name(asciiLowercase(source.slice(at + 1, tagNameEnd(source, at + 1, end))))) {
+
+The tag scanners read decoded text (see `parse.temper.md`), so the
+rest of the line is decoded for them; few lines get this far.
+
+        let line = new SourceText(text.slice(at, end));
+        let length = line.length;
+        let tagEnd = if (closing) { closingTagEnd(line, 0, length) } else { openTagEnd(line, 0, length) };
+        if (tagEnd > 0 && skipBlanks(line, tagEnd, length) == length) {
+          if (closing || !isType1Name(asciiLowercase(line.slice(1, tagNameEnd(line, 1, length))))) {
             return 7;
           }
         }
       }
       0
     }
+
+Whether `target`, which is ASCII, and lowercase if `ignoreCase`, is at
+`at`, before `end`, ignoring ASCII case if `ignoreCase`.
+
+    let matchesAt(
+      text: String, at: StringIndex, end: StringIndex, target: String, ignoreCase: Boolean,
+    ): Boolean {
+      var i = at;
+      var j = String.begin;
+      while (target.hasIndex(j)) {
+        if (i >= end) { return false; }
+        var c = text[i];
+        if (ignoreCase && c >= char'A' && c <= char'Z') { c += 32; }
+        if (c != target[j]) { return false; }
+        i = text.next(i);
+        j = target.next(j);
+      }
+      true
+    }
+
+Whether `text` is at `at` in decoded text, before `end`, for the
+inline parser.
 
     let startsWithText(source: SourceText, at: Int, end: Int, text: String): Boolean {
       let length = text.countBetween(String.begin, text.end);
@@ -1460,28 +1546,27 @@ interrupt a paragraph, so `allowType7` is false there.
 Whether a line of an HTML block of `type` ends it: for kinds 1 to 5,
 whether it holds the end text.
 
-    let htmlBlockEnds(source: SourceText, type: Int, at: Int, end: Int): Boolean {
+    let htmlBlockEnds(text: String, type: Int, at: StringIndex, end: StringIndex): Boolean {
       if (type == 1) {
-        return containsText(source, at, end, "</pre>") || containsText(source, at, end, "</script>") ||
-          containsText(source, at, end, "</style>") || containsText(source, at, end, "</textarea>");
+        return containsText(text, at, end, "</pre>") || containsText(text, at, end, "</script>") ||
+          containsText(text, at, end, "</style>") || containsText(text, at, end, "</textarea>");
       }
-      if (type == 2) { return containsText(source, at, end, "-->"); }
-      if (type == 3) { return containsText(source, at, end, "?>"); }
-      if (type == 4) { return containsText(source, at, end, ">"); }
-      if (type == 5) { return containsText(source, at, end, "]]>"); }
+      if (type == 2) { return containsText(text, at, end, "-->"); }
+      if (type == 3) { return containsText(text, at, end, "?>"); }
+      if (type == 4) { return containsText(text, at, end, ">"); }
+      if (type == 5) { return containsText(text, at, end, "]]>"); }
       false
     }
 
-Whether `text`, in ASCII lowercase, is in the line from `at` to `end`,
-ignoring ASCII case.
+Whether `target`, in ASCII lowercase, is in the line from `at` to
+`end`, ignoring ASCII case.
 
-    let containsText(source: SourceText, at: Int, end: Int, text: String): Boolean {
-      let length = text.countBetween(String.begin, text.end);
-      let first = text[String.begin];
-      for (var i = at; i + length <= end; i += 1) {
-        let c = source.codeAt(i);
+    let containsText(text: String, at: StringIndex, end: StringIndex, target: String): Boolean {
+      let first = target[String.begin];
+      for (var i = at; i < end; i = text.next(i)) {
+        let c = text[i];
         if (c == first || c + 32 == first) {
-          if (asciiLowercase(source.slice(i, i + length)) == text) { return true; }
+          if (matchesAt(text, i, end, target, true)) { return true; }
         }
       }
       false
