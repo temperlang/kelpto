@@ -5,7 +5,7 @@ Parses Markdown into a green tree that keeps every code point, so
 parser doesn't understand stays as text.
 
     let {
-      GreenElement, GreenNode, GreenNodeBuilder, GreenToken, Kind, RedNode, SourceText, redRoot,
+      GreenElement, GreenNode, GreenNodeBuilder, GreenToken, Kind, RedNode, redRoot,
     } = import("../kelpto-core");
 
 The character classes this file uses (`isAsciiAlpha` and the like) are
@@ -426,10 +426,11 @@ so the inline parser knows which `[text]` are links.
         let leaf = lines[n].leaf;
         if (leaf != null) {
           if (leaf.blockType == typeDefinition && leaf.firstLine == n) {
-            let text = paragraphContent(source, lines, n, leaf.lastLine + 1).text;
-            let scan = scanDefinition(text, 0);
+            let content = paragraphContent(source, lines, n, leaf.lastLine + 1);
+            let text = content.text;
+            let scan = scanDefinition(text, content.start, content.end);
             if (scan != null) {
-              labels[normalizeLabel(text.slice(1, scan.labelEnd - 1))] = true;
+              labels[normalizeLabel(text.slice(text.next(content.start), text.prev(scan.labelEnd)))] = true;
             }
           }
         }
@@ -514,7 +515,7 @@ prefix tokens on lines after its first.
 
       public inlinesOnly(inCell: Boolean): GreenNode {
         let content = rangeContent(source, 0, String.begin, source.end);
-        parseInlines(content, 0, content.text.length, inCell);
+        parseInlines(content, content.start, content.end, inCell);
         builder.finish()
       }
 
@@ -565,15 +566,15 @@ Tokens of `kind` for the range from `start` to `end` of `content`,
 with each line break in it written as the line ending, the next line's
 prefix tokens, and its leading whitespace.
 
-      private emit(content: Content, kind: Kind, start: Int, end: Int): Void {
+      private emit(content: Content, kind: Kind, start: StringIndex, end: StringIndex): Void {
         let text = content.text;
+        let joins = content.joins;
         var at = start;
+        var i = content.lineOf(at);
         while (at < end) {
-          let i = content.lineOf(at);
-          let lineStart = content.starts[i];
-          let lineEnd = lineStart + content.lengths[i];
+          let lineEnd = if (i < joins.length) { joins[i] } else { content.end };
           if (at < lineEnd) {
-            let stop = minInt(end, lineEnd);
+            let stop = minIndex(end, lineEnd);
             builder.token(kind, text.slice(at, stop));
             at = stop;
           } else {
@@ -582,7 +583,8 @@ prefix tokens, and its leading whitespace.
             prefixOf(n + 1);
             let next = lines[n + 1];
             sourceToken(whitespaceKind, next.leafStart, content.sourceStarts[i + 1]);
-            at += 1;
+            at = text.next(at);
+            i += 1;
           }
         }
       }
@@ -640,10 +642,9 @@ last line ending.
       private writeParagraph(first: Int, end: Int): Void {
         let content = paragraphContent(source, lines, first, end);
         sourceToken(whitespaceKind, lines[first].leafStart, content.sourceStarts[0]);
-        let text = content.text;
-        let contentEnd = trimBlanksBack(text, 0, text.length);
-        parseInlines(content, 0, contentEnd, false);
-        emit(content, whitespaceKind, contentEnd, text.length);
+        let contentEnd = trimBlanksBackAt(content.text, content.start, content.end);
+        parseInlines(content, content.start, contentEnd, false);
+        emit(content, whitespaceKind, contentEnd, content.end);
         lineEnding(lines[end - 1]);
       }
 
@@ -672,8 +673,7 @@ optional closing sequence of `#`, and whitespace between.
         sourceToken(indentKind, line.leafStart, indentEnd);
         sourceToken(atxMarkerKind, indentEnd, markerEnd);
         sourceToken(whitespaceKind, markerEnd, contentStart);
-        let content = rangeContent(source, n, contentStart, contentEnd);
-        parseInlines(content, 0, content.text.length, false);
+        parseInlines(rangeContent(source, n, contentStart, contentEnd), contentStart, contentEnd, false);
         sourceToken(whitespaceKind, contentEnd, closeStart);
         sourceToken(closingSequenceKind, closeStart, trailStart);
         sourceToken(whitespaceKind, trailStart, end);
@@ -865,8 +865,7 @@ spaces and tabs.
         let contentStart = skipBlanksAt(source, from, end);
         let contentEnd = trimBlanksBackAt(source, contentStart, end);
         sourceToken(whitespaceKind, start, contentStart);
-        let content = rangeContent(source, n, contentStart, contentEnd);
-        parseInlines(content, 0, content.text.length, true);
+        parseInlines(rangeContent(source, n, contentStart, contentEnd), contentStart, contentEnd, true);
         sourceToken(whitespaceKind, contentEnd, end);
         builder.finishNode();
       }
@@ -877,28 +876,31 @@ lines or not.
       private writeDefinition(leaf: BlockData): Void {
         let content = paragraphContent(source, lines, leaf.firstLine, leaf.lastLine + 1);
         let text = content.text;
+        let start = content.start;
+        let end = content.end;
         sourceToken(whitespaceKind, lines[leaf.firstLine].leafStart, content.sourceStarts[0]);
-        let scan = scanDefinition(text, 0);
+        let scan = scanDefinition(text, start, end);
         if (scan == null) {
 
 Not expected, since the first pass found it, but kept as text if so.
 
-          emit(content, plainKind, 0, text.length);
+          emit(content, plainKind, start, end);
         } else {
+          let colonEnd = text.next(scan.labelEnd);
           builder.startNode(linkLabelKind);
-          emit(content, labelTextKind, 0, scan.labelEnd);
+          emit(content, labelTextKind, start, scan.labelEnd);
           builder.finishNode();
-          emit(content, colonKind, scan.labelEnd, scan.labelEnd + 1);
-          emit(content, whitespaceKind, scan.labelEnd + 1, scan.destinationStart);
+          emit(content, colonKind, scan.labelEnd, colonEnd);
+          emit(content, whitespaceKind, colonEnd, scan.destinationStart);
           emit(content, linkDestinationKind, scan.destinationStart, scan.destinationEnd);
-          if (scan.titleStart >= 0) {
+          if (scan.hasTitle) {
             emit(content, whitespaceKind, scan.destinationEnd, scan.titleStart);
             builder.startNode(linkTitleKind);
             emit(content, titleTextKind, scan.titleStart, scan.titleEnd);
             builder.finishNode();
-            emit(content, whitespaceKind, scan.titleEnd, text.length);
+            emit(content, whitespaceKind, scan.titleEnd, end);
           } else {
-            emit(content, whitespaceKind, scan.destinationEnd, text.length);
+            emit(content, whitespaceKind, scan.destinationEnd, end);
           }
         }
         lineEnding(lines[leaf.lastLine]);
@@ -928,7 +930,7 @@ node: parsed by `InlineParser` (see `inlines.temper.md`), then written
 here, so each range becomes tokens with the line breaks between lines
 written as `emit` writes them.
 
-      private parseInlines(content: Content, start: Int, end: Int, inCell: Boolean): Void {
+      private parseInlines(content: Content, start: StringIndex, end: StringIndex, inCell: Boolean): Void {
         let parser = new InlineParser(
           content.text, start, end, labels, extensions.strikethrough, extensions.autolinks,
           extensions.footnotes, inCell, extensions.gfm,
@@ -950,7 +952,7 @@ The children of `parent`, an item of `parser`. Text items group into
           let kind = parser.kinds[item];
           let start = parser.starts[item];
           var end = parser.ends[item];
-          if (start < 0) {
+          if (parser.nodes[item]) {
             closeText();
             builder.startNode(kind);
             writeItems(content, parser, item);
@@ -986,14 +988,18 @@ before `|` a `PipeEscape`, which the label leaves out, as GFM drops it
 before reading the cell's inlines. Done here, once per label written,
 rather than as references are found, which can nest.
 
-      private cellLabel(content: Content, start: Int, end: Int): Void {
+      private cellLabel(content: Content, start: StringIndex, end: StringIndex): Void {
+        let text = content.text;
         var at = start;
-        for (var k = start; k + 1 < end; k += 1) {
-          if (content.text.codeAt(k) == char'\\' && content.text.codeAt(k + 1) == char'|') {
+        var k = start;
+        while (k < end) {
+          let next = text.next(k);
+          if (next < end && text[k] == char'\\' && text[next] == char'|') {
             emit(content, labelTextKind, at, k);
-            emit(content, pipeEscapeKind, k, k + 1);
-            at = k + 1;
+            emit(content, pipeEscapeKind, k, next);
+            at = next;
           }
+          k = next;
         }
         emit(content, labelTextKind, at, end);
       }
@@ -1001,17 +1007,32 @@ rather than as references are found, which can nest.
 Raw HTML goes to the handler if it's one piece in the source, and
 stays opaque text between line breaks' prefixes if not.
 
-      private rawHtml(content: Content, start: Int, end: Int): Void {
+      private rawHtml(content: Content, start: StringIndex, end: StringIndex): Void {
         builder.startNode(rawHtmlKind);
+        let text = content.text;
         let first = content.lineOf(start);
-        let last = content.lineOf(end - 1);
+        let last = content.lineOf(text.prev(end));
         var whole = true;
         for (var i = first; i < last; i += 1) {
           let next = lines[content.firstLine + i + 1];
           if (!next.prefix.isEmpty || content.sourceStarts[i + 1] != next.start) { whole = false; }
         }
         if (whole) {
-          rawHtmlChildren(source.slice(content.text.stringIndex(start), content.text.stringIndex(end)));
+
+As written: each line of `text` with its line ending from the source,
+which may be `\r\n` or `\r` where `text` has `\n`.
+
+          let html = new StringBuilder();
+          var at = start;
+          for (var i = first; i < last; i += 1) {
+            let join = content.joins[i];
+            let line = lines[content.firstLine + i];
+            html.append(text.slice(at, join));
+            html.append(source.slice(line.contentEnd, line.breakEnd));
+            at = text.next(join);
+          }
+          html.append(text.slice(at, end));
+          rawHtmlChildren(html.toString());
         } else {
           emit(content, htmlTextKind, start, end);
         }
@@ -1040,8 +1061,9 @@ stays opaque text between line breaks' prefixes if not.
 
 ## Scanning helpers
 
-Each takes positions in code points, and gives a position, or -1 for
-no match.
+Each reads a string by `StringIndex`, up to an `end`, and those that
+find something give where it ends, or where they started if nothing is
+there.
 
     let isSpaceOrTab(c: Int): Boolean { c == char' ' || c == char'\t' }
 
@@ -1061,29 +1083,7 @@ After the line ending at `at`: `\n`, `\r\n`, or `\r`.
       }
     }
 
-Past spaces and tabs.
-
-    let skipBlanks(source: SourceText, from: Int, end: Int): Int {
-      var i = from;
-      while (i < end && isSpaceOrTab(source.codeAt(i))) {
-        i += 1;
-      }
-      i
-    }
-
-Back over spaces and tabs before `end`, but not before `start`.
-
-    let trimBlanksBack(source: SourceText, start: Int, end: Int): Int {
-      var i = end;
-      while (i > start && isSpaceOrTab(source.codeAt(i - 1))) {
-        i -= 1;
-      }
-      i
-    }
-
-The same on a string, by `StringIndex`, for the block parser and the
-tree writer, which read the source string directly. (The inline
-parser reads a paragraph's decoded text by `Int` for now.)
+Past spaces and tabs in `text`, from `from`, before `end`.
 
     let skipBlanksAt(text: String, from: StringIndex, end: StringIndex): StringIndex {
       var i = from;
@@ -1092,6 +1092,8 @@ parser reads a paragraph's decoded text by `Int` for now.)
       }
       i
     }
+
+Back over spaces and tabs before `end`, but not before `start`.
 
     let trimBlanksBackAt(text: String, start: StringIndex, end: StringIndex): StringIndex {
       var i = end;
@@ -1103,29 +1105,41 @@ parser reads a paragraph's decoded text by `Int` for now.)
       i
     }
 
+Whether the two code points before `end` are spaces, after `start`.
+
+    let endsWithTwoSpaces(text: String, start: StringIndex, end: StringIndex): Boolean {
+      if (end <= start) { return false; }
+      let last = text.prev(end);
+      last > start && text[last] == char' ' && text[text.prev(last)] == char' '
+    }
+
 A code point before `end`, or -1.
 
     let codeInAt(text: String, at: StringIndex, end: StringIndex): Int {
       if (at < end) { text[at] } else { -1 }
     }
 
-Where a run of exactly `count` backticks starts, from `from`, or -1.
+    let minIndex(a: StringIndex, b: StringIndex): StringIndex { if (a < b) { a } else { b } }
 
-    let closingBackticks(source: SourceText, from: Int, end: Int, count: Int): Int {
+Where a run of exactly `count` backticks starts, from `from`, or `end`.
+
+    let closingBackticks(text: String, from: StringIndex, end: StringIndex, count: Int): StringIndex {
       var i = from;
       while (i < end) {
-        if (source.codeAt(i) == char'`') {
+        if (text[i] == char'`') {
           var j = i;
-          while (j < end && source.codeAt(j) == char'`') {
-            j += 1;
+          var length = 0;
+          while (j < end && text[j] == char'`') {
+            j = text.next(j);
+            length += 1;
           }
-          if (j - i == count) { return i; }
+          if (length == count) { return i; }
           i = j;
         } else {
-          i += 1;
+          i = text.next(i);
         }
       }
-      -1
+      end
     }
 
 ### Raw HTML, by CommonMark's rules
@@ -1139,97 +1153,97 @@ CommonMark allows, without checking.
 
 A closing tag: `</`, a name, optional whitespace, and `>`.
 
-    let closingTagEnd(source: SourceText, at: Int, end: Int): Int {
-      if (codeIn(source, at + 1, end) != char'/') { return at; }
-      let nameEnd = tagNameEnd(source, at + 2, end);
-      if (nameEnd < 0) { return at; }
-      let close = skipWhitespace(source, nameEnd, end);
-      if (codeIn(source, close, end) == char'>') { close + 1 } else { at }
+    let closingTagEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      let slash = text.next(at);
+      if (codeInAt(text, slash, end) != char'/') { return at; }
+      let nameStart = text.next(slash);
+      let nameEnd = tagNameEnd(text, nameStart, end);
+      if (nameEnd == nameStart) { return at; }
+      let close = skipWhitespace(text, nameEnd, end);
+      if (codeInAt(text, close, end) == char'>') { text.next(close) } else { at }
     }
 
-A code point before `end`, or -1.
-
-    let codeIn(source: SourceText, at: Int, end: Int): Int {
-      if (at < end) { source.codeAt(at) } else { -1 }
-    }
-
-    let skipWhitespace(source: SourceText, from: Int, end: Int): Int {
+    let skipWhitespace(text: String, from: StringIndex, end: StringIndex): StringIndex {
       var i = from;
-      while (i < end && isAsciiWhitespace(source.codeAt(i))) {
-        i += 1;
+      while (i < end && isAsciiWhitespace(text[i])) {
+        i = text.next(i);
       }
       i
     }
 
-A tag name: an ASCII letter, then letters, digits, and `-`.
+A tag name: an ASCII letter, then letters, digits, and `-`. Gives its
+end, or `from` if none.
 
-    let tagNameEnd(source: SourceText, from: Int, end: Int): Int {
-      if (!isAsciiAlpha(codeIn(source, from, end))) { return -1; }
-      var i = from + 1;
-      while (i < end && (isAsciiAlphanumeric(source.codeAt(i)) || source.codeAt(i) == char'-')) {
-        i += 1;
+    let tagNameEnd(text: String, from: StringIndex, end: StringIndex): StringIndex {
+      if (!isAsciiAlpha(codeInAt(text, from, end))) { return from; }
+      var i = text.next(from);
+      while (i < end && (isAsciiAlphanumeric(text[i]) || text[i] == char'-')) {
+        i = text.next(i);
       }
       i
     }
-
-    let minInt(a: Int, b: Int): Int { if (a < b) { a } else { b } }
 
 An open tag: `<`, a name, attributes, optional whitespace, an optional
 `/`, and `>`.
 
-    let openTagEnd(source: SourceText, at: Int, end: Int): Int {
-      var i = tagNameEnd(source, at + 1, end);
-      if (i < 0) { return at; }
+    let openTagEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      let nameStart = text.next(at);
+      var i = tagNameEnd(text, nameStart, end);
+      if (i == nameStart) { return at; }
       while (true) {
-        let attributeStart = skipWhitespace(source, i, end);
+        let attributeStart = skipWhitespace(text, i, end);
         if (attributeStart == i) { break; }
-        let attributeEnd = attributeEnd(source, attributeStart, end);
-        if (attributeEnd < 0) { return at; }
+        let attributeEnd = attributeEnd(text, at, attributeStart, end);
+        if (attributeEnd < attributeStart) { return at; }
         if (attributeEnd == attributeStart) { break; }
         i = attributeEnd;
       }
-      i = skipWhitespace(source, i, end);
-      if (codeIn(source, i, end) == char'/') { i += 1; }
-      if (codeIn(source, i, end) == char'>') { i + 1 } else { at }
+      i = skipWhitespace(text, i, end);
+      if (codeInAt(text, i, end) == char'/') { i = text.next(i); }
+      if (codeInAt(text, i, end) == char'>') { text.next(i) } else { at }
     }
 
 An attribute: a name, then optionally `=` and a value, unquoted,
 single-quoted, or double-quoted. Gives `from` if no name starts there,
-or -1 if a value is missing.
+or `tagStart`, before it, if a value is missing.
 
-    let attributeEnd(source: SourceText, from: Int, end: Int): Int {
-      let first = codeIn(source, from, end);
+    let attributeEnd(
+      text: String, tagStart: StringIndex, from: StringIndex, end: StringIndex,
+    ): StringIndex {
+      let first = codeInAt(text, from, end);
       if (!(isAsciiAlpha(first) || first == char'_' || first == char':')) { return from; }
-      var i = from + 1;
+      var i = text.next(from);
       while (i < end) {
-        let c = source.codeAt(i);
+        let c = text[i];
         if (!(isAsciiAlphanumeric(c) || c == char'_' || c == char'.' || c == char':' || c == char'-')) {
           break;
         }
-        i += 1;
+        i = text.next(i);
       }
-      let equals = skipWhitespace(source, i, end);
-      if (codeIn(source, equals, end) != char'=') { return i; }
-      let valueStart = skipWhitespace(source, equals + 1, end);
-      let quote = codeIn(source, valueStart, end);
+      let equals = skipWhitespace(text, i, end);
+      if (codeInAt(text, equals, end) != char'=') { return i; }
+      let valueStart = skipWhitespace(text, text.next(equals), end);
+      let quote = codeInAt(text, valueStart, end);
       if (quote == char'"' || quote == char'\'') {
-        for (var j = valueStart + 1; j < end; j += 1) {
-          if (source.codeAt(j) == quote) { return j + 1; }
+        var j = text.next(valueStart);
+        while (j < end) {
+          if (text[j] == quote) { return text.next(j); }
+          j = text.next(j);
         }
-        return -1;
+        return tagStart;
       }
       var j = valueStart;
       while (j < end) {
-        let c = source.codeAt(j);
+        let c = text[j];
         if (
           isAsciiWhitespace(c) || c == char'"' || c == char'\'' || c == char'=' ||
           c == char'<' || c == char'>' || c == char'`'
         ) {
           break;
         }
-        j += 1;
+        j = text.next(j);
       }
-      if (j == valueStart) { -1 } else { j }
+      if (j == valueStart) { tagStart } else { j }
     }
 
 ## Tests

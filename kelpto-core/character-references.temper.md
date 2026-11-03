@@ -86,34 +86,40 @@ kelpto-html will do that itself.)
 
 ## Finding and decoding
 
-The end of the character reference starting with the `&` at `at`, by
-CommonMark's rules, or -1: `&`, then a name in HTML's table, `#` and 1
-to 7 decimal digits, or `#x` or `#X` and 1 to 6 hex digits, then `;`.
+The end of the character reference starting with the `&` at `at` in
+`text`, by CommonMark's rules, or `at` if none starts there: `&`, then
+a name in HTML's table, `#` and 1 to 7 decimal digits, or `#x` or `#X`
+and 1 to 6 hex digits, then `;`. All of it is ASCII.
 
-    export let characterReferenceEnd(source: SourceText, at: Int, end: Int): Int {
-      if (at >= end || source.codeAt(at) != char'&') { return -1; }
-      var i = at + 1;
-      if (i < end && source.codeAt(i) == char'#') {
-        i += 1;
-        let hex = i < end && (source.codeAt(i) == char'x' || source.codeAt(i) == char'X');
-        if (hex) { i += 1; }
-        let digitsStart = i;
+    export let characterReferenceEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      if (at >= end || text[at] != char'&') { return at; }
+      var i = text.next(at);
+      if (i < end && text[i] == char'#') {
+        i = text.next(i);
+        let hex = i < end && (text[i] == char'x' || text[i] == char'X');
+        if (hex) { i = text.next(i); }
+        var digits = 0;
         while (
-          i < end && i - digitsStart < 8 &&
-          (if (hex) { isAsciiHexDigit(source.codeAt(i)) } else { isAsciiDigit(source.codeAt(i)) })
+          i < end && digits < 8 &&
+          (if (hex) { isAsciiHexDigit(text[i]) } else { isAsciiDigit(text[i]) })
         ) {
-          i += 1;
+          i = text.next(i);
+          digits += 1;
         }
-        let digits = i - digitsStart;
         let most = if (hex) { 6 } else { 7 };
-        if (digits < 1 || digits > most || i >= end || source.codeAt(i) != char';') { return -1; }
-        return i + 1;
+        if (digits < 1 || digits > most || i >= end || text[i] != char';') { return at; }
+        return text.next(i);
       }
       let nameStart = i;
-      while (i < end && i - nameStart <= 32 && isAsciiAlphanumeric(source.codeAt(i))) { i += 1; }
-      if (i == nameStart || i >= end || source.codeAt(i) != char';') { return -1; }
-      if (!isAsciiAlpha(source.codeAt(nameStart))) { return -1; }
-      if (namedCharacterReference(source.slice(nameStart, i + 1)) == null) { -1 } else { i + 1 }
+      var length = 0;
+      while (i < end && length <= 32 && isAsciiAlphanumeric(text[i])) {
+        i = text.next(i);
+        length += 1;
+      }
+      if (length == 0 || i >= end || text[i] != char';') { return at; }
+      if (!isAsciiAlpha(text[nameStart])) { return at; }
+      let close = text.next(i);
+      if (namedCharacterReference(text.slice(nameStart, close)) == null) { at } else { close }
     }
 
     let isAsciiHexDigit(c: Int): Boolean {
@@ -124,16 +130,20 @@ What a reference that `characterReferenceEnd` found stands for, given
 it as written, from `&` to `;`. Anything else is given back as is.
 
     export let decodeCharacterReference(written: String): String {
-      let source = new SourceText(written);
-      let n = source.length;
-      if (n < 3 || source.codeAt(0) != char'&' || source.codeAt(n - 1) != char';') { return written; }
-      if (source.codeAt(1) != char'#') {
-        return namedCharacterReference(source.slice(1, n)) ?? written;
+      let end = written.end;
+      if (!written.hasAtLeast(String.begin, end, 3)) { return written; }
+      let last = written.prev(end);
+      if (written[String.begin] != char'&' || written[last] != char';') { return written; }
+      let afterAmpersand = written.next(String.begin);
+      if (written[afterAmpersand] != char'#') {
+        return namedCharacterReference(written.slice(afterAmpersand, end)) ?? written;
       }
-      let hex = source.codeAt(2) == char'x' || source.codeAt(2) == char'X';
+      var i = written.next(afterAmpersand);
+      let hex = written[i] == char'x' || written[i] == char'X';
+      if (hex) { i = written.next(i); }
       var value = 0;
-      for (var i = if (hex) { 3 } else { 2 }; i < n - 1; i += 1) {
-        let c = source.codeAt(i);
+      while (i < last) {
+        let c = written[i];
         let digit = if (isAsciiDigit(c)) {
           c - char'0'
         } else if (c >= char'a' && c <= char'f') {
@@ -144,6 +154,7 @@ it as written, from `&` to `;`. Anything else is given back as is.
           return written;
         };
         value = value * (if (hex) { 16 } else { 10 }) + digit;
+        i = written.next(i);
       }
       codePointOrReplacement(value)
     }
@@ -175,14 +186,14 @@ it as written, from `&` to `;`. Anything else is given back as is.
       ];
       for (var i = 0; i < cases.length; i += 1) {
         let written = cases[i][0];
-        let source = new SourceText("${written}x");
-        let end = characterReferenceEnd(source, 0, source.length);
-        assert(end == source.length - 1) { "${written}: ${end.toString()}" };
+        let text = "${written}x";
+        let end = characterReferenceEnd(text, String.begin, text.end);
+        assert(text.slice(end, text.end) == "x") { written };
         assert(decodeCharacterReference(written) == cases[i][1]) { decodeCharacterReference(written) };
       }
       let bad = ["&nbsp", "&x;", "&#;", "&#x;", "&#87654321;", "&#abcdef0;", "&ThisIsNotDefined;", "&hi?;", "&1x;", "&"];
       for (var i = 0; i < bad.length; i += 1) {
-        let source = new SourceText(bad[i]);
-        assert(characterReferenceEnd(source, 0, source.length) == -1) { bad[i] };
+        let text = bad[i];
+        assert(characterReferenceEnd(text, String.begin, text.end) == String.begin) { bad[i] };
       }
     }

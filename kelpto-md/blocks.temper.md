@@ -12,8 +12,7 @@ the rest. The tree comes from that in one pass (see `parse.temper.md`),
 so every code point lands in exactly one token.
 
     let {
-      Kind, SourceText, asciiLowercase, sourceLines, isAsciiAlpha, isAsciiAlphanumeric, isAsciiDigit,
-      isAsciiWhitespace,
+      Kind, asciiLowercase, isAsciiAlpha, isAsciiAlphanumeric, isAsciiDigit, isAsciiWhitespace,
     } = import("../kelpto-core");
 
 ## Tabs
@@ -852,20 +851,20 @@ blocks of their own, before it. Gives whether any lines are left.
 
       private splitDefinitions(paragraph: BlockData): Boolean {
         // Each definition starts with `[`, so most paragraphs need no
-        // decoding here.
+        // content here.
         let firstText = lines[paragraph.firstLine];
         let textStart = skipBlanksAt(text, firstText.leafStart, firstText.contentEnd);
         if (codeInAt(text, textStart, firstText.contentEnd) != char'[') { return true; }
         let content = paragraphContent(text, lines, paragraph.firstLine, paragraph.endLine);
         let joined = content.text;
         let parent = paragraph.parent as BlockData orelse panic();
-        var at = 0;
+        var at = content.start;
         var first = paragraph.firstLine;
         var insertAt = indexOfChild(parent, paragraph);
-        while (at < joined.length && joined.codeAt(at) == char'[') {
-          let end = definitionEnd(joined, at);
-          if (end < 0) { break; }
-          let lastLine = content.lineOf(end - 1);
+        while (at < content.end && joined[at] == char'[') {
+          let end = definitionEnd(content, at);
+          if (end == at) { break; }
+          let lastLine = content.lineOf(joined.prev(end));
           let definition = new BlockData(nextId, typeDefinition, parent, first);
           nextId += 1;
           definition.open = false;
@@ -956,11 +955,11 @@ The last child of `block`, if it's still open.
       null
     }
 
-Where the definition at `at` ends, or -1.
+Where the definition at `at` ends, or `at` if none.
 
-    let definitionEnd(text: SourceText, at: Int): Int {
-      let scan = scanDefinition(text, at);
-      if (scan != null) { scan.end } else { -1 }
+    let definitionEnd(content: Content, at: StringIndex): StringIndex {
+      let scan = scanDefinition(content.text, at, content.end);
+      if (scan != null) { scan.end } else { at }
     }
 
     let indexOfChild(parent: BlockData, child: BlockData): Int {
@@ -996,126 +995,146 @@ Where the definition at `at` ends, or -1.
 ## Paragraph content
 
 A paragraph's text as the inline parser sees it: each line without
-its prefixes and leading whitespace, joined by `\n`. Each code point
-maps back to one in the source, so tokens can be made from ranges of
-it, with the line breaks between them.
+its prefixes and leading whitespace, joined by `\n`, from `start` to
+`end` of `text`. If each line ends in `\n` and the next starts right
+after, as it does outside containers, that's the source string itself,
+with nothing copied; else the lines are joined into a new string.
+Either way the parser reads it by `StringIndex`, and tokens are made
+from ranges of it, with the line breaks between them.
 
     class Content {
-      public text: SourceText;
+      public text: String;
+      public start: StringIndex;
+      public end: StringIndex;
 
-For each line: where it starts in `text`, its length, and where it
-starts in the source string.
+Where each `\n` joining lines is in `text`, and where each line starts
+in the source string.
 
-      public starts: List<Int>;
-      public lengths: List<Int>;
+      public joins: List<StringIndex>;
       public sourceStarts: List<StringIndex>;
 
 The line number of the first line.
 
       public firstLine: Int;
 
-      public constructor(text: SourceText, sourceStarts: List<StringIndex>, firstLine: Int) {
+      public constructor(
+        text: String, start: StringIndex, end: StringIndex, joins: List<StringIndex>,
+        sourceStarts: List<StringIndex>, firstLine: Int,
+      ) {
         this.text = text;
-        let joins = text.joinedAt;
-        let starts = new ListBuilder<Int>();
-        let lengths = new ListBuilder<Int>();
-        var start = 0;
-        for (var i = 0; i <= joins.length; i += 1) {
-          let end = if (i < joins.length) { joins[i] } else { text.length };
-          starts.add(start);
-          lengths.add(end - start);
-          start = end + 1;
-        }
-        this.starts = starts.toList();
-        this.lengths = lengths.toList();
+        this.start = start;
+        this.end = end;
+        this.joins = joins;
         this.sourceStarts = sourceStarts;
         this.firstLine = firstLine;
       }
 
 The index of the line holding `at`, or ending at it.
 
-      public lineOf(at: Int): Int {
+      public lineOf(at: StringIndex): Int {
+        let joins = this.joins;
         var low = 0;
-        var high = starts.length - 1;
+        var high = joins.length;
         while (low < high) {
-          let middle = (low + high + 1) / 2;
-          if (starts[middle] <= at) { low = middle; } else { high = middle - 1; }
+          let middle = (low + high) / 2;
+          if (joins[middle] < at) { low = middle + 1; } else { high = middle; }
         }
         low
       }
     }
 
-The content of lines `first` up to `end` of a paragraph-like leaf,
-decoded from the source string.
+The content of lines `first` up to `end` of a paragraph-like leaf.
 
     let paragraphContent(text: String, lines: List<LineData>, first: Int, end: Int): Content {
-      let ranges = new ListBuilder<StringIndex>();
       let sourceStarts = new ListBuilder<StringIndex>();
+      let ends = new ListBuilder<StringIndex>();
+      var inPlace = true;
       for (var n = first; n < end; n += 1) {
         let line = lines[n];
         let textStart = skipBlanksAt(text, line.leafStart, line.contentEnd);
+        if (n > first) {
+          let before = lines[n - 1].contentEnd;
+          if (text[before] != char'\n' || text.next(before) != textStart) { inPlace = false; }
+        }
         sourceStarts.add(textStart);
-        ranges.add(textStart);
-        ranges.add(line.contentEnd);
+        ends.add(line.contentEnd);
       }
-      new Content(sourceLines(text, ranges.toList()), sourceStarts.toList(), first)
+      let last = ends.length - 1;
+      if (inPlace) {
+        ends.removeLast();
+        return new Content(text, sourceStarts[0], lines[end - 1].contentEnd, ends.toList(), sourceStarts.toList(), first);
+      }
+      let out = new StringBuilder();
+      for (var i = 0; i <= last; i += 1) {
+        if (i > 0) { out.append("\n"); }
+        out.append(text.slice(sourceStarts[i], ends[i]));
+      }
+      let joined = out.toString();
+      let joins = new ListBuilder<StringIndex>();
+      var at = String.begin;
+      for (var i = 0; i < last; i += 1) {
+        let found = indexOrEnd(joined, "\n", at);
+        joins.add(found);
+        at = joined.next(found);
+      }
+      new Content(joined, String.begin, joined.end, joins.toList(), sourceStarts.toList(), first)
     }
 
 Content from one range of one line, as for an ATX heading.
 
     let rangeContent(text: String, line: Int, start: StringIndex, end: StringIndex): Content {
-      new Content(sourceLines(text, [start, end]), [start], line)
+      new Content(text, start, end, [], [start], line)
     }
 
 ## Link reference definitions
 
 Where the parts of a definition are, in a paragraph's content: its
 label from `[` to `]`, its destination, its title with its quotes or
-parentheses (or -1 if none), and its end, after the line ending.
+parentheses (empty, at the destination's end, if none), and its end,
+after the line ending.
 
     class DefinitionScan(
-      public labelEnd: Int,
-      public destinationStart: Int,
-      public destinationEnd: Int,
-      public titleStart: Int,
-      public titleEnd: Int,
-      public lineEnd: Int,
-      public end: Int,
-    ) {}
+      public labelEnd: StringIndex,
+      public destinationStart: StringIndex,
+      public destinationEnd: StringIndex,
+      public titleStart: StringIndex,
+      public titleEnd: StringIndex,
+      public end: StringIndex,
+    ) {
+      public get hasTitle(): Boolean { titleEnd > titleStart }
+    }
 
-The definition starting at `start` in `text`, or null, by the spec's
-rules: a label, `:`, a destination, and an optional title, each
-separated by spaces, tabs, and at most one line ending, then nothing
-else on the line. The title is left out if what follows it isn't the
-end of a line.
+The definition starting at `start` in `text`, before `end`, or null,
+by the spec's rules: a label, `:`, a destination, and an optional
+title, each separated by spaces, tabs, and at most one line ending,
+then nothing else on the line. The title is left out if what follows
+it isn't the end of a line.
 
-    let scanDefinition(text: SourceText, start: Int): DefinitionScan? {
-      let labelEnd = linkLabelEnd(text, start);
-      if (labelEnd < 0) { return null; }
-      if (text.codeAt(labelEnd) != char':') { return null; }
-      let destinationStart = skipSpaceAndNewline(text, labelEnd + 1);
-      let destinationEnd = linkDestinationEnd(text, destinationStart);
-      if (destinationEnd < 0) { return null; }
-      let beforeTitle = destinationEnd;
-      let titleStart = skipSpaceAndNewline(text, beforeTitle);
-      var titleEnd = -1;
-      if (titleStart > beforeTitle) {
-        titleEnd = linkTitleEnd(text, titleStart);
-      }
-      if (titleEnd >= 0) {
-        let lineEnd = skipBlanks(text, titleEnd, text.length);
-        if (lineEnd >= text.length || text.codeAt(lineEnd) == char'\n') {
-          return new DefinitionScan(
-            labelEnd, destinationStart, destinationEnd, titleStart, titleEnd, lineEnd,
-            minInt(lineEnd + 1, text.length),
-          );
+    let scanDefinition(text: String, start: StringIndex, end: StringIndex): DefinitionScan? {
+      let labelEnd = linkLabelEnd(text, start, end);
+      if (labelEnd == start) { return null; }
+      if (codeInAt(text, labelEnd, end) != char':') { return null; }
+      let destinationStart = skipSpaceAndNewline(text, text.next(labelEnd), end);
+      let destinationEnd = linkDestinationEnd(text, destinationStart, end);
+      if (destinationEnd == destinationStart) { return null; }
+      let titleStart = skipSpaceAndNewline(text, destinationEnd, end);
+      if (titleStart > destinationEnd) {
+        let titleEnd = linkTitleEnd(text, titleStart, end);
+        if (titleEnd > titleStart) {
+          let lineEnd = skipBlanksAt(text, titleEnd, end);
+          if (lineEnd >= end || text[lineEnd] == char'\n') {
+            return new DefinitionScan(
+              labelEnd, destinationStart, destinationEnd, titleStart, titleEnd,
+              minIndex(text.next(lineEnd), end),
+            );
+          }
         }
       }
-      let lineEnd = skipBlanks(text, beforeTitle, text.length);
-      if (lineEnd >= text.length || text.codeAt(lineEnd) == char'\n') {
+      let lineEnd = skipBlanksAt(text, destinationEnd, end);
+      if (lineEnd >= end || text[lineEnd] == char'\n') {
         return new DefinitionScan(
-          labelEnd, destinationStart, destinationEnd, -1, -1, lineEnd,
-          minInt(lineEnd + 1, text.length),
+          labelEnd, destinationStart, destinationEnd, destinationEnd, destinationEnd,
+          minIndex(text.next(lineEnd), end),
         );
       }
       null
@@ -1123,92 +1142,99 @@ end of a line.
 
 Past spaces and tabs, at most one line ending, and spaces and tabs.
 
-    let skipSpaceAndNewline(text: SourceText, from: Int): Int {
-      var i = skipBlanks(text, from, text.length);
-      if (text.codeAt(i) == char'\n') {
-        i = skipBlanks(text, i + 1, text.length);
+    let skipSpaceAndNewline(text: String, from: StringIndex, end: StringIndex): StringIndex {
+      var i = skipBlanksAt(text, from, end);
+      if (codeInAt(text, i, end) == char'\n') {
+        i = skipBlanksAt(text, text.next(i), end);
       }
       i
     }
 
 A link label: `[`, up to 999 code points with no unescaped brackets
 and something besides whitespace, then `]`. Gives the end, after `]`,
-or -1.
+or `start`.
 
-    let linkLabelEnd(text: SourceText, start: Int): Int {
-      if (text.codeAt(start) != char'[') { return -1; }
-      var i = start + 1;
+    let linkLabelEnd(text: String, start: StringIndex, end: StringIndex): StringIndex {
+      if (codeInAt(text, start, end) != char'[') { return start; }
+      var i = text.next(start);
+      var count = 1;
       var nonblank = false;
-      while (i < text.length) {
-        let c = text.codeAt(i);
-        if (c == char'[') { return -1; }
+      while (i < end) {
+        let c = text[i];
+        if (c == char'[') { return start; }
+        let next = text.next(i);
         if (c == char']') {
-          return if (nonblank) { i + 1 } else { -1 };
+          return if (nonblank) { next } else { start };
         }
         if (!isAsciiWhitespace(c)) { nonblank = true; }
-        if (c == char'\\' && isAsciiPunctuation(text.codeAt(i + 1))) {
-          i += 2;
+        if (c == char'\\' && isAsciiPunctuation(codeInAt(text, next, end))) {
+          i = text.next(next);
+          count += 2;
         } else {
-          i += 1;
+          i = next;
+          count += 1;
         }
-        if (i - start > 1000) { return -1; }
+        if (count > 1000) { return start; }
       }
-      -1
+      start
     }
 
 A link destination: `<`, then no line ending or unescaped `<` or `>`,
 then `>`; or a nonempty run without spaces or ASCII control characters
-and with balanced unescaped parentheses. Gives its end, or -1.
+and with balanced unescaped parentheses. Gives its end, or `start`.
 
-    let linkDestinationEnd(text: SourceText, start: Int): Int {
-      if (text.codeAt(start) == char'<') {
-        var i = start + 1;
-        while (i < text.length) {
-          let c = text.codeAt(i);
-          if (c == char'>') { return i + 1; }
-          if (c == char'\n' || c == char'<') { return -1; }
-          if (c == char'\\' && isAsciiPunctuation(text.codeAt(i + 1))) { i += 2; } else { i += 1; }
+    let linkDestinationEnd(text: String, start: StringIndex, end: StringIndex): StringIndex {
+      if (codeInAt(text, start, end) == char'<') {
+        var i = text.next(start);
+        while (i < end) {
+          let c = text[i];
+          let next = text.next(i);
+          if (c == char'>') { return next; }
+          if (c == char'\n' || c == char'<') { return start; }
+          if (c == char'\\' && isAsciiPunctuation(codeInAt(text, next, end))) { i = text.next(next); } else { i = next; }
         }
-        return -1;
+        return start;
       }
       var depth = 0;
       var i = start;
-      while (i < text.length) {
-        let c = text.codeAt(i);
-        if (c == char'\\' && isAsciiPunctuation(text.codeAt(i + 1))) {
-          i += 2;
+      while (i < end) {
+        let c = text[i];
+        let next = text.next(i);
+        if (c == char'\\' && isAsciiPunctuation(codeInAt(text, next, end))) {
+          i = text.next(next);
         } else if (c == char'(') {
           depth += 1;
-          if (depth > 32) { return -1; }
-          i += 1;
+          if (depth > 32) { return start; }
+          i = next;
         } else if (c == char')') {
           if (depth == 0) { break; }
           depth -= 1;
-          i += 1;
+          i = next;
         } else if (c <= 0x20 || c == 0x7F) {
           break;
         } else {
-          i += 1;
+          i = next;
         }
       }
-      if (i == start || depth != 0) { -1 } else { i }
+      if (depth != 0) { start } else { i }
     }
 
 A link title: `"…"`, `'…'`, or `(…)`, with backslash escapes. Gives
-its end, or -1.
+its end, or `start`.
 
-    let linkTitleEnd(text: SourceText, start: Int): Int {
-      let open = text.codeAt(start);
+    let linkTitleEnd(text: String, start: StringIndex, end: StringIndex): StringIndex {
+      let open = codeInAt(text, start, end);
       let close = if (open == char'(') { char')' } else { open };
-      if (open != char'"' && open != char'\'' && open != char'(') { return -1; }
-      var i = start + 1;
-      while (i < text.length) {
-        let c = text.codeAt(i);
-        if (c == close) { return i + 1; }
-        if (open == char'(' && c == char'(') { return -1; }
-        if (c == char'\\' && isAsciiPunctuation(text.codeAt(i + 1))) { i += 2; } else { i += 1; }
+      if (open != char'"' && open != char'\'' && open != char'(') { return start; }
+      var i = text.next(start);
+      while (i < end) {
+        let c = text[i];
+        let next = text.next(i);
+        if (c == close) { return next; }
+        if (open == char'(' && c == char'(') { return start; }
+        if (c == char'\\' && isAsciiPunctuation(codeInAt(text, next, end))) { i = text.next(next); } else { i = next; }
       }
-      -1
+      start
     }
 
 ## Block starts
@@ -1480,14 +1506,10 @@ interrupt a paragraph, so `allowType7` is false there.
       }
       if (allowType7) {
 
-The tag scanners read decoded text (see `parse.temper.md`), so the
-rest of the line is decoded for them; few lines get this far.
-
-        let line = new SourceText(text.slice(at, end));
-        let length = line.length;
-        let tagEnd = if (closing) { closingTagEnd(line, 0, length) } else { openTagEnd(line, 0, length) };
-        if (tagEnd > 0 && skipBlanks(line, tagEnd, length) == length) {
-          if (closing || !isType1Name(asciiLowercase(line.slice(1, tagNameEnd(line, 1, length))))) {
+        let tagEnd = if (closing) { closingTagEnd(text, at, end) } else { openTagEnd(text, at, end) };
+        if (tagEnd > at && skipBlanksAt(text, tagEnd, end) == end) {
+          let nameStart = text.next(at);
+          if (closing || !isType1Name(asciiLowercase(text.slice(nameStart, tagNameEnd(text, nameStart, end))))) {
             return 7;
           }
         }
@@ -1512,14 +1534,6 @@ Whether `target`, which is ASCII, and lowercase if `ignoreCase`, is at
         j = target.next(j);
       }
       true
-    }
-
-Whether `text` is at `at` in decoded text, before `end`, for the
-inline parser.
-
-    let startsWithText(source: SourceText, at: Int, end: Int, text: String): Boolean {
-      let length = text.countBetween(String.begin, text.end);
-      at + length <= end && source.slice(at, at + length) == text
     }
 
     let isType1Name(name: String): Boolean {

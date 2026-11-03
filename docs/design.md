@@ -23,7 +23,7 @@ it in use, and the top README shows them alone and together.
 
 - **kelpto-core:** red-green trees (`GreenNode`, `GreenToken`,
   `GreenNodeBuilder`, `RedNode`, and `RedToken`), `Span`, `Kind`, and
-  `SourceText`, with `replaceWith` copying only the path to the root.
+  `SourceText` (for views and kelpto-html; the parsers don't decode), with `replaceWith` copying only the path to the root.
   Also HTML's character references (named ones from html5lib-tests,
   each with a flag for HTML's forms without `;`, and numeric ones), and
   Unicode 18's punctuation, whitespace, and full case folding, as small
@@ -82,10 +82,12 @@ and rendering defaults.
   leaf takes the rest. The second writes the green tree from that, so
   every code point lands in one token.
 - **Positions are `StringIndex`es** into the source string: both
-  passes read it directly, with no decoding, and a line table comes
-  from `indexOf` on `\n` and `\r`. Only paragraph-like text is decoded
-  (`sourceLines`), line by line, for the inline parser, which still
-  reads by `Int` code point; it's next.
+  passes and the inline parser read it directly, with no decoding, and
+  a line table comes from `indexOf` on `\n` and `\r`. A paragraph's
+  inline content is the source string itself when its lines follow
+  each other there, each ending in `\n`; otherwise (container prefixes,
+  indentation, or `\r\n`) its lines are joined into a new string by
+  `\n`. Code points are counted only where the spec counts them.
 - **Prefixes where they fall:** a container's prefix on its first line
   is in its own node; on later lines it's a token in whatever node is
   open there, such as a paragraph spanning lines. Views skip them.
@@ -243,9 +245,8 @@ checking every entry as the Temper code reads it:
    nesting is linear, and the block and inline parsers' per-character
    loops work on locals, which Rust's translation locks for on every
    field access. The block parser and tree writer read the source
-   string by `StringIndex` (2026-11-03), so only paragraphs are
-   decoded. Next: the inline parser by `StringIndex` too (see
-   benchmarks.md), the Rust translation's locks
+   string by `StringIndex` (2026-11-03), and then the inline parser
+   too, so nothing is decoded. Next: the Rust translation's locks
    elsewhere (Rust is still several times slower than C++ from the
    same source), C#'s and Lua's garbage on long documents, Python's
    checked integer arithmetic, and GFM benchmarks.
@@ -358,14 +359,13 @@ and pulldown-cmark. Most of it is small objects: a token and its
 string per marker, space, and line ending. In order, measuring peak
 memory and object counts after each step:
 
-1. **Drop the decode.** Done for the block parser and tree writer
-   (2026-11-03): they read the string by `StringIndex`, so the whole
-   document is no longer decoded into two arrays, and only paragraphs
-   are. That about halved peak memory on spec-x10 (Python 216 to 105
-   MiB, JavaScript 346 to 183 MiB, one noisy run each;
-   [benchmarks.md](benchmarks.md)). The inline parser is next, which
-   would drop the paragraphs' decoding too. Steps 2 and 3 don't wait
-   for it.
+1. **Drop the decode.** Done (2026-11-03): the block parser and tree
+   writer read the string by `StringIndex`, so the whole document is no
+   longer decoded into two arrays, and then the inline parser did too,
+   so paragraphs aren't either. The first about halved peak memory on
+   spec-x10 (Python 216 to 105 MiB, JavaScript 346 to 183 MiB, one
+   noisy run each; [benchmarks.md](benchmarks.md)); the second's
+   numbers are there too.
 2. **Share identical tokens:** `GreenNodeBuilder` keeps one cache by
    kind and text, so each repeated short token (a space, a line ending,
    `*`, `#`, `>`, an indent) is one shared object, as rowan does. No API

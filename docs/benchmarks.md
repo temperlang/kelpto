@@ -113,6 +113,24 @@ so shares and counts rather than times):
 - **Peak memory** parsing spec-x10 (one run each, noisy): Python 216
   to 105 MiB, JavaScript 346 to 183 MiB.
 
+Then the inline parser (same day) read by `StringIndex` too, so
+nothing is decoded: a paragraph's content is the source string itself
+when its lines follow each other there, ending in `\n`, and otherwise
+its lines joined into one new string. Measured the same way:
+
+- **Python** (cProfile): 5.22 million calls per parse, now 4.14
+  million (21% fewer); building paragraph content was 13% of the time
+  (12% decoding), now 1%.
+- **JavaScript** (`node --prof`, 40 parses): ticks with decoding on
+  the stack were 17%, now 0.3%, and building paragraph content 21%,
+  now 3%. The inline parser's share rose from 33% to 39%: reading
+  the string by index costs it a little more per code point than
+  reading an array did, so the time per parse came out about even
+  (57 ms both, busy machine).
+- **Peak memory** on spec-x10 is unchanged (Python 105 MiB,
+  JavaScript 175 MiB): a paragraph's decoding was short-lived, and the
+  tree dominates.
+
 ## Where kelpto-md is slower, and why
 
 kelpto-md is slower everywhere but against flexmark: 1.5 to 3.6 times
@@ -135,16 +153,13 @@ and Python, about 16 to 65 times against comrak and Markdig, and about
   slower than the C++ from the same source (94 ms against 24.5 ms on
   the spec; not profiled, since `perf` isn't installed here). Python adds checks to integer arithmetic (755,000
   calls to `int_add` in one parse of the spec, about 10% of it).
-- **Paragraphs are decoded,** one code point at a time through the
-  runtime's string functions, into two arrays (code points and their
-  indices), since the inline parser addresses text by `Int` code
-  point. The rest of the document isn't (see above); before, the
-  whole document was, 29% of a Python parse of the spec at first, and
-  about 20% of the ticks in JavaScript. Next, the inline parser keeps
-  `StringIndex` positions too, counting code points only for spans
-  (tokens already count their own width), and the decoding goes. In
-  Python the gain is smaller than the decode's share, since `get` and
-  `next` are helper calls there, as a list read is.
+- **Decoding,** one code point at a time through the runtime's string
+  functions, into arrays of code points and their indices, was 29% of
+  a Python parse of the spec at first, and about 20% of the ticks in
+  JavaScript. It's gone: all three passes read the source by
+  `StringIndex` (see above). In Python and JavaScript the gain is
+  smaller than the decode's share, since each read and step by
+  `StringIndex` is a helper call there too.
 - **Garbage collection** on long documents in C# and Lua: spec-x10
   takes 18 times the spec's time there for 10 times the bytes, against
   7 to 13 times elsewhere, with C#'s peak memory the highest.

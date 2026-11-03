@@ -14,8 +14,8 @@ use it directly.
   replaced node; **`replaceAll`** makes many `Replacement`s at once,
   copying each shared path once.
 - **`Span`** (start and length in code points), **`Kind`** (an id and
-  a name), and **`SourceText`** (text indexed by code point, whole or
-  just some ranges of a string, by `sourceLines`).
+  a name), and **`SourceText`** (a string indexed by code point; the
+  parsers read by `StringIndex` instead).
 
 ```temper
 let word = new Kind(1000, "Word");
@@ -36,7 +36,7 @@ Also what both parsers need of text:
 - **Character references:** `namedCharacterReference("ouml;")` gives
   `"ö"`, from HTML's 2,125 names; HTML's 106 forms without `;` also
   work (`"amp"`), which CommonMark doesn't use. `characterReferenceEnd`
-  finds one by CommonMark's rules, numeric ones included, and
+  finds one in a string by `StringIndex`, by CommonMark's rules, numeric ones included, and
   `decodeCharacterReference` gives its value.
 - **Unicode 18:** `isUnicodePunctuation` (P and S),
   `isUnicodeWhitespace` (Zs, tab, line feed, form feed, and carriage

@@ -668,14 +668,13 @@ backtick fence, which would change what the fence means.
 
     let infoEdit(node: RedNode, info: String): Replacement throws Bubble {
       let opening = node.childNodes[0];
-      let source = new SourceText(info);
-      var start = 0;
-      while (start < source.length && isSpaceOrTab(source.codeAt(start))) { start += 1; }
-      let end = trimBlanksBack(source, start, source.length);
-      let trimmed = source.slice(start, end);
-      let backtickFence = new SourceText(opening.childOfKind(fenceKind)?.asWritten ?? "").codeAt(0) == char'`';
-      for (var i = start; i < end; i += 1) {
-        let c = source.codeAt(i);
+      let start = skipBlanksAt(info, String.begin, info.end);
+      let end = trimBlanksBackAt(info, start, info.end);
+      let trimmed = info.slice(start, end);
+      let fence = opening.childOfKind(fenceKind)?.asWritten ?? "";
+      let backtickFence = !fence.isEmpty && fence[String.begin] == char'`';
+      for (var i = start; i < end; i = info.next(i)) {
+        let c = info[i];
         if (c == char'\n' || c == char'\r' || (c == char'`' && backtickFence)) {
           bubble();
         }
@@ -1604,8 +1603,8 @@ Whether it's an email address rather than a URI.
       public get isEmail(): Boolean {
         if (node.hasKind(emailAutolinkKind)) { return true; }
         if (!node.hasKind(autolinkKind)) { return false; }
-        let source = new SourceText("${text}>");
-        uriAutolinkEnd(source, 0, source.length) < 0
+        let written = "${text}>";
+        uriAutolinkEnd(written, String.begin, written.end) == String.begin
       }
 
 Where it links: the text, with `mailto:` before an email address
@@ -1835,17 +1834,17 @@ With `tilde`, so does each `~`, for strikethrough, and with `pipe`,
 each `|`, for a table cell.
 
     let escapeInline(text: String, tilde: Boolean, pipe: Boolean): String {
-      let source = new SourceText(text);
-      var start = 0;
-      while (start < source.length && isSpaceOrTab(source.codeAt(start))) { start += 1; }
-      let end = trimBlanksBack(source, start, source.length);
+      let start = skipBlanksAt(text, String.begin, text.end);
+      let end = trimBlanksBackAt(text, start, text.end);
       var hashes = end;
-      while (hashes > start && source.codeAt(hashes - 1) == char'#') { hashes -= 1; }
+      while (hashes > start && text[text.prev(hashes)] == char'#') { hashes = text.prev(hashes); }
       let out = new StringBuilder();
-      for (var i = start; i < end; i += 1) {
-        let c = source.codeAt(i);
+      var i = start;
+      while (i < end) {
+        let c = text[i];
+        let next = text.next(i);
         let isBreak = c == char'\n' || c == char'\r';
-        let afterCr = c == char'\n' && i > start && source.codeAt(i - 1) == char'\r';
+        let afterCr = c == char'\n' && i > start && text[text.prev(i)] == char'\r';
         if (isBreak && !afterCr) { out.append(" "); }
         if (!isBreak) {
           if (
@@ -1855,8 +1854,9 @@ each `|`, for a table cell.
           ) {
             out.append("\\");
           }
-          out.append(source.slice(i, i + 1));
+          out.append(text.slice(i, next));
         }
+        i = next;
       }
       out.toString()
     }

@@ -36,20 +36,22 @@ folded, with the whitespace at each end removed and runs of whitespace
 inside made one space. `"Foo\n  BAR "` and `"foo bar"` match.
 
     export let normalizeLabel(label: String): String {
-      let source = new SourceText(caseFold(label));
+      let text = caseFold(label);
       let out = new StringBuilder();
       var space = false;
       var any = false;
-      for (var i = 0; i < source.length; i += 1) {
-        let c = source.codeAt(i);
-        if (isAsciiWhitespace(c)) {
+      var i = String.begin;
+      while (text.hasIndex(i)) {
+        let next = text.next(i);
+        if (isAsciiWhitespace(text[i])) {
           space = true;
         } else {
           if (space && any) { out.append(" "); }
           space = false;
           any = true;
-          out.append(source.slice(i, i + 1));
+          out.append(text.slice(i, next));
         }
+        i = next;
       }
       out.toString()
     }
@@ -58,26 +60,28 @@ Text with CommonMark's backslash escapes and character references
 resolved, as destinations, titles, and info strings read.
 
     let resolveText(text: String): String {
-      let source = new SourceText(text);
       let out = new StringBuilder();
-      var i = 0;
-      while (i < source.length) {
-        let c = source.codeAt(i);
-        if (c == char'\\' && isAsciiPunctuation(source.codeAt(i + 1))) {
-          out.append(source.slice(i + 1, i + 2));
-          i += 2;
+      let end = text.end;
+      var i = String.begin;
+      while (i < end) {
+        let c = text[i];
+        let next = text.next(i);
+        if (c == char'\\' && next < end && isAsciiPunctuation(text[next])) {
+          let after = text.next(next);
+          out.append(text.slice(next, after));
+          i = after;
         } else if (c == char'&') {
-          let end = characterReferenceEnd(source, i, source.length);
-          if (end > i) {
-            out.append(decodeCharacterReference(source.slice(i, end)));
-            i = end;
+          let close = characterReferenceEnd(text, i, end);
+          if (close > i) {
+            out.append(decodeCharacterReference(text.slice(i, close)));
+            i = close;
           } else {
             out.append("&");
-            i += 1;
+            i = next;
           }
         } else {
-          out.append(source.slice(i, i + 1));
-          i += 1;
+          out.append(text.slice(i, next));
+          i = next;
         }
       }
       out.toString()
@@ -93,10 +97,17 @@ Items live in parallel lists, indexed by number, rather than as
 objects, so emphasis can splice them in place cheaply and no backend
 has to manage cycles. Item 0 is the root, the `InlineContent` node.
 
+Positions are `StringIndex`es into `text`, which is the source string
+or, for lines that aren't next to each other there, the lines joined
+by `\n` (see `Content` in `blocks.temper.md`). Either way a line break
+inside the content reads as one `\n`. Where the spec counts code
+points (a run's length, a label's at most 999), the parser counts them
+as it steps; its markers and delimiters are ASCII.
+
     class InlineParser {
-      private text: SourceText;
-      private start: Int;
-      private end: Int;
+      private text: String;
+      private start: StringIndex;
+      private end: StringIndex;
       private labels: Mapped<String, Boolean>;
 
 GFM's inline extensions, and whether this is a table cell's content.
@@ -111,12 +122,14 @@ Whether this is a GFM document, parsed with any extension on, where
 
       private gfm: Boolean;
 
-Each item's kind; its range, or -1 for a node; whether it groups into
-a `Text` node; its first and last children; and its siblings.
+Each item's kind; its range (empty for a node); whether it's a node;
+whether it groups into a `Text` node; its first and last children; and
+its siblings.
 
       public kinds: ListBuilder<Kind> = new ListBuilder<Kind>();
-      public starts: ListBuilder<Int> = new ListBuilder<Int>();
-      public ends: ListBuilder<Int> = new ListBuilder<Int>();
+      public starts: ListBuilder<StringIndex> = new ListBuilder<StringIndex>();
+      public ends: ListBuilder<StringIndex> = new ListBuilder<StringIndex>();
+      public nodes: ListBuilder<Boolean> = new ListBuilder<Boolean>();
       public textual: ListBuilder<Boolean> = new ListBuilder<Boolean>();
       public firsts: ListBuilder<Int> = new ListBuilder<Int>();
       public lasts: ListBuilder<Int> = new ListBuilder<Int>();
@@ -126,11 +139,13 @@ a `Text` node; its first and last children; and its siblings.
 The delimiter stack, a list linked through `delimiterPrevs` and
 `delimiterNexts`, by number, so later delimiters have higher numbers:
 each run's text item, its character, its length as written (for the
-rule of 3), and whether it can open and close emphasis.
+rule of 3), how much of it emphasis hasn't used, and whether it can
+open and close emphasis.
 
       private delimiterItems: ListBuilder<Int> = new ListBuilder<Int>();
       private delimiterChars: ListBuilder<Int> = new ListBuilder<Int>();
       private delimiterLengths: ListBuilder<Int> = new ListBuilder<Int>();
+      private delimiterLefts: ListBuilder<Int> = new ListBuilder<Int>();
       private canOpen: ListBuilder<Boolean> = new ListBuilder<Boolean>();
       private canClose: ListBuilder<Boolean> = new ListBuilder<Boolean>();
       private delimiterPrevs: ListBuilder<Int> = new ListBuilder<Int>();
@@ -146,34 +161,35 @@ it can make another, since links can't nest.
       private bracketItems: ListBuilder<Int> = new ListBuilder<Int>();
       private bracketImages: ListBuilder<Boolean> = new ListBuilder<Boolean>();
       private bracketDelimiters: ListBuilder<Int> = new ListBuilder<Int>();
-      private bracketTextStarts: ListBuilder<Int> = new ListBuilder<Int>();
+      private bracketTextStarts: ListBuilder<StringIndex> = new ListBuilder<StringIndex>();
       private bracketAfter: ListBuilder<Boolean> = new ListBuilder<Boolean>();
       private var activeFrom: Int = 0;
 
 Searches that failed, so they aren't repeated: for each length, where
 the last backtick run of that length starts (filled in on the first
-code span), and from where no HTML comment, processing instruction,
-declaration, or CDATA section closes.
+code span; `String.begin` for none, since a closing run can't start
+there), and from where no HTML comment, processing instruction,
+declaration, or CDATA section closes (`end` until a search fails).
 
-      private backtickRuns: ListBuilder<Int> = new ListBuilder<Int>();
+      private backtickRuns: ListBuilder<StringIndex> = new ListBuilder<StringIndex>();
       private var backticksScanned: Boolean = false;
-      private var noCommentEnd: Int = -1;
-      private var noInstructionEnd: Int = -1;
-      private var noDeclarationEnd: Int = -1;
-      private var noCdataEnd: Int = -1;
+      private var noCommentEnd: StringIndex;
+      private var noInstructionEnd: StringIndex;
+      private var noDeclarationEnd: StringIndex;
+      private var noCdataEnd: StringIndex;
 
 Where the content's line breaks are, found the first time a footnote
 reference might span one.
 
-      private newlines: ListBuilder<Int> = new ListBuilder<Int>();
+      private newlines: ListBuilder<StringIndex> = new ListBuilder<StringIndex>();
       private var newlinesScanned: Boolean = false;
 
 The start of plain text not yet in an item.
 
-      private var pending: Int;
+      private var pending: StringIndex;
 
       public constructor(
-        text: SourceText, start: Int, end: Int, labels: Mapped<String, Boolean>,
+        text: String, start: StringIndex, end: StringIndex, labels: Mapped<String, Boolean>,
         strikethrough: Boolean, autolinks: Boolean, footnotes: Boolean, inCell: Boolean,
         gfm: Boolean,
       ) {
@@ -186,17 +202,22 @@ The start of plain text not yet in an item.
         this.footnotes = footnotes;
         this.inCell = inCell;
         this.gfm = gfm;
+        this.noCommentEnd = end;
+        this.noInstructionEnd = end;
+        this.noDeclarationEnd = end;
+        this.noCdataEnd = end;
         this.pending = start;
         newNode(inlineContentKind);
       }
 
 ### Items
 
-      private newItem(kind: Kind, start: Int, end: Int, textual: Boolean): Int {
+      private newItem(kind: Kind, start: StringIndex, end: StringIndex, textual: Boolean, node: Boolean): Int {
         let item = kinds.length;
         kinds.add(kind);
         starts.add(start);
         ends.add(end);
+        nodes.add(node);
         this.textual.add(textual);
         firsts.add(-1);
         lasts.add(-1);
@@ -205,7 +226,7 @@ The start of plain text not yet in an item.
         item
       }
 
-      private newNode(kind: Kind): Int { newItem(kind, -1, -1, false) }
+      private newNode(kind: Kind): Int { newItem(kind, start, start, false, true) }
 
       private append(parent: Int, item: Int): Void {
         let last = lasts[parent];
@@ -220,16 +241,16 @@ The start of plain text not yet in an item.
 
 Appends a token to `parent`, unless it's empty.
 
-      private token(parent: Int, kind: Kind, start: Int, end: Int, textual: Boolean): Int {
+      private token(parent: Int, kind: Kind, start: StringIndex, end: StringIndex, textual: Boolean): Int {
         if (start >= end) { return -1; }
-        let item = newItem(kind, start, end, textual);
+        let item = newItem(kind, start, end, textual, false);
         append(parent, item);
         item
       }
 
 A node of `kind` holding one token.
 
-      private wrapped(kind: Kind, tokenKind: Kind, start: Int, end: Int): Void {
+      private wrapped(kind: Kind, tokenKind: Kind, start: StringIndex, end: StringIndex): Void {
         let node = newNode(kind);
         append(0, node);
         token(node, tokenKind, start, end, false);
@@ -238,19 +259,19 @@ A node of `kind` holding one token.
 Whether `item` is plain text starting at `at`, or empty, so the writer
 can join it to the plain text before.
 
-      public isContiguousPlain(item: Int, at: Int): Boolean {
-        if (starts[item] != at || !textual[item]) { return false; }
+      public isContiguousPlain(item: Int, at: StringIndex): Boolean {
+        if (nodes[item] || starts[item] != at || !textual[item]) { return false; }
         starts[item] == ends[item] || kinds[item].id == plainKind.id
       }
 
 Plain text from `pending` to `at` becomes an item.
 
-      private flush(at: Int): Void {
+      private flush(at: StringIndex): Void {
         token(0, plainKind, pending, at, true);
         pending = at;
       }
 
-      private codeAt(at: Int): Int { if (at < end) { text.codeAt(at) } else { -1 } }
+      private codeAt(at: StringIndex): Int { if (at < end) { text[at] } else { -1 } }
 
 ### The pass
 
@@ -260,7 +281,7 @@ Plain text from `pending` to `at` becomes an item.
         let end = this.end;
         var i = start;
         while (i < end) {
-          let c = text.codeAt(i);
+          let c = text[i];
           let next = when (c) {
             char'\\' -> backslash(i);
             char'\n' -> lineBreak(i);
@@ -268,17 +289,13 @@ Plain text from `pending` to `at` becomes an item.
             char'<' -> angleBracket(i);
             char'&' -> ampersand(i);
             char'*', char'_' -> delimiterRun(i, c);
-            char'[' -> openBracket(i, i + 1, false);
-            char'!' -> if (codeAt(i + 1) == char'[' && !(gfm && codeAt(i + 2) == char'^')) {
-              openBracket(i, i + 2, true)
-            } else {
-              i + 1
-            };
+            char'[' -> openBracket(i, text.next(i), false);
+            char'!' -> bang(i);
             char']' -> closeBracket(i);
-            char'~' -> if (strikethrough) { tildeRun(i) } else { i + 1 };
-            char':' -> if (autolinks) { urlAutolink(i) } else { i + 1 };
-            char'w' -> if (autolinks) { wwwAutolink(i) } else { i + 1 };
-            else -> i + 1;
+            char'~' -> if (strikethrough) { tildeRun(i) } else { text.next(i) };
+            char':' -> if (autolinks) { urlAutolink(i) } else { text.next(i) };
+            char'w' -> if (autolinks) { wwwAutolink(i) } else { text.next(i) };
+            else -> text.next(i);
           };
           i = next;
         }
@@ -287,39 +304,53 @@ Plain text from `pending` to `at` becomes an item.
         if (autolinks) { emailAutolinks(0); }
       }
 
+`![` opens an image, but not `![^` in a GFM document.
+
+      private bang(i: StringIndex): StringIndex {
+        let after = text.next(i);
+        if (codeAt(after) == char'[') {
+          let textStart = text.next(after);
+          if (!(gfm && codeAt(textStart) == char'^')) { return openBracket(i, textStart, true); }
+        }
+        after
+      }
+
 A backslash escapes ASCII punctuation, and before a line ending makes a
 hard break. Otherwise it's text.
 
-      private backslash(i: Int): Int {
-        let c = codeAt(i + 1);
-        if (inCell && (c == char'|' || (c == char'\\' && codeAt(i + 2) == char'|'))) {
+      private backslash(i: StringIndex): StringIndex {
+        let next = text.next(i);
+        let c = codeAt(next);
+        if (inCell && (c == char'|' || (c == char'\\' && codeAt(text.next(next)) == char'|'))) {
 
 In a table cell, GFM drops a backslash before `|` before reading
 inlines, so `\|` is a `|`, and `\\|` an escaped `|`. Either way the
 backslashes are a `PipeEscape` and the `|` is text.
 
-          let close = if (c == char'|') { i + 1 } else { i + 2 };
+          let close = if (c == char'|') { next } else { text.next(next) };
           flush(i);
           token(0, pipeEscapeKind, i, close, true);
           pending = close;
           return close;
         }
         if (c == char'\n') {
+          let after = text.next(next);
           flush(i);
           let node = newNode(hardBreakKind);
           append(0, node);
-          token(node, hardBreakMarkerKind, i, i + 1, false);
-          token(node, whitespaceKind, i + 1, i + 2, false);
-          pending = i + 2;
-          return i + 2;
+          token(node, hardBreakMarkerKind, i, next, false);
+          token(node, whitespaceKind, next, after, false);
+          pending = after;
+          return after;
         }
         if (isAsciiPunctuation(c)) {
+          let after = text.next(next);
           flush(i);
-          token(0, escapeKind, i, i + 2, true);
-          pending = i + 2;
-          return i + 2;
+          token(0, escapeKind, i, after, true);
+          pending = after;
+          return after;
         }
-        i + 1
+        next
       }
 
 A line ending: a hard break after two or more spaces, or else a soft
@@ -327,56 +358,64 @@ break. Either way the spaces and tabs before it are layout, not text,
 and so is the next line's prefix and indentation, which `emit` writes
 with the line ending.
 
-      private lineBreak(i: Int): Int {
-        let spaceStart = trimBlanksBack(text, pending, i);
+      private lineBreak(i: StringIndex): StringIndex {
+        let spaceStart = trimBlanksBackAt(text, pending, i);
         flush(spaceStart);
-        if (i - spaceStart >= 2 && text.codeAt(i - 1) == char' ' && text.codeAt(i - 2) == char' ') {
+        let after = text.next(i);
+        if (endsWithTwoSpaces(text, spaceStart, i)) {
           let node = newNode(hardBreakKind);
           append(0, node);
           token(node, hardBreakMarkerKind, spaceStart, i, false);
-          token(node, whitespaceKind, i, i + 1, false);
+          token(node, whitespaceKind, i, after, false);
         } else {
-          token(0, whitespaceKind, spaceStart, i + 1, true);
+          token(0, whitespaceKind, spaceStart, after, true);
         }
-        pending = i + 1;
-        i + 1
+        pending = after;
+        after
       }
 
 A code span, if a backtick run of the same length closes it; else the
 run is text.
 
-      private backticks(i: Int): Int {
+      private backticks(i: StringIndex): StringIndex {
         var runEnd = i;
-        while (runEnd < end && text.codeAt(runEnd) == char'`') { runEnd += 1; }
-        let count = runEnd - i;
+        var count = 0;
+        while (runEnd < end && text[runEnd] == char'`') {
+          runEnd = text.next(runEnd);
+          count += 1;
+        }
         let close = if (hasBacktickRunAfter(count, runEnd)) {
           closingBackticks(text, runEnd, end, count)
         } else {
-          -1
+          end
         };
-        if (close < 0) { return runEnd; }
+        if (close >= end) { return runEnd; }
+        let closeEnd = text.step(close, count);
         flush(i);
         let node = newNode(codeSpanKind);
         append(0, node);
         token(node, backticksKind, i, runEnd, false);
         codeText(node, runEnd, close);
-        token(node, backticksKind, close, close + count, false);
-        pending = close + count;
-        close + count
+        token(node, backticksKind, close, closeEnd, false);
+        pending = closeEnd;
+        closeEnd
       }
 
 A code span's code: one token, but in a table cell, each backslash
 before `|` is a `PipeEscape`, which the code leaves out.
 
-      private codeText(node: Int, from: Int, to: Int): Void {
+      private codeText(node: Int, from: StringIndex, to: StringIndex): Void {
         var at = from;
         if (inCell) {
-          for (var k = from; k + 1 < to; k += 1) {
-            if (text.codeAt(k) == char'\\' && text.codeAt(k + 1) == char'|') {
+          var k = from;
+          while (k < to) {
+            let next = text.next(k);
+            if (next < to && text[k] == char'\\' && text[next] == char'|') {
               token(node, codeTextKind, at, k, false);
-              token(node, pipeEscapeKind, k, k + 1, false);
-              at = k + 1;
+              token(node, pipeEscapeKind, k, next, false);
+              at = next;
             }
+            k = next;
           }
         }
         token(node, codeTextKind, at, to, false);
@@ -385,22 +424,25 @@ before `|` is a `PipeEscape`, which the code leaves out.
 Whether a run of exactly `count` backticks starts at or after `from`,
 from the last start of each length, found in one pass the first time.
 
-      private hasBacktickRunAfter(count: Int, from: Int): Boolean {
+      private hasBacktickRunAfter(count: Int, from: StringIndex): Boolean {
         if (!backticksScanned) {
           backticksScanned = true;
           let text = this.text;
           let end = this.end;
           var i = start;
           while (i < end) {
-            if (text.codeAt(i) == char'`') {
+            if (text[i] == char'`') {
               var j = i;
-              while (j < end && text.codeAt(j) == char'`') { j += 1; }
-              let length = j - i;
-              while (backtickRuns.length <= length) { backtickRuns.add(-1); }
+              var length = 0;
+              while (j < end && text[j] == char'`') {
+                j = text.next(j);
+                length += 1;
+              }
+              while (backtickRuns.length <= length) { backtickRuns.add(String.begin); }
               backtickRuns.set(length, i);
               i = j;
             } else {
-              i += 1;
+              i = text.next(i);
             }
           }
         }
@@ -409,15 +451,17 @@ from the last start of each length, found in one pass the first time.
 
 At `<`: an autolink, or raw HTML, or else text.
 
-      private angleBracket(i: Int): Int {
+      private angleBracket(i: StringIndex): StringIndex {
         let autolink = autolinkEnd(text, i, end);
         if (autolink > i) {
+          let textStart = text.next(i);
+          let textEnd = text.prev(autolink);
           flush(i);
           let node = newNode(autolinkKind);
           append(0, node);
-          token(node, angleBracketKind, i, i + 1, false);
-          token(node, autolinkTextKind, i + 1, autolink - 1, false);
-          token(node, angleBracketKind, autolink - 1, autolink, false);
+          token(node, angleBracketKind, i, textStart, false);
+          token(node, autolinkTextKind, textStart, textEnd, false);
+          token(node, angleBracketKind, textEnd, autolink, false);
           pending = autolink;
           return autolink;
         }
@@ -428,7 +472,7 @@ At `<`: an autolink, or raw HTML, or else text.
           pending = html;
           return html;
         }
-        i + 1
+        text.next(i)
       }
 
 The end of the raw HTML starting at `at`, or `at`: an open or closing
@@ -436,58 +480,65 @@ tag, a comment, a processing instruction, a declaration, or a CDATA
 section, as CommonMark defines them. A search for an end that failed
 once fails from anywhere after, so it isn't repeated.
 
-      private rawHtmlEnd(at: Int): Int {
-        let c = codeIn(text, at + 1, end);
+      private rawHtmlEnd(at: StringIndex): StringIndex {
+        let text = this.text;
+        let end = this.end;
+        let second = text.next(at);
+        let c = codeInAt(text, second, end);
         if (c == char'/') { return closingTagEnd(text, at, end); }
         if (c == char'?') {
-          if (noInstructionEnd >= 0 && at >= noInstructionEnd) { return at; }
-          let close = findText(at + 2, "?>");
-          if (close < 0) { noInstructionEnd = at; return at; }
-          return close + 2;
+          if (at >= noInstructionEnd) { return at; }
+          let close = findText(text.next(second), "?>");
+          if (close >= end) { noInstructionEnd = at; return at; }
+          return text.step(close, 2);
         }
         if (c == char'!') {
-          if (startsWithText(text, at, end, "<!--")) {
-            if (codeIn(text, at + 4, end) == char'>') { return at + 5; }
-            if (startsWithText(text, at + 4, end, "->")) { return at + 6; }
-            if (noCommentEnd >= 0 && at >= noCommentEnd) { return at; }
-            let close = findText(at + 4, "-->");
-            if (close < 0) { noCommentEnd = at; return at; }
-            return close + 3;
+          if (matchesAt(text, at, end, "<!--", false)) {
+            let inside = text.step(at, 4);
+            if (codeInAt(text, inside, end) == char'>') { return text.next(inside); }
+            if (matchesAt(text, inside, end, "->", false)) { return text.step(inside, 2); }
+            if (at >= noCommentEnd) { return at; }
+            let close = findText(inside, "-->");
+            if (close >= end) { noCommentEnd = at; return at; }
+            return text.step(close, 3);
           }
-          if (startsWithText(text, at, end, "<![CDATA[")) {
-            if (noCdataEnd >= 0 && at >= noCdataEnd) { return at; }
-            let close = findText(at + 9, "]]>");
-            if (close < 0) { noCdataEnd = at; return at; }
-            return close + 3;
+          if (matchesAt(text, at, end, "<![CDATA[", false)) {
+            if (at >= noCdataEnd) { return at; }
+            let close = findText(text.step(at, 9), "]]>");
+            if (close >= end) { noCdataEnd = at; return at; }
+            return text.step(close, 3);
           }
-          if (isAsciiAlpha(codeIn(text, at + 2, end))) {
-            if (noDeclarationEnd >= 0 && at >= noDeclarationEnd) { return at; }
-            let close = findText(at + 3, ">");
-            if (close < 0) { noDeclarationEnd = at; return at; }
-            return close + 1;
+          let third = text.next(second);
+          if (isAsciiAlpha(codeInAt(text, third, end))) {
+            if (at >= noDeclarationEnd) { return at; }
+            let close = findText(text.next(third), ">");
+            if (close >= end) { noDeclarationEnd = at; return at; }
+            return text.next(close);
           }
           return at;
         }
         openTagEnd(text, at, end)
       }
 
-Where `target`, ASCII, first appears from `from`, or -1.
+Where `target`, ASCII, first appears from `from`, or `end`.
 
-      private findText(from: Int, target: String): Int {
+      private findText(from: StringIndex, target: String): StringIndex {
         let first = target[String.begin];
         let text = this.text;
         let end = this.end;
-        for (var i = from; i < end; i += 1) {
-          if (text.codeAt(i) == first && startsWithText(text, i, end, target)) { return i; }
+        var i = from;
+        while (i < end) {
+          if (text[i] == first && matchesAt(text, i, end, target, false)) { return i; }
+          i = text.next(i);
         }
-        -1
+        end
       }
 
 At `&`: a character reference, or else text.
 
-      private ampersand(i: Int): Int {
+      private ampersand(i: StringIndex): StringIndex {
         let close = characterReferenceEnd(text, i, end);
-        if (close < 0) { return i + 1; }
+        if (close == i) { return text.next(i); }
         flush(i);
         wrapped(characterReferenceKind, referenceTextKind, i, close);
         pending = close;
@@ -501,11 +552,15 @@ open or close emphasis, by the spec's flanking rules, with Unicode
 whitespace and punctuation. The start and end of the content count as
 whitespace.
 
-      private delimiterRun(i: Int, c: Int): Int {
+      private delimiterRun(i: StringIndex, c: Int): StringIndex {
         var runEnd = i;
-        while (runEnd < end && text.codeAt(runEnd) == c) { runEnd += 1; }
-        let before = if (i > 0) { text.codeAt(i - 1) } else { char'\n' };
-        let after = if (runEnd < end) { text.codeAt(runEnd) } else { char'\n' };
+        var length = 0;
+        while (runEnd < end && text[runEnd] == c) {
+          runEnd = text.next(runEnd);
+          length += 1;
+        }
+        let before = if (i > start) { text[text.prev(i)] } else { char'\n' };
+        let after = if (runEnd < end) { text[runEnd] } else { char'\n' };
         let beforeSpace = isUnicodeWhitespace(before);
         let afterSpace = isUnicodeWhitespace(after);
         let beforePunctuation = isUnicodePunctuation(before);
@@ -521,7 +576,7 @@ whitespace.
         flush(i);
         let item = token(0, plainKind, i, runEnd, true);
         pending = runEnd;
-        if (opens || closes) { pushDelimiter(item, c, runEnd - i, opens, closes); }
+        if (opens || closes) { pushDelimiter(item, c, length, opens, closes); }
         runEnd
       }
 
@@ -530,6 +585,7 @@ whitespace.
         delimiterItems.add(item);
         delimiterChars.add(c);
         delimiterLengths.add(length);
+        delimiterLefts.add(length);
         canOpen.add(opens);
         canClose.add(closes);
         delimiterPrevs.add(lastDelimiter);
@@ -542,11 +598,15 @@ GFM's strikethrough: a run of `~`, read 100 at a time as cmark-gfm
 does, flanking as `*` is, goes on the delimiter stack if it's one or
 two long.
 
-      private tildeRun(i: Int): Int {
+      private tildeRun(i: StringIndex): StringIndex {
         var runEnd = i;
-        while (runEnd < end && runEnd - i < 100 && text.codeAt(runEnd) == char'~') { runEnd += 1; }
-        let before = if (i > 0) { text.codeAt(i - 1) } else { char'\n' };
-        let after = if (runEnd < end) { text.codeAt(runEnd) } else { char'\n' };
+        var length = 0;
+        while (runEnd < end && length < 100 && text[runEnd] == char'~') {
+          runEnd = text.next(runEnd);
+          length += 1;
+        }
+        let before = if (i > start) { text[text.prev(i)] } else { char'\n' };
+        let after = if (runEnd < end) { text[runEnd] } else { char'\n' };
         let beforeSpace = isUnicodeWhitespace(before);
         let afterSpace = isUnicodeWhitespace(after);
         let beforePunctuation = isUnicodePunctuation(before);
@@ -556,7 +616,7 @@ two long.
         flush(i);
         let item = token(0, plainKind, i, runEnd, true);
         pending = runEnd;
-        if ((opens || closes) && runEnd - i <= 2) { pushDelimiter(item, char'~', runEnd - i, opens, closes); }
+        if ((opens || closes) && length <= 2) { pushDelimiter(item, char'~', length, opens, closes); }
         runEnd
       }
 
@@ -567,10 +627,7 @@ two long.
         if (next >= 0) { delimiterPrevs.set(next, prev); } else { lastDelimiter = prev; }
       }
 
-      private delimiterLeft(d: Int): Int {
-        let item = delimiterItems[d];
-        ends[item] - starts[item]
-      }
+      private delimiterLeft(d: Int): Int { delimiterLefts[d] }
 
 The spec's "process emphasis", for the delimiters above `bottom` (a
 delimiter's number, or -1 for all). For each closer, the nearest
@@ -667,11 +724,15 @@ Wraps what's between `opener` and `closer` in a node of `kind`, with
         }
         let node = newNode(kind);
         let openEnd = ends[openItem];
-        ends.set(openItem, openEnd - use);
+        let openStart = text.step(openEnd, -use);
+        ends.set(openItem, openStart);
         let closeStart = starts[closeItem];
-        starts.set(closeItem, closeStart + use);
-        let openMarker = newItem(markerKind, openEnd - use, openEnd, false);
-        let closeMarker = newItem(markerKind, closeStart, closeStart + use, false);
+        let closeEnd = text.step(closeStart, use);
+        starts.set(closeItem, closeEnd);
+        delimiterLefts.set(opener, delimiterLefts[opener] - use);
+        delimiterLefts.set(closer, delimiterLefts[closer] - use);
+        let openMarker = newItem(markerKind, openStart, openEnd, false, false);
+        let closeMarker = newItem(markerKind, closeStart, closeEnd, false, false);
         let first = nexts[openItem];
         let last = prevs[closeItem];
         firsts.set(node, openMarker);
@@ -710,53 +771,64 @@ punctuation (see `autolinkTrim`), and is written as is: its scheme
 letters, `*`, backslashes, and the rest are all link text. Email
 addresses are found later, in text (see `emailAutolinks`).
 
-      private urlAutolink(i: Int): Int {
-        if (!bracketItems.isEmpty || end - i < 4 || codeAt(i + 1) != char'/' || codeAt(i + 2) != char'/') {
-          return i + 1;
+      private urlAutolink(i: StringIndex): StringIndex {
+        let next = text.next(i);
+        let slash = text.next(next);
+        if (
+          !bracketItems.isEmpty || !text.hasAtLeast(i, end, 4) || text[next] != char'/' ||
+          text[slash] != char'/'
+        ) {
+          return next;
         }
         var schemeStart = i;
-        while (schemeStart > start && isAsciiAlpha(text.codeAt(schemeStart - 1))) { schemeStart -= 1; }
+        while (schemeStart > start) {
+          let before = text.prev(schemeStart);
+          if (!isAsciiAlpha(text[before])) { break; }
+          schemeStart = before;
+        }
         let scheme = asciiLowercase(text.slice(schemeStart, i));
+        let host = text.next(slash);
         if (
           schemeStart < pending || !(scheme == "http" || scheme == "https" || scheme == "ftp") ||
-          !isHostChar(text.codeAt(i + 3))
+          !isHostChar(text[host])
         ) {
-          return i + 1;
+          return next;
         }
-        let domain = domainEnd(text, i + 3, end, true);
-        if (domain < 0) { return i + 1; }
+        let domain = domainEnd(text, host, end, true);
+        if (domain == host) { return next; }
         let linkEnd = autolinkTrim(text, i, linkRunEnd(domain));
-        if (linkEnd <= i) { return i + 1; }
+        if (linkEnd <= i) { return next; }
         extendedAutolink(urlAutolinkKind, schemeStart, linkEnd)
       }
 
-      private wwwAutolink(i: Int): Int {
-        if (!bracketItems.isEmpty || end - i < 4 || text.slice(i, i + 4) != "www.") { return i + 1; }
+      private wwwAutolink(i: StringIndex): StringIndex {
+        let next = text.next(i);
+        if (!bracketItems.isEmpty || !matchesAt(text, i, end, "www.", false)) { return next; }
         if (i > start) {
-          let before = text.codeAt(i - 1);
+          let before = text[text.prev(i)];
           if (
             !(before == char'*' || before == char'_' || before == char'~' || before == char'(' ||
               before == 0 || isCmarkSpace(before))
           ) {
-            return i + 1;
+            return next;
           }
         }
         let domain = domainEnd(text, i, end, false);
-        if (domain < 0) { return i + 1; }
+        if (domain == i) { return next; }
         let linkEnd = autolinkTrim(text, i, linkRunEnd(domain));
-        if (linkEnd <= i) { return i + 1; }
+        if (linkEnd <= i) { return next; }
         extendedAutolink(wwwAutolinkKind, i, linkEnd)
       }
 
 From `from` to the next whitespace or `<`.
 
-      private linkRunEnd(from: Int): Int {
+      private linkRunEnd(from: StringIndex): StringIndex {
         var i = from;
-        while (i < end && !isCmarkSpace(text.codeAt(i)) && text.codeAt(i) != char'<') { i += 1; }
+        while (i < end && !isCmarkSpace(text[i]) && text[i] != char'<') { i = text.next(i); }
         i
       }
 
-      private extendedAutolink(kind: Kind, from: Int, to: Int): Int {
+      private extendedAutolink(kind: Kind, from: StringIndex, to: StringIndex): StringIndex {
         flush(from);
         let node = newNode(kind);
         append(0, node);
@@ -775,7 +847,7 @@ them, so `a\_b@example.com` is one address. Each becomes an
         var item = firsts[parent];
         while (item >= 0) {
           var next = nexts[item];
-          if (starts[item] < 0) {
+          if (nodes[item]) {
             let id = kinds[item].id;
             if (id == emphasisKind.id || id == strongKind.id || id == strikethroughKind.id) {
               emailAutolinks(item);
@@ -792,44 +864,71 @@ them, so `a\_b@example.com` is one address. Each becomes an
 
       private isRunText(item: Int): Boolean {
         let id = kinds[item].id;
-        starts[item] >= 0 && textual[item] && (id == plainKind.id || id == escapeKind.id)
+        !nodes[item] && textual[item] && (id == plainKind.id || id == escapeKind.id)
       }
 
 The emails in the run of items from `first` to `last`, as nodes in
 their place.
 
       private linkEmails(parent: Int, first: Int, last: Int): Void {
+        let runEnd = ends[last];
         var any = false;
-        for (var k = starts[first]; k < ends[last]; k += 1) {
-          if (text.codeAt(k) == char'@') { any = true; break; }
+        var k = starts[first];
+        while (k < runEnd) {
+          if (text[k] == char'@') { any = true; break; }
+          k = text.next(k);
         }
         if (!any) { return; }
 
-The run as GFM reads it, escapes resolved, with where each code point
-starts.
+The run as GFM reads it, escapes resolved.
 
-        let read = new StringBuilder();
-        let positions = new ListBuilder<Int>();
+        let reading = new StringBuilder();
         var item = first;
         while (true) {
           let s = starts[item];
           if (kinds[item].id == escapeKind.id) {
-            read.append(text.slice(s + 1, s + 2));
-            positions.add(s);
+            reading.append(text.slice(text.next(s), ends[item]));
           } else {
-            read.append(text.slice(s, ends[item]));
-            for (var k = s; k < ends[item]; k += 1) { positions.add(k); }
+            reading.append(text.slice(s, ends[item]));
           }
           if (item == last) { break; }
           item = nexts[item];
         }
-        let found = findEmails(new SourceText(read.toString()));
+        let read = reading.toString();
+        let found = findEmails(read);
         if (found.isEmpty) { return; }
-        let linkStarts = new ListBuilder<Int>();
-        let linkEnds = new ListBuilder<Int>();
-        for (var k = 0; k < found.length; k += 2) {
-          linkStarts.add(positions[found[k]]);
-          linkEnds.add(if (found[k + 1] < positions.length) { positions[found[k + 1]] } else { ends[last] });
+
+Where each start and end found in `read` is in `text`: walking both
+together, an escape is its backslash, and the end of `read` the end of
+the run.
+
+        let mapped = new ListBuilder<StringIndex>();
+        var f = 0;
+        var r = String.begin;
+        item = first;
+        while (true) {
+          let s = starts[item];
+          let e = ends[item];
+          if (kinds[item].id == escapeKind.id) {
+            while (f < found.length && found[f] == r) { mapped.add(s); f += 1; }
+            r = read.next(r);
+          } else {
+            var x = s;
+            while (x < e) {
+              while (f < found.length && found[f] == r) { mapped.add(x); f += 1; }
+              r = read.next(r);
+              x = text.next(x);
+            }
+          }
+          if (item == last) { break; }
+          item = nexts[item];
+        }
+        while (f < found.length) { mapped.add(runEnd); f += 1; }
+        let linkStarts = new ListBuilder<StringIndex>();
+        let linkEnds = new ListBuilder<StringIndex>();
+        for (var m = 0; m < mapped.length; m += 2) {
+          linkStarts.add(mapped[m]);
+          linkEnds.add(mapped[m + 1]);
         }
 
 The new items: text outside the links, and a node for each.
@@ -845,20 +944,20 @@ The new items: text outside the links, and a node for each.
           var at = s;
           while (at < e) {
             if (j < linkStarts.length && at >= linkStarts[j]) {
-              let stop = if (escape) { e } else { minInt(e, linkEnds[j]) };
+              let stop = if (escape) { e } else { minIndex(e, linkEnds[j]) };
               if (node < 0) {
                 node = newNode(emailAutolinkKind);
                 out.add(node);
               }
-              append(node, newItem(if (escape) { escapeKind } else { autolinkTextKind }, at, stop, false));
+              append(node, newItem(if (escape) { escapeKind } else { autolinkTextKind }, at, stop, false, false));
               at = stop;
               if (at >= linkEnds[j]) {
                 node = -1;
                 j += 1;
               }
             } else {
-              let stop = if (escape || j >= linkStarts.length) { e } else { minInt(e, linkStarts[j]) };
-              out.add(newItem(if (escape) { escapeKind } else { plainKind }, at, stop, true));
+              let stop = if (escape || j >= linkStarts.length) { e } else { minIndex(e, linkStarts[j]) };
+              out.add(newItem(if (escape) { escapeKind } else { plainKind }, at, stop, true, false));
               at = stop;
             }
           }
@@ -879,7 +978,7 @@ The new items: text outside the links, and a node for each.
 
 A `[`, or `![` for an image, is text, and goes on the bracket stack.
 
-      private openBracket(i: Int, textStart: Int, image: Boolean): Int {
+      private openBracket(i: StringIndex, textStart: StringIndex, image: Boolean): StringIndex {
         flush(i);
         let item = token(0, plainKind, i, textStart, true);
         pending = textStart;
@@ -906,34 +1005,37 @@ follows makes one: an inline destination and title in parentheses, or
 a label (full, `[label]`, collapsed, `[]`, or the text itself) that a
 definition has. Else `]` is text.
 
-      private closeBracket(i: Int): Int {
+      private closeBracket(i: StringIndex): StringIndex {
+        let after = text.next(i);
         let b = bracketItems.length - 1;
-        if (b < 0) { return i + 1; }
+        if (b < 0) { return after; }
         let image = bracketImages[b];
         if (!image && b < activeFrom) {
           popBracket();
-          return i + 1;
+          return after;
         }
-        let after = i + 1;
         if (codeAt(after) == char'(') {
-          let destinationStart = skipSpaceAndLineEnding(after + 1);
-          let destinationEnd = if (codeAt(destinationStart) == char')') {
+          let inside = text.next(after);
+          let destinationStart = skipSpaceAndLineEnding(inside);
+          let empty = codeAt(destinationStart) == char')';
+          let destinationEnd = if (empty) {
             destinationStart
           } else {
-            linkDestinationEnd(text, destinationStart)
+            linkDestinationEnd(text, destinationStart, end)
           };
-          if (destinationEnd >= 0 && destinationEnd <= end) {
+          if (empty || destinationEnd > destinationStart) {
             let titleStart = skipSpaceAndLineEnding(destinationEnd);
-            var titleEnd = -1;
-            if (titleStart > destinationEnd) { titleEnd = linkTitleEnd(text, titleStart); }
-            if (titleEnd > end) { titleEnd = -1; }
-            let close = if (titleEnd >= 0) { skipSpaceAndLineEnding(titleEnd) } else { titleStart };
+            var titleEnd = titleStart;
+            if (titleStart > destinationEnd) { titleEnd = linkTitleEnd(text, titleStart, end); }
+            let hasTitle = titleEnd > titleStart;
+            let close = if (hasTitle) { skipSpaceAndLineEnding(titleEnd) } else { titleStart };
             if (codeAt(close) == char')') {
+              let closeEnd = text.next(close);
               let node = makeLink(b, i);
-              token(node, openParenKind, after, after + 1, false);
-              token(node, whitespaceKind, after + 1, destinationStart, false);
+              token(node, openParenKind, after, inside, false);
+              token(node, whitespaceKind, inside, destinationStart, false);
               token(node, linkDestinationKind, destinationStart, destinationEnd, false);
-              if (titleEnd >= 0) {
+              if (hasTitle) {
                 token(node, whitespaceKind, destinationEnd, titleStart, false);
                 let title = newNode(linkTitleKind);
                 append(node, title);
@@ -942,38 +1044,36 @@ definition has. Else `]` is text.
               } else {
                 token(node, whitespaceKind, destinationEnd, close, false);
               }
-              token(node, closeParenKind, close, close + 1, false);
-              return finishLink(b, close + 1);
+              token(node, closeParenKind, close, closeEnd, false);
+              return finishLink(b, closeEnd);
             }
           }
         }
         let labelEnd = referenceLabelEnd(after);
         var label = "";
         var hasLabel = false;
-        var labelTokenEnd = after;
         if (labelEnd > after) {
-          labelTokenEnd = labelEnd;
-          label = text.slice(after + 1, labelEnd - 1);
+          label = text.slice(text.next(after), text.prev(labelEnd));
           hasLabel = true;
         }
         if ((!hasLabel || normalizeLabel(label).isEmpty) && !bracketAfter[b]) {
           let textStart = bracketTextStarts[b];
-          label = if (i - textStart <= 999) { text.slice(textStart, i) } else { "" };
+          label = if (text.hasAtLeast(textStart, i, 1000)) { "" } else { text.slice(textStart, i) };
           hasLabel = true;
         }
         let normalized = if (hasLabel) { normalizeLabel(label) } else { "" };
         if (!normalized.isEmpty && labels.has(normalized)) {
           let node = makeLink(b, i);
-          if (labelTokenEnd > after) {
+          if (labelEnd > after) {
             let labelNode = newNode(linkLabelKind);
             append(node, labelNode);
-            token(labelNode, labelTextKind, after, labelTokenEnd, false);
+            token(labelNode, labelTextKind, after, labelEnd, false);
           }
-          return finishLink(b, labelTokenEnd);
+          return finishLink(b, labelEnd);
         }
         if (footnotes && isFootnoteReference(b, i)) { return footnoteReference(b, i); }
         popBracket();
-        i + 1
+        after
       }
 
 ### GFM's footnote references
@@ -989,17 +1089,19 @@ Two choices differ from cmark-gfm 0.29.0.gfm.13, whose results there
 lose or garble text: the `^` must be written as is, not escaped or a
 character reference, and a reference can't span a line break.
 
-      private isFootnoteReference(b: Int, close: Int): Boolean {
+      private isFootnoteReference(b: Int, close: StringIndex): Boolean {
         let textStart = bracketTextStarts[b];
-        if (bracketImages[b] || text.codeAt(textStart) != char'^' || close <= textStart + 1) {
+        if (bracketImages[b] || text[textStart] != char'^' || close <= text.next(textStart)) {
           return false;
         }
         if (!newlinesScanned) {
           newlinesScanned = true;
           let text = this.text;
           let end = this.end;
-          for (var k = start; k < end; k += 1) {
-            if (text.codeAt(k) == char'\n') { newlines.add(k); }
+          var k = start;
+          while (k < end) {
+            if (text[k] == char'\n') { newlines.add(k); }
+            k = text.next(k);
           }
         }
         var low = 0;
@@ -1015,7 +1117,7 @@ The reference for bracket `b`, closed by the `]` at `close`: its `[^`,
 its label as one token, and the `]`. What was parsed inside goes, and
 so do the delimiters there, as cmark-gfm drops them.
 
-      private footnoteReference(b: Int, close: Int): Int {
+      private footnoteReference(b: Int, close: StringIndex): StringIndex {
         flush(close);
         let opener = bracketItems[b];
         while (lastDelimiter > bracketDelimiters[b]) { removeDelimiter(lastDelimiter); }
@@ -1024,51 +1126,60 @@ so do the delimiters there, as cmark-gfm drops them.
         prevs.set(node, before);
         if (before >= 0) { nexts.set(before, node); } else { firsts.set(0, node); }
         lasts.set(0, node);
-        let open = starts[opener];
+        let labelStart = text.step(starts[opener], 2);
+        let closeEnd = text.next(close);
         kinds.set(opener, footnoteOpenKind);
         textual.set(opener, false);
-        ends.set(opener, open + 2);
+        ends.set(opener, labelStart);
         prevs.set(opener, -1);
         nexts.set(opener, -1);
         firsts.set(node, opener);
         lasts.set(node, opener);
-        token(node, labelTextKind, open + 2, close, false);
-        token(node, linkCloseKind, close, close + 1, false);
+        token(node, labelTextKind, labelStart, close, false);
+        token(node, linkCloseKind, close, closeEnd, false);
         popBracket();
-        pending = close + 1;
-        close + 1
+        pending = closeEnd;
+        closeEnd
       }
 
 Past spaces, tabs, and at most one line ending (a paragraph has no
 blank lines, so at most one is there anyway).
 
-      private skipSpaceAndLineEnding(from: Int): Int {
+      private skipSpaceAndLineEnding(from: StringIndex): StringIndex {
         var i = from;
-        while (i < end && isAsciiWhitespace(text.codeAt(i))) { i += 1; }
+        while (i < end && isAsciiWhitespace(text[i])) { i = text.next(i); }
         i
       }
 
-The end of a link label `[…]` at `at`, after its `]`, or -1: no
+The end of a link label `[…]` at `at`, after its `]`, or `at`: no
 unescaped brackets, and at most 999 code points inside.
 
-      private referenceLabelEnd(at: Int): Int {
-        if (codeAt(at) != char'[') { return -1; }
-        var i = at + 1;
+      private referenceLabelEnd(at: StringIndex): StringIndex {
+        if (codeAt(at) != char'[') { return at; }
+        var i = text.next(at);
+        var count = 1;
         while (i < end) {
-          let c = text.codeAt(i);
-          if (c == char'[') { return -1; }
-          if (c == char']') { return i + 1; }
-          if (c == char'\\' && isAsciiPunctuation(codeAt(i + 1))) { i += 2; } else { i += 1; }
-          if (i - at > 1000) { return -1; }
+          let c = text[i];
+          if (c == char'[') { return at; }
+          let next = text.next(i);
+          if (c == char']') { return next; }
+          if (c == char'\\' && isAsciiPunctuation(codeAt(next))) {
+            i = text.next(next);
+            count += 2;
+          } else {
+            i = next;
+            count += 1;
+          }
+          if (count > 1000) { return at; }
         }
-        -1
+        at
       }
 
 Makes the link or image for bracket `b`, closed by the `]` at `close`:
 a node in the bracket's place holding the bracket, the text after it,
 and the `]`. Gives the node, to add the rest to.
 
-      private makeLink(b: Int, close: Int): Int {
+      private makeLink(b: Int, close: StringIndex): Int {
         flush(close);
         let opener = bracketItems[b];
         let image = bracketImages[b];
@@ -1082,14 +1193,14 @@ and the `]`. Gives the node, to add the rest to.
         lasts.set(node, lasts[0]);
         prevs.set(opener, -1);
         lasts.set(0, node);
-        token(node, linkCloseKind, close, close + 1, false);
+        token(node, linkCloseKind, close, text.next(close), false);
         node
       }
 
 Emphasis inside the link's text, then the bracket goes; after a link,
 every link opener before it is inactive.
 
-      private finishLink(b: Int, next: Int): Int {
+      private finishLink(b: Int, next: StringIndex): StringIndex {
         processEmphasis(bracketDelimiters[b]);
         let image = bracketImages[b];
         popBracket();
@@ -1102,58 +1213,64 @@ every link opener before it is inactive.
 ## Autolinks
 
 The end of the autolink starting with the `<` at `at`, after its `>`,
-or -1: a URI (a scheme of 2 to 32 letters, digits, `+`, `.`, and `-`,
-starting with a letter, then `:` and no spaces, controls, `<`, or
+or `at`: a URI (a scheme of 2 to 32 letters, digits, `+`, `.`, and
+`-`, starting with a letter, then `:` and no spaces, controls, `<`, or
 `>`), or an email address.
 
-    let autolinkEnd(text: SourceText, at: Int, end: Int): Int {
-      if (codeIn(text, at, end) != char'<') { return -1; }
-      let uri = uriAutolinkEnd(text, at + 1, end);
-      if (uri >= 0) { return uri; }
-      emailAutolinkEnd(text, at + 1, end)
+    let autolinkEnd(text: String, at: StringIndex, end: StringIndex): StringIndex {
+      if (codeInAt(text, at, end) != char'<') { return at; }
+      let from = text.next(at);
+      let uri = uriAutolinkEnd(text, from, end);
+      if (uri > from) { return uri; }
+      let email = emailAutolinkEnd(text, from, end);
+      if (email > from) { email } else { at }
     }
 
-    let uriAutolinkEnd(text: SourceText, from: Int, end: Int): Int {
-      if (!isAsciiAlpha(codeIn(text, from, end))) { return -1; }
-      var i = from + 1;
-      while (i < end && i - from <= 32) {
-        let c = text.codeAt(i);
+The end of a URI autolink's text and `>` from `from`, or `from`.
+
+    let uriAutolinkEnd(text: String, from: StringIndex, end: StringIndex): StringIndex {
+      if (!isAsciiAlpha(codeInAt(text, from, end))) { return from; }
+      var i = text.next(from);
+      var scheme = 1;
+      while (i < end && scheme <= 32) {
+        let c = text[i];
         if (!(isAsciiAlphanumeric(c) || c == char'+' || c == char'.' || c == char'-')) { break; }
-        i += 1;
+        i = text.next(i);
+        scheme += 1;
       }
-      let scheme = i - from;
-      if (scheme < 2 || scheme > 32 || codeIn(text, i, end) != char':') { return -1; }
-      i += 1;
+      if (scheme < 2 || scheme > 32 || codeInAt(text, i, end) != char':') { return from; }
+      i = text.next(i);
       while (i < end) {
-        let c = text.codeAt(i);
-        if (c == char'>') { return i + 1; }
-        if (c <= 0x20 || c == char'<' || c == 0x7F) { return -1; }
-        i += 1;
+        let c = text[i];
+        if (c == char'>') { return text.next(i); }
+        if (c <= 0x20 || c == char'<' || c == 0x7F) { return from; }
+        i = text.next(i);
       }
-      -1
+      from
     }
 
 An email address, as the HTML standard's "valid email address" (but
-for its length limits).
+for its length limits); its end after `>`, or `from`.
 
-    let emailAutolinkEnd(text: SourceText, from: Int, end: Int): Int {
+    let emailAutolinkEnd(text: String, from: StringIndex, end: StringIndex): StringIndex {
       var i = from;
-      while (i < end && isEmailLocal(text.codeAt(i))) { i += 1; }
-      if (i == from || codeIn(text, i, end) != char'@') { return -1; }
-      i += 1;
+      while (i < end && isEmailLocal(text[i])) { i = text.next(i); }
+      if (i == from || codeInAt(text, i, end) != char'@') { return from; }
+      i = text.next(i);
       while (true) {
         let labelStart = i;
-        while (i < end && i - labelStart < 63 && (isAsciiAlphanumeric(text.codeAt(i)) || text.codeAt(i) == char'-')) {
-          i += 1;
+        var length = 0;
+        while (i < end && length < 63 && (isAsciiAlphanumeric(text[i]) || text[i] == char'-')) {
+          i = text.next(i);
+          length += 1;
         }
-        let length = i - labelStart;
-        if (length == 0 || text.codeAt(labelStart) == char'-' || text.codeAt(i - 1) == char'-') { return -1; }
-        let c = codeIn(text, i, end);
-        if (c == char'>') { return i + 1; }
-        if (c != char'.') { return -1; }
-        i += 1;
+        if (length == 0 || text[labelStart] == char'-' || text[text.prev(i)] == char'-') { return from; }
+        let c = codeInAt(text, i, end);
+        if (c == char'>') { return text.next(i); }
+        if (c != char'.') { return from; }
+        i = text.next(i);
       }
-      -1
+      from
     }
 
     let isEmailLocal(c: Int): Boolean {
@@ -1196,22 +1313,22 @@ here.
         c == 0xB4 || c == 0xB8 || c == 0xD7 || c == 0xF7
     }
 
-The end of a domain starting at `at`, or -1, as cmark-gfm's
+The end of a domain starting at `at`, or `at` if none, as cmark-gfm's
 `check_domain` finds it: host characters, `-`, `_`, and `.`, with a
 backslash skipping what follows, stopping before the last code point
 of the content, or at any beyond ASCII. Underscores in the last two
 parts make it no domain, unless it has more than 10 dots (so the check
 stays linear). Unless `allowShort`, it needs a dot.
 
-    let domainEnd(text: SourceText, at: Int, end: Int, allowShort: Boolean): Int {
+    let domainEnd(text: String, at: StringIndex, end: StringIndex, allowShort: Boolean): StringIndex {
       var dots = 0;
       var underscoresBefore = 0;
       var underscores = 0;
-      let size = end - at;
-      var i = 1;
-      while (i < size - 1) {
-        if (text.codeAt(at + i) == char'\\' && i < size - 2) { i += 1; }
-        let c = text.codeAt(at + i);
+      let last = text.prev(end);
+      var i = text.next(at);
+      while (i < last) {
+        if (text[i] == char'\\' && text.next(i) < last) { i = text.next(i); }
+        let c = text[i];
         if (c == char'_') {
           underscores += 1;
         } else if (c == char'.') {
@@ -1221,10 +1338,10 @@ stays linear). Unless `allowShort`, it needs a dot.
         } else if (c >= 0x80 || (!isHostChar(c) && c != char'-')) {
           break;
         }
-        i += 1;
+        i = text.next(i);
       }
-      if ((underscoresBefore > 0 || underscores > 0) && dots <= 10) { return -1; }
-      if (allowShort || dots > 0) { at + i } else { -1 }
+      if ((underscoresBefore > 0 || underscores > 0) && dots <= 10) { return at; }
+      if (allowShort || dots > 0) { i } else { at }
     }
 
 The end of a link from `from` to `to` without what cmark-gfm's
@@ -1232,37 +1349,46 @@ The end of a link from `from` to `to` without what cmark-gfm's
 `!`, `.`, `,`, `:`, `*`, `_`, `~`, `'`, `"`, a `)` without a `(` to
 match, or what looks like a character reference (`&amp;`).
 
-    let autolinkTrim(text: SourceText, from: Int, to: Int): Int {
+    let autolinkTrim(text: String, from: StringIndex, to: StringIndex): StringIndex {
       var linkEnd = to;
       var opening = 0;
       var closing = 0;
-      for (var i = from; i < linkEnd; i += 1) {
-        let c = text.codeAt(i);
+      var i = from;
+      while (i < linkEnd) {
+        let c = text[i];
         if (c == char'<') {
           linkEnd = i;
           break;
         }
         if (c == char'(') { opening += 1; }
         if (c == char')') { closing += 1; }
+        i = text.next(i);
       }
       while (linkEnd > from) {
-        let c = text.codeAt(linkEnd - 1);
+        let lastAt = text.prev(linkEnd);
+        let c = text[lastAt];
         if (c == char')') {
           if (closing <= opening) { return linkEnd; }
           closing -= 1;
-          linkEnd -= 1;
+          linkEnd = lastAt;
         } else if (
           c == char'?' || c == char'!' || c == char'.' || c == char',' || c == char':' ||
           c == char'*' || c == char'_' || c == char'~' || c == char'\'' || c == char'"'
         ) {
-          linkEnd -= 1;
+          linkEnd = lastAt;
         } else if (c == char';') {
-          var reference = linkEnd - 2;
-          while (reference > from && isAsciiAlpha(text.codeAt(reference))) { reference -= 1; }
-          if (reference >= from && reference < linkEnd - 2 && text.codeAt(reference) == char'&') {
-            linkEnd = reference;
+          var reference = lastAt;
+          if (lastAt > from) {
+            let nameEnd = text.prev(lastAt);
+            reference = nameEnd;
+            while (reference > from && isAsciiAlpha(text[reference])) { reference = text.prev(reference); }
+            if (reference < nameEnd && text[reference] == char'&') {
+              linkEnd = reference;
+            } else {
+              linkEnd = lastAt;
+            }
           } else {
-            linkEnd -= 1;
+            linkEnd = lastAt;
           }
         } else {
           return linkEnd;
@@ -1278,89 +1404,76 @@ pairs of start and end, by cmark-gfm's `postprocess_text`: at each
 letters, digits, `-`, `_`, and `.` before a letter or digit (and `/`
 after `xmpp:`), with at least one such dot, ending in a letter; a
 second `@` starts again from it. Linear: each search starts past the
-last.
+last, and goes back no further than `from`, where it started.
 
-    let findEmails(text: SourceText): List<Int> {
-      let found = new ListBuilder<Int>();
-      var begin = 0;
-      var offset = 0;
-      var remaining = text.length;
-      while (offset < remaining) {
-        var at = -1;
-        for (var k = begin + offset; k < begin + remaining; k += 1) {
-          if (text.codeAt(k) == char'@') {
-            at = k;
-            break;
-          }
-        }
-        if (at < 0) { break; }
-        var maxRewind = at - (begin + offset);
-        var autoMailto = true;
+    let findEmails(text: String): List<StringIndex> {
+      let found = new ListBuilder<StringIndex>();
+      let end = text.end;
+      var from = String.begin;
+      while (from < end) {
+        var at = from;
+        while (at < end && text[at] != char'@') { at = text.next(at); }
+        if (at >= end) { break; }
         var isXmpp = false;
         var dots = 0;
-        var rewind = 0;
-        var linkEnd = 0;
+        var back = at;
+        var linkEnd = at;
         var retry = true;
         var skip = false;
         while (retry) {
           retry = false;
-          let atPos = begin + offset + maxRewind;
-          rewind = 0;
-          while (rewind < maxRewind) {
-            let c = text.codeAt(atPos - rewind - 1);
+          back = at;
+          while (back > from) {
+            let before = text.prev(back);
+            let c = text[before];
             if (isAsciiAlphanumeric(c) || c == char'.' || c == char'+' || c == char'-' || c == char'_') {
-              rewind += 1;
-            } else if (c == char':' && validProtocol(text, "mailto:", atPos, rewind, maxRewind)) {
-              autoMailto = false;
-              rewind += 1;
-            } else if (c == char':' && validProtocol(text, "xmpp:", atPos, rewind, maxRewind)) {
-              autoMailto = false;
+              back = before;
+            } else if (c == char':' && validProtocol(text, "mailto:", from, back)) {
+              back = before;
+            } else if (c == char':' && validProtocol(text, "xmpp:", from, back)) {
               isXmpp = true;
-              rewind += 1;
+              back = before;
             } else {
               break;
             }
           }
-          if (rewind == 0) {
-            offset += maxRewind + 1;
+          if (back == at) {
+            from = text.next(at);
             skip = true;
           } else {
-            let limit = remaining - offset - maxRewind;
-            linkEnd = 1;
-            while (linkEnd < limit) {
-              let c = text.codeAt(atPos + linkEnd);
+            linkEnd = text.next(at);
+            while (linkEnd < end) {
+              let c = text[linkEnd];
               if (c == char'@') {
-                offset += maxRewind + 1;
-                maxRewind = linkEnd - 1;
+                from = text.next(at);
+                at = linkEnd;
                 retry = true;
                 break;
               }
-              if (c == char'.' && linkEnd < limit - 1 && isAsciiAlphanumeric(text.codeAt(atPos + linkEnd + 1))) {
+              let next = text.next(linkEnd);
+              if (c == char'.' && next < end && isAsciiAlphanumeric(text[next])) {
                 dots += 1;
               } else if (
                 !isAsciiAlphanumeric(c) && !(c == char'/' && isXmpp) && c != char'-' && c != char'_'
               ) {
                 break;
               }
-              linkEnd += 1;
+              linkEnd = next;
             }
           }
         }
         if (!skip) {
-          let atPos = begin + offset + maxRewind;
-          let lastCode = text.codeAt(atPos + linkEnd - 1);
-          if (linkEnd < 2 || dots == 0 || (!isAsciiAlpha(lastCode) && lastCode != char'.')) {
-            offset += maxRewind + linkEnd;
+          let lastCode = text[text.prev(linkEnd)];
+          if (linkEnd == text.next(at) || dots == 0 || (!isAsciiAlpha(lastCode) && lastCode != char'.')) {
+            from = linkEnd;
           } else {
-            linkEnd = autolinkTrim(text, atPos, atPos + linkEnd) - atPos;
-            if (linkEnd == 0) {
-              offset += maxRewind + 1;
+            let trimmed = autolinkTrim(text, at, linkEnd);
+            if (trimmed == at) {
+              from = text.next(at);
             } else {
-              found.add(atPos - rewind);
-              found.add(atPos + linkEnd);
-              begin += offset + maxRewind + linkEnd;
-              remaining -= offset + maxRewind + linkEnd;
-              offset = 0;
+              found.add(back);
+              found.add(trimmed);
+              from = trimmed;
             }
           }
         }
@@ -1368,16 +1481,16 @@ last.
       found.toList()
     }
 
-Whether `protocol` ends at the `:` before the address's part read so
-far, at the start of what's searched or after something not a letter
-or digit.
+Whether `protocol`, ASCII, ends at `back`, the start of the address's
+part read so far, starting at `from`, where the search started, or
+after something not a letter or digit.
 
-    let validProtocol(text: SourceText, protocol: String, at: Int, rewind: Int, maxRewind: Int): Boolean {
+    let validProtocol(text: String, protocol: String, from: StringIndex, back: StringIndex): Boolean {
       let length = protocol.countBetween(String.begin, protocol.end);
-      if (length > maxRewind - rewind) { return false; }
-      let from = at - rewind - length;
-      if (text.slice(from, from + length) != protocol) { return false; }
-      length == maxRewind - rewind || !isAsciiAlphanumeric(text.codeAt(from - 1))
+      if (!text.hasAtLeast(from, back, length)) { return false; }
+      let start = text.step(back, -length);
+      if (!matchesAt(text, start, back, protocol, false)) { return false; }
+      start == from || !isAsciiAlphanumeric(text[text.prev(start)])
     }
 
 ## Tests
