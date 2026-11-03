@@ -131,6 +131,40 @@ its lines joined into one new string. Measured the same way:
   JavaScript 175 MiB): a paragraph's decoding was short-lived, and the
   tree dominates.
 
+## Sharing identical tokens (2026-11-03)
+
+`GreenNodeBuilder` now makes each token of up to 4 code points once per
+kind and text (a line ending, a space, a `*`, an indent), and each node
+whose only child is such a token (a blank line), as rowan does. On the
+spec, counted exactly:
+
+- **Tokens:** 22,342 objects before, 7,817 now; most were `\n` (9,755),
+  a backtick, or a space. **Nodes:** 8,502, now 6,106 (2,128 blank
+  lines were the same node).
+- **Memory the parsed tree keeps** (after garbage collection): spec in
+  Python 3.7 to 2.1 MiB (`tracemalloc`), spec-x10 in JavaScript 25.3
+  to 14.3 MiB.
+- **Peak memory** on spec-x10 (one noisy run each): Python 105 to
+  88 MiB; JavaScript 174 to 171 MiB, where garbage made while parsing,
+  not the tree, sets the peak.
+
+Speed, measured as shares and counts on a busy machine: each token's
+width is checked before its lookup, so long tokens are never hashed.
+Looking every token up instead was cheaper in Python (a `dict` lookup
+is one C call, and the width check two helper calls), but in
+JavaScript it moved the builder's `token` from about 2% of a parse's
+ticks to about 9%, hashing fresh long strings; a list indexed by code
+point for one-character tokens was slower in both. As built, a
+benchmark of just `token` over the spec's tokens comes out even with
+before in JavaScript. Python makes 4% more calls per parse (4.14 to
+4.30 million); its `token` benchmark ranged from 20% faster to 50%
+slower than before (noisy), and `token` is about 5% of a parse, so a
+Python parse may be up to about 2% slower.
+
+Step 3 of the plan, fewer and larger tokens, found nothing to merge:
+runs of plain text are one token already, and each node's child list
+is exactly its children in every backend.
+
 ## Where kelpto-md is slower, and why
 
 kelpto-md is slower everywhere but against flexmark: 1.5 to 3.6 times

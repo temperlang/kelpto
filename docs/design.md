@@ -229,8 +229,8 @@ checking every entry as the Temper code reads it:
    against html5lib-tests and WPT.
 3. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
-4. Chunked children and interning, once documents are big enough to
-   measure (see "Less memory", below); deep nesting (thousands of emphasis levels, and views and
+4. Chunked children, once documents are big enough to measure;
+   interning is done (see "Less memory", below); deep nesting (thousands of emphasis levels, and views and
    rendering of deep blocks) without deep recursion. Parsing and
    printing deep block nesting are done: linear, with no recursion.
 5. GFM's rest: more edits for tables (rows and columns). Footnotes
@@ -316,7 +316,7 @@ rust-analyzer's rowan:
   kind, its children, and its total width in code points, not its
   position. Tokens (leaves) hold their text. A green node never knows
   where it is, so the same node can be shared by many versions of a
-  document, and identical small nodes can even be interned.
+  document, and identical small elements are shared (see "Less memory").
 - **Red nodes, cheap views:** made on demand as you walk, each wraps a
   green node with its parent and absolute offset. They're the API users
   see (parent, position, and siblings) and are thrown away freely.
@@ -366,13 +366,19 @@ memory and object counts after each step:
    spec-x10 (Python 216 to 105 MiB, JavaScript 346 to 183 MiB, one
    noisy run each; [benchmarks.md](benchmarks.md)); the second's
    numbers are there too.
-2. **Share identical tokens:** `GreenNodeBuilder` keeps one cache by
-   kind and text, so each repeated short token (a space, a line ending,
-   `*`, `#`, `>`, an indent) is one shared object, as rowan does. No API
-   change.
-3. **Fewer, larger tokens,** where the parser splits text nothing
-   reads apart, such as runs of plain text. Also `children` lists sized
-   exactly.
+2. **Share identical tokens.** Done (2026-11-03): `GreenNodeBuilder`
+   makes each token of up to 4 code points once per kind and text,
+   and each node whose only child is such a token (a blank line), as
+   rowan does. Parsing the spec makes 7,817 token objects instead of
+   22,342, and 6,106 nodes instead of 8,502; the parsed tree keeps
+   about 40% less memory ([benchmarks.md](benchmarks.md)). The width
+   is checked before the lookup, so long tokens are never hashed.
+3. **Fewer, larger tokens:** nothing left to do. Runs of plain text
+   are one token already (no two `Plain` tokens are siblings on the
+   spec), and every backend's `splice` gives each node a list of
+   exactly its children. What remains is structure the views read:
+   line endings between lines, and the `InlineContent` and `Text`
+   nodes around inlines.
 4. **If memory is still far off, a flat tree.** The parser fills one
    store per document: arrays of kind, width, and where each node's
    children start, plus the source string. A green node is either an

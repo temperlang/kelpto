@@ -7,7 +7,9 @@ use it directly.
   kind, and children or text, and a width in code points, but no
   position, so versions of a document share them.
 - **`GreenNodeBuilder`:** start a node, add tokens, finish the node,
-  as rust-analyzer's rowan does; mutable while building.
+  as rust-analyzer's rowan does; mutable while building. Identical
+  small tokens (a line ending, a `*`), and nodes holding only one, are
+  shared within a build.
 - **Red elements** (`RedNode`, `RedToken`): cheap views with a parent,
   an offset, a `span`, and `asWritten`, made as you walk.
 - **`replaceWith`:** a new root, copying only the path to the
@@ -42,5 +44,4 @@ Also what both parsers need of text:
   `isUnicodeWhitespace` (Zs, tab, line feed, form feed, and carriage
   return), and `caseFold` (full: `"ẞ"` gives `"ss"`).
 
-Planned: chunked children for wide parents, and interning small green
-elements.
+Planned: chunked children for wide parents.

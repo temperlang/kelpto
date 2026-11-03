@@ -164,9 +164,6 @@ Not yet, but planned:
   would copy a long child list on each edit, so wide parents can group
   their children into hidden nodes of, say, 32, keeping each edit's
   copying small.
-- **Interning:** identical small green elements (a newline token, a
-  `#`) can be shared through a cache while building, saving memory on
-  big documents.
 
 ## Building
 
@@ -174,10 +171,24 @@ Builds a green tree in one pass, as rowan's `GreenNodeBuilder` does:
 start a node, add tokens and nodes, finish it. It's mutable while
 building, and what it yields is immutable.
 
+**Identical small elements are shared,** as rowan does: a token of up
+to `shareWidth` code points is made once per kind and text, so each
+line ending, space, `*`, or indent of a document is one object, and so
+is a node whose only child is such a token, such as a blank line.
+Green elements are immutable and never know where they are, so one
+can stand in many places, and in edited trees too. The caches belong
+to one builder, so one parse. Each is a map keyed by the text alone:
+an entry is used only when its kinds match too, and replaced when they
+don't. Longer tokens skip the maps, since they repeat much less, and
+hashing them would cost more than checking the width first (measured
+in JavaScript, 2026-11-03).
+
     export class GreenNodeBuilder {
       private kinds: ListBuilder<Kind> = new ListBuilder<Kind>();
       private starts: ListBuilder<Int> = new ListBuilder<Int>();
       private children: ListBuilder<GreenElement> = new ListBuilder<GreenElement>();
+      private tokens: MapBuilder<String, GreenToken> = new MapBuilder<String, GreenToken>();
+      private nodes: MapBuilder<String, GreenNode> = new MapBuilder<String, GreenNode>();
 
       public constructor() {}
 
@@ -193,7 +204,18 @@ Adds a token. Empty text adds nothing, so parsers needn't check.
 
       public token(kind: Kind, text: String): Void {
         if (!text.isEmpty) {
-          children.add(new GreenToken(kind, text));
+          if (text.hasAtLeast(String.begin, text.end, shareWidth + 1)) {
+            children.add(new GreenToken(kind, text));
+          } else {
+            let shared = tokens.getOr(text, noToken);
+            if (shared.kind.id == kind.id) {
+              children.add(shared);
+            } else {
+              let token = new GreenToken(kind, text);
+              tokens[text] = token;
+              children.add(token);
+            }
+          }
         }
       }
 
@@ -209,8 +231,20 @@ Finishes the node started last.
       public finishNode(): Void {
         let kind = kinds.removeLast();
         let start = starts.removeLast();
-        let kids = children.splice(start, children.length - start);
-        children.add(new GreenNode(kind, kids));
+        let only = if (children.length - start == 1) { tokenOrNone(children[start]) } else { noToken };
+        if (only.width <= shareWidth) {
+          let shared = nodes.getOr(only.text, noNode);
+          if (shared.kind.id == kind.id && shared.children[0].kind.id == only.kind.id) {
+            children.set(start, shared);
+          } else {
+            let node = new GreenNode(kind, children.splice(start, 1));
+            nodes[only.text] = node;
+            children.add(node);
+          }
+        } else {
+          let kids = children.splice(start, children.length - start);
+          children.add(new GreenNode(kind, kids));
+        }
       }
 
 The finished tree: the one node left once every node is finished.
@@ -220,6 +254,25 @@ The finished tree: the one node left once every node is finished.
           panic()
         }
         children[0] as GreenNode orelse panic()
+      }
+    }
+
+The widest token shared, in code points: enough for line endings,
+markers, and indents, which make most of a document's tokens.
+
+    let shareWidth = 4;
+
+What the caches give for text they don't have: a kind no element has,
+and too wide to share.
+
+    let noToken = new GreenToken(new Kind(-1, "None"), "-----");
+    let noElement: GreenElement = noToken;
+    let noNode = new GreenNode(noToken.kind, [noElement]);
+
+    let tokenOrNone(element: GreenElement): GreenToken {
+      when (element) {
+        is GreenToken -> element;
+        else -> noToken;
       }
     }
 
@@ -526,6 +579,39 @@ targets is rebuilt once, and the child list is copied once.
       assert(green.text == "abécd") { green.text };
       assert(green.width == 5) { green.width.toString() };
       assert(green.children.length == 3) { "empty tokens are dropped" };
+    }
+
+    test("shared tokens and nodes keep their kinds") {
+      let builder = new GreenNodeBuilder();
+      builder.startNode(nodeKind);
+      for (var i = 0; i < 2; i += 1) {
+        builder.token(tokenKind, "*");
+        builder.token(nodeKind, "*");
+        builder.startNode(nodeKind);
+        builder.token(tokenKind, "\n");
+        builder.finishNode();
+        builder.startNode(tokenKind);
+        builder.token(tokenKind, "\n");
+        builder.finishNode();
+        builder.startNode(nodeKind);
+        builder.token(nodeKind, "\n");
+        builder.finishNode();
+        builder.token(tokenKind, "abcde");
+      }
+      builder.finishNode();
+      let kids = builder.finish().children;
+      let kinds = new ListBuilder<String>();
+      for (var i = 0; i < kids.length; i += 1) {
+        let kid = kids[i];
+        kinds.add(when (kid) {
+          is GreenNode -> "${kid.kind.name}(${kid.children[0].kind.name} ${kid.width.toString()})";
+          is GreenToken -> "${kid.kind.name} ${kid.text}";
+        });
+      }
+      let expected = "Token *,Node *,Node(Token 1),Token(Token 1),Node(Node 1),Token abcde";
+      assert(kinds.join(",") { (s: String): String => s } == "${expected},${expected}") {
+        kinds.join(",") { (s: String): String => s }
+      };
     }
 
     test("red views: spans, parents, and kinds") {
