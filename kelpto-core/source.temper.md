@@ -1,60 +1,9 @@
-# Source text
+# Text helpers
 
-Text indexed by code point, so code can look ahead and slice by plain
-`Int` positions, and spans count the same way in every language (not
-UTF-16 units in JavaScript and C#, nor bytes in Rust and Python's C
-API). Slices come from the original string, so they're exactly as
-written, even for text that isn't valid Unicode, such as a lone
-surrogate.
-
-The parsers don't use it: they read their source by `StringIndex`, so
-nothing is decoded. Views, edits, and kelpto-html's tokenizer still
-do, on short texts.
-
-    export class SourceText {
-
-The string, where each code point is in it (and its end), and the
-code points.
-
-      private base: String;
-      private indices: List<StringIndex>;
-      private codes: List<Int>;
-
-      public constructor(text: String) {
-        this.base = text;
-        let decoded = new ListBuilder<Int>();
-        let at = new ListBuilder<StringIndex>();
-        var i = String.begin;
-        while (text.hasIndex(i)) {
-          decoded.add(text[i]);
-          at.add(i);
-          i = text.next(i);
-        }
-        at.add(text.end);
-        this.indices = at.toList();
-        this.codes = decoded.toList();
-      }
-
-The text, as a string.
-
-      public get text(): String { base }
-
-The length in code points.
-
-      public get length(): Int { codes.length }
-
-The code point at `at`, or -1 outside the text.
-
-      public codeAt(at: Int): Int {
-        if (at < 0 || at >= codes.length) { -1 } else { codes[at] }
-      }
-
-The text from `start` to `end`, in code points, exactly as written.
-
-      public slice(start: Int, end: Int): String {
-        base.slice(indices[start], indices[end])
-      }
-    }
+What both parsers need of text. They read their source by
+`StringIndex`, so nothing is decoded, and spans count code points the
+same way in every language (not UTF-16 units in JavaScript and C#, nor
+bytes in Rust and Python's C API).
 
 Character classes both parsers need, on code points.
 
@@ -124,15 +73,6 @@ attribute names.
     }
 
 ## Tests
-
-    test("source text by code point") {
-      let source = new SourceText("a😀b\n");
-      assert(source.length == 4) { source.length.toString() };
-      assert(source.codeAt(1) == 0x1F600) { "code point" };
-      assert(source.codeAt(4) == -1) { "past the end" };
-      assert(source.slice(1, 3) == "😀b") { source.slice(1, 3) };
-      assert(source.slice(0, 4) == "a😀b\n") { "whole" };
-    }
 
     test("escaping and lowercasing") {
       let escaped = escapeHtml("a<b>&\"c\"é");

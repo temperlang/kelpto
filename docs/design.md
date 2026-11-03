@@ -22,8 +22,9 @@ Real, tested Temper in all four libraries. Each library's README shows
 it in use, and the top README shows them alone and together.
 
 - **kelpto-core:** red-green trees (`GreenNode`, `GreenToken`,
-  `GreenNodeBuilder`, `RedNode`, and `RedToken`), `Span`, `Kind`, and
-  `SourceText` (for views and kelpto-html; the parsers don't decode), with `replaceWith` copying only the path to the root.
+  `GreenNodeBuilder`, `RedNode`, and `RedToken`), `Span`, and `Kind`,
+  with `replaceWith` copying only the path to the root. Everything
+  reads text by `StringIndex`; nothing decodes it.
   Also HTML's character references (named ones from html5lib-tests,
   each with a flag for HTML's forms without `;`, and numeric ones), and
   Unicode 18's punctuation, whitespace, and full case folding, as small
@@ -246,7 +247,11 @@ checking every entry as the Temper code reads it:
    loops work on locals, which Rust's translation locks for on every
    field access. The block parser and tree writer read the source
    string by `StringIndex` (2026-11-03), and then the inline parser
-   too, so nothing is decoded. Next: the Rust translation's locks
+   too, so nothing is decoded. That made C++ much slower, though: its
+   translation copies a `String` on every call and local, so reading
+   the source through helpers is quadratic there (about 24 times
+   slower on the spec; [benchmarks.md](benchmarks.md)), until Temper
+   passes strings by reference. Next: the Rust translation's locks
    elsewhere (Rust is still several times slower than C++ from the
    same source), C#'s and Lua's garbage on long documents, Python's
    checked integer arithmetic, and GFM benchmarks.
@@ -392,6 +397,15 @@ memory and object counts after each step:
    each read unless cached, and every function on green nodes handles
    both forms. Prototype parse and render first, and measure before
    going further.
+
+**Garbage while parsing** (2026-11-03): in JavaScript, peak memory
+is mostly not the tree (14 MiB on spec-x10) but V8's young generation,
+grown to fit a parse allocating 85 MiB, and what lives to the end of
+the parse: each line's and block's data. The tree writer now keeps one
+inline parser for every paragraph, and the lines' container prefixes
+are one list rather than one per line, so a parse allocates 15% less;
+peak is about the same ([benchmarks.md](benchmarks.md)). Fewer
+per-line objects (lines as parallel lists) would be next.
 
 **Green's public surface, first:** the views, red nodes, editor, and
 rendering don't change with any of this. The green layer stays

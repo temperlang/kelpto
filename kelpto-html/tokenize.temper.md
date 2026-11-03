@@ -6,7 +6,7 @@ the input back exactly, for any input. What it doesn't understand stays
 text.
 
     let {
-      GreenNode, GreenNodeBuilder, Kind, RedNode, SourceText, isAsciiAlpha,
+      GreenNode, GreenNodeBuilder, Kind, RedNode, isAsciiAlpha,
       isAsciiWhitespace, redRoot, unknownKind,
     } = import("../kelpto-core");
 
@@ -70,109 +70,119 @@ The green tree alone, for embedding in another tree, as the `kelpto`
 library does for raw HTML in Markdown.
 
     export let tokenizeHtmlGreen(text: String): GreenNode {
-      let source = new SourceText(text);
       let builder = new GreenNodeBuilder();
       builder.startNode(htmlTokensKind);
-      var textStart = 0;
-      var i = 0;
-      while (i < source.length) {
-        let markup = if (source.codeAt(i) == char'<') { markupAt(source, i) } else { null };
+      let end = text.end;
+      var textStart = String.begin;
+      var i = String.begin;
+      while (i < end) {
+        let markup = if (text[i] == char'<') { markupAt(text, i) } else { null };
         if (markup == null) {
-          i += 1;
+          i = text.next(i);
         } else {
-          addText(builder, source, textStart, i);
+          addText(builder, text, textStart, i);
           builder.element(markup);
-          i += markup.width;
+          i = text.step(i, markup.width);
           textStart = i;
         }
       }
-      addText(builder, source, textStart, source.length);
+      addText(builder, text, textStart, end);
       builder.finishNode();
       builder.finish()
     }
 
-    let addText(builder: GreenNodeBuilder, source: SourceText, start: Int, end: Int): Void {
+    let addText(builder: GreenNodeBuilder, text: String, start: StringIndex, end: StringIndex): Void {
       if (start < end) {
         builder.startNode(htmlTextKind);
-        builder.token(charsKind, source.slice(start, end));
+        builder.token(charsKind, text.slice(start, end));
         builder.finishNode();
       }
     }
 
 ## Markup
 
-Each scanner builds its node apart, and gives null if the markup at
-`at` isn't one it understands, so it stays text.
+Each scanner reads `text` by `StringIndex`, builds its node apart, and
+gives null if the markup at `at` isn't one it understands, so it stays
+text.
 
-    let markupAt(source: SourceText, at: Int): GreenNode? {
-      let next = source.codeAt(at + 1);
+    let markupAt(text: String, at: StringIndex): GreenNode? {
+      let next = codeAt(text, text.next(at));
       if (isAsciiAlpha(next)) {
-        startTagAt(source, at)
+        startTagAt(text, at)
       } else if (next == char'/') {
-        endTagAt(source, at)
+        endTagAt(text, at)
       } else if (next == char'!') {
-        commentAt(source, at)
+        commentAt(text, at)
       } else {
         null
       }
     }
 
-    let tokenOf(builder: GreenNodeBuilder, kind: Kind, source: SourceText, start: Int, end: Int): Void {
+The code point at `at`, or -1 at the end.
+
+    let codeAt(text: String, at: StringIndex): Int {
+      if (text.hasIndex(at)) { text[at] } else { -1 }
+    }
+
+    let tokenOf(builder: GreenNodeBuilder, kind: Kind, text: String, start: StringIndex, end: StringIndex): Void {
       if (start < end) {
-        builder.token(kind, source.slice(start, end));
+        builder.token(kind, text.slice(start, end));
       }
     }
 
-    let skipWhitespace(source: SourceText, from: Int): Int {
+    let skipWhitespace(text: String, from: StringIndex): StringIndex {
       var i = from;
-      while (isAsciiWhitespace(source.codeAt(i))) {
-        i += 1;
+      while (isAsciiWhitespace(codeAt(text, i))) {
+        i = text.next(i);
       }
       i
     }
 
 A tag name runs to whitespace, `/`, or `>`, as browsers read it.
 
-    let nameEnd(source: SourceText, from: Int): Int {
+    let nameEnd(text: String, from: StringIndex): StringIndex {
       var i = from;
-      while (i < source.length) {
-        let c = source.codeAt(i);
+      while (text.hasIndex(i)) {
+        let c = text[i];
         if (isAsciiWhitespace(c) || c == char'/' || c == char'>') { break; }
-        i += 1;
+        i = text.next(i);
       }
       i
     }
 
-    let startTagAt(source: SourceText, at: Int): GreenNode? {
+    let startTagAt(text: String, at: StringIndex): GreenNode? {
       let builder = new GreenNodeBuilder();
       builder.startNode(startTagKind);
-      let nameStop = nameEnd(source, at + 1);
-      tokenOf(builder, tagOpenKind, source, at, at + 1);
-      tokenOf(builder, tagNameKind, source, at + 1, nameStop);
+      let nameStart = text.next(at);
+      let nameStop = nameEnd(text, nameStart);
+      tokenOf(builder, tagOpenKind, text, at, nameStart);
+      tokenOf(builder, tagNameKind, text, nameStart, nameStop);
       var i = nameStop;
       while (true) {
-        let next = skipWhitespace(source, i);
-        tokenOf(builder, htmlWhitespaceKind, source, i, next);
+        let next = skipWhitespace(text, i);
+        tokenOf(builder, htmlWhitespaceKind, text, i, next);
         i = next;
-        let c = source.codeAt(i);
+        let c = codeAt(text, i);
+        let after = text.next(i);
         if (c == -1) {
           return null;
         } else if (c == char'>') {
-          tokenOf(builder, tagCloseKind, source, i, i + 1);
+          tokenOf(builder, tagCloseKind, text, i, after);
           break;
-        } else if (c == char'/' && source.codeAt(i + 1) == char'>') {
-          tokenOf(builder, selfClosingKind, source, i, i + 1);
-          tokenOf(builder, tagCloseKind, source, i + 1, i + 2);
+        } else if (c == char'/' && codeAt(text, after) == char'>') {
+          tokenOf(builder, selfClosingKind, text, i, after);
+          tokenOf(builder, tagCloseKind, text, after, text.next(after));
           break;
         } else if (c == char'/') {
 
 A stray `/` inside a tag: browsers skip it.
 
-          tokenOf(builder, unknownKind, source, i, i + 1);
-          i += 1;
+          tokenOf(builder, unknownKind, text, i, after);
+          i = after;
         } else {
-          i = attributeAt(builder, source, i);
-          if (i < 0) { return null; }
+          let attributeEnd = attributeAt(builder, text, i);
+          if (attributeEnd == null) { return null; }
+          i = attributeEnd as StringIndex orelse panic();
         }
       }
       builder.finishNode();
@@ -180,44 +190,46 @@ A stray `/` inside a tag: browsers skip it.
     }
 
 An attribute: a name, then optionally `=` and a value. Gives where it
-ends, or -1 if the input ends inside a quoted value.
+ends, or null if the input ends inside a quoted value.
 
-    let attributeAt(builder: GreenNodeBuilder, source: SourceText, at: Int): Int {
+    let attributeAt(builder: GreenNodeBuilder, text: String, at: StringIndex): StringIndex? {
       builder.startNode(attributeKind);
 
 A name may start with `=`, and then runs to whitespace, `/`, `>`, or
 `=`.
 
-      var i = at + 1;
-      while (i < source.length) {
-        let c = source.codeAt(i);
+      let end = text.end;
+      var i = text.next(at);
+      while (i < end) {
+        let c = text[i];
         if (isAsciiWhitespace(c) || c == char'/' || c == char'>' || c == char'=') { break; }
-        i += 1;
+        i = text.next(i);
       }
-      tokenOf(builder, attributeNameKind, source, at, i);
-      let equals = skipWhitespace(source, i);
-      if (source.codeAt(equals) == char'=') {
-        tokenOf(builder, htmlWhitespaceKind, source, i, equals);
-        tokenOf(builder, equalsKind, source, equals, equals + 1);
-        let valueStart = skipWhitespace(source, equals + 1);
-        tokenOf(builder, htmlWhitespaceKind, source, equals + 1, valueStart);
-        let quote = source.codeAt(valueStart);
+      tokenOf(builder, attributeNameKind, text, at, i);
+      let equals = skipWhitespace(text, i);
+      if (codeAt(text, equals) == char'=') {
+        let afterEquals = text.next(equals);
+        tokenOf(builder, htmlWhitespaceKind, text, i, equals);
+        tokenOf(builder, equalsKind, text, equals, afterEquals);
+        let valueStart = skipWhitespace(text, afterEquals);
+        tokenOf(builder, htmlWhitespaceKind, text, afterEquals, valueStart);
+        let quote = codeAt(text, valueStart);
         var valueEnd = valueStart;
         if (quote == char'"' || quote == char'\'') {
-          valueEnd = valueStart + 1;
-          while (valueEnd < source.length && source.codeAt(valueEnd) != quote) {
-            valueEnd += 1;
+          valueEnd = text.next(valueStart);
+          while (valueEnd < end && text[valueEnd] != quote) {
+            valueEnd = text.next(valueEnd);
           }
-          if (valueEnd >= source.length) { return -1; }
-          valueEnd += 1;
+          if (valueEnd >= end) { return null; }
+          valueEnd = text.next(valueEnd);
         } else {
-          while (valueEnd < source.length) {
-            let c = source.codeAt(valueEnd);
+          while (valueEnd < end) {
+            let c = text[valueEnd];
             if (isAsciiWhitespace(c) || c == char'>') { break; }
-            valueEnd += 1;
+            valueEnd = text.next(valueEnd);
           }
         }
-        tokenOf(builder, attributeValueKind, source, valueStart, valueEnd);
+        tokenOf(builder, attributeValueKind, text, valueStart, valueEnd);
         i = valueEnd;
       }
       builder.finishNode();
@@ -226,55 +238,53 @@ A name may start with `=`, and then runs to whitespace, `/`, `>`, or
 
 An end tag: `</`, a name, optional whitespace, and `>`.
 
-    let endTagAt(source: SourceText, at: Int): GreenNode? {
-      if (!isAsciiAlpha(source.codeAt(at + 2))) { return null; }
-      let nameStop = nameEnd(source, at + 2);
-      let close = skipWhitespace(source, nameStop);
-      if (source.codeAt(close) != char'>') { return null; }
+    let endTagAt(text: String, at: StringIndex): GreenNode? {
+      let nameStart = text.step(at, 2);
+      if (!isAsciiAlpha(codeAt(text, nameStart))) { return null; }
+      let nameStop = nameEnd(text, nameStart);
+      let close = skipWhitespace(text, nameStop);
+      if (codeAt(text, close) != char'>') { return null; }
       let builder = new GreenNodeBuilder();
       builder.startNode(endTagKind);
-      tokenOf(builder, tagOpenKind, source, at, at + 2);
-      tokenOf(builder, tagNameKind, source, at + 2, nameStop);
-      tokenOf(builder, htmlWhitespaceKind, source, nameStop, close);
-      tokenOf(builder, tagCloseKind, source, close, close + 1);
+      tokenOf(builder, tagOpenKind, text, at, nameStart);
+      tokenOf(builder, tagNameKind, text, nameStart, nameStop);
+      tokenOf(builder, htmlWhitespaceKind, text, nameStop, close);
+      tokenOf(builder, tagCloseKind, text, close, text.next(close));
       builder.finishNode();
       builder.finish()
     }
 
 A comment, `<!--` to `-->`, or to the end of the input.
 
-    let commentAt(source: SourceText, at: Int): GreenNode? {
-      if (
-        source.codeAt(at + 2) != char'-' || source.codeAt(at + 3) != char'-'
-      ) {
+    let commentAt(text: String, at: StringIndex): GreenNode? {
+      let dash = text.step(at, 2);
+      if (codeAt(text, dash) != char'-' || codeAt(text, text.next(dash)) != char'-') {
         return null;
       }
-      let textStart = at + 4;
-      var textEnd = source.length;
-      var closeEnd = source.length;
-      if (source.codeAt(textStart) == char'>') {
+      let end = text.end;
+      let textStart = text.step(dash, 2);
+      let first = codeAt(text, textStart);
+      let second = codeAt(text, text.next(textStart));
+      var textEnd = end;
+      var closeEnd = end;
+      if (first == char'>') {
         textEnd = textStart;
-        closeEnd = textStart + 1;
-      } else if (source.codeAt(textStart) == char'-' && source.codeAt(textStart + 1) == char'>') {
+        closeEnd = text.next(textStart);
+      } else if (first == char'-' && second == char'>') {
         textEnd = textStart;
-        closeEnd = textStart + 2;
+        closeEnd = text.step(textStart, 2);
       } else {
-        for (var i = textStart; i + 2 < source.length; i += 1) {
-          if (
-            source.codeAt(i) == char'-' && source.codeAt(i + 1) == char'-' &&
-            source.codeAt(i + 2) == char'>'
-          ) {
-            textEnd = i;
-            closeEnd = i + 3;
-            break;
-          }
+        let close = text.indexOf("-->", textStart);
+        if (close is StringIndex) {
+          textEnd = close;
+          closeEnd = text.step(close, 3);
         }
       }
       let builder = new GreenNodeBuilder();
       builder.startNode(commentKind);
-      tokenOf(builder, commentOpenKind, source, at, textStart);
-      tokenOf(builder, commentTextKind, source, textStart, textEnd);
-      tokenOf(builder, commentCloseKind, source, textEnd, closeEnd);
+      tokenOf(builder, commentOpenKind, text, at, textStart);
+      tokenOf(builder, commentTextKind, text, textStart, textEnd);
+      tokenOf(builder, commentCloseKind, text, textEnd, closeEnd);
       builder.finishNode();
       builder.finish()
     }

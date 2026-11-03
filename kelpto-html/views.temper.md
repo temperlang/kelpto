@@ -10,7 +10,7 @@ and it can differ from the source's nesting. The name `Element` is kept
 for that view, which comes later.
 
     let {
-      GreenNode, GreenToken, RedNode, SourceText, Span, asciiLowercase,
+      GreenNode, GreenToken, RedNode, Span, asciiLowercase,
       escapeHtml,
     } = import("../kelpto-core");
 
@@ -116,10 +116,9 @@ character references, such as `&amp;`, are left as written.
 
       public get value(): String {
         let written = node.childOfKind(attributeValueKind)?.asWritten ?? "";
-        let source = new SourceText(written);
-        let first = source.codeAt(0);
+        let first = if (written.isEmpty) { -1 } else { written[String.begin] };
         if (first == char'"' || first == char'\'') {
-          source.slice(1, source.length - 1)
+          written.slice(written.next(String.begin), written.prev(written.end))
         } else {
           written
         }

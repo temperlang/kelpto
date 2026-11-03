@@ -22,8 +22,8 @@ text and sharing every untouched green node; the old document stays as
 it was.
 
     let {
-      GreenElement, GreenNode, GreenToken, Kind, RedElement, RedNode, RedToken, Replacement,
-      SourceText, Span, replaceAll,
+      GreenElement, GreenNode, GreenToken, Kind, RedElement, RedNode, RedToken, Replacement, Span,
+      replaceAll,
     } = import("../kelpto-core");
 
     export sealed interface MarkdownNode {
@@ -498,19 +498,37 @@ out container prefixes.
       if (nodes.isEmpty) { null } else { nodes[0] }
     }
 
+The first and last code points of `text`, or -1 if it's empty.
+
+    let firstCodeOf(text: String): Int { if (text.isEmpty) { -1 } else { text[String.begin] } }
+
+    let lastCodeOf(text: String): Int { if (text.isEmpty) { -1 } else { text[text.prev(text.end)] } }
+
+`text` without its first and last code points, such as a label's
+brackets or a title's quotes.
+
+    let withoutEnds(text: String): String {
+      text.slice(text.next(String.begin), text.prev(text.end))
+    }
+
 `text` with backslash escapes resolved, but not character references.
 
     let unescape(text: String): String {
-      let source = new SourceText(text);
       let out = new StringBuilder();
-      var i = 0;
-      while (i < source.length) {
-        if (source.codeAt(i) == char'\\' && isAsciiPunctuation(source.codeAt(i + 1))) {
-          i += 1;
+      let end = text.end;
+      var runStart = String.begin;
+      var i = String.begin;
+      while (i < end) {
+        let next = text.next(i);
+        if (text[i] == char'\\' && isAsciiPunctuation(codeInAt(text, next, end))) {
+          out.append(text.slice(runStart, i));
+          runStart = next;
+          i = text.next(next);
+        } else {
+          i = next;
         }
-        out.append(source.slice(i, i + 1));
-        i += 1;
       }
+      out.append(text.slice(runStart, end));
       out.toString()
     }
 
@@ -536,7 +554,7 @@ A heading: ATX, such as `## Usage`, or setext, its text underlined by
       public get level(): Int {
         let underline = node.childOfKind(setextMarkerKind);
         if (underline != null) {
-          return if (new SourceText(underline.asWritten).codeAt(0) == char'=') { 1 } else { 2 };
+          return if (firstCodeOf(underline.asWritten) == char'=') { 1 } else { 2 };
         }
         (node.childOfKind(atxMarkerKind) as RedToken orelse panic()).span.length
       }
@@ -644,12 +662,12 @@ with backslash escapes and character references resolved.
 The info string's first word, which CommonMark uses for the language.
 
       public get language(): String {
-        let source = new SourceText(info);
-        var end = 0;
-        while (end < source.length && source.codeAt(end) != char' ' && source.codeAt(end) != char'\t') {
-          end += 1;
+        let text = info;
+        var end = String.begin;
+        while (text.hasIndex(end) && text[end] != char' ' && text[end] != char'\t') {
+          end = text.next(end);
         }
-        source.slice(0, end)
+        text.slice(String.begin, end)
       }
 
 The code, each line ending in `\n`, with as much indentation removed
@@ -724,7 +742,7 @@ The marker character: `*`, `-`, or `_`.
 
       public get marker(): String {
         let written = node.childOfKind(thematicBreakMarkerKind)?.asWritten ?? "";
-        new SourceText(written).slice(0, 1)
+        written.slice(String.begin, written.step(String.begin, 1))
       }
     }
 
@@ -757,8 +775,7 @@ whitespace.
 
       public get label(): String {
         let label = node.childOfKind(linkLabelKind) as RedNode orelse panic();
-        let written = new SourceText(tokenTextOf(label, labelTextKind));
-        written.slice(1, written.length - 1)
+        withoutEnds(tokenTextOf(label, labelTextKind))
       }
 
 The destination, without angle brackets, with escapes and character
@@ -785,20 +802,14 @@ empty if there's none, as in `[a]()`.
 
     let destinationOf(node: RedNode): LinkTarget {
       let written = node.childOfKind(linkDestinationKind)?.asWritten ?? "";
-      let source = new SourceText(written);
-      let inner = if (source.codeAt(0) == char'<') {
-        source.slice(1, source.length - 1)
-      } else {
-        written
-      };
+      let inner = if (firstCodeOf(written) == char'<') { withoutEnds(written) } else { written };
       new LinkTarget(resolveText(inner))
     }
 
     let titleOf(node: RedNode): String? {
       let title = node.childOfKind(linkTitleKind);
       if (title == null) { return null; }
-      let written = new SourceText(lineTextOf(title as RedNode orelse panic(), titleTextKind));
-      resolveText(written.slice(1, written.length - 1))
+      resolveText(withoutEnds(lineTextOf(title as RedNode orelse panic(), titleTextKind)))
     }
 
 Like `tokenTextOf`, but with each line ending as `\n`.
@@ -838,11 +849,10 @@ or puts one in after `(` and any whitespace if there was none.
 brackets, with `<`, `>`, and `\` escaped.
 
     let writeDestination(url: String): String throws Bubble {
-      let source = new SourceText(url);
-      var plain = source.length > 0 && source.codeAt(0) != char'<';
+      var plain = !url.isEmpty && firstCodeOf(url) != char'<';
       var depth = 0;
-      for (var i = 0; i < source.length; i += 1) {
-        let c = source.codeAt(i);
+      for (var i = String.begin; url.hasIndex(i); i = url.next(i)) {
+        let c = url[i];
         if (c == char'\n' || c == char'\r') { bubble(); }
         if (c <= 0x20 || c == 0x7F || c == char'\\') { plain = false; }
         if (c == char'(') { depth += 1; }
@@ -854,11 +864,16 @@ brackets, with `<`, `>`, and `\` escaped.
       if (plain && depth == 0) { return url; }
       let out = new StringBuilder();
       out.append("<");
-      for (var i = 0; i < source.length; i += 1) {
-        let c = source.codeAt(i);
-        if (c == char'<' || c == char'>' || c == char'\\') { out.append("\\"); }
-        out.append(source.slice(i, i + 1));
+      var runStart = String.begin;
+      for (var i = String.begin; url.hasIndex(i); i = url.next(i)) {
+        let c = url[i];
+        if (c == char'<' || c == char'>' || c == char'\\') {
+          out.append(url.slice(runStart, i));
+          out.append("\\");
+          runStart = i;
+        }
       }
+      out.append(url.slice(runStart, url.end));
       out.append(">");
       out.toString()
     }
@@ -922,8 +937,8 @@ The bullet (`-`, `+`, or `*`), or the delimiter after the numbers (`.`
 or `)`).
 
       public get marker(): String {
-        let written = new SourceText(first.marker);
-        written.slice(written.length - 1, written.length)
+        let written = first.marker;
+        if (written.isEmpty) { "" } else { written.slice(written.prev(written.end), written.end) }
       }
 
 Whether it's tight, with no blank lines between its items or between
@@ -1016,12 +1031,14 @@ The marker as written, such as `-` or `3.`.
 The number of an ordered item, or null.
 
       public get number(): Int? {
-        let written = new SourceText(marker);
-        let last = written.codeAt(written.length - 1);
+        let written = marker;
+        if (written.isEmpty) { return null; }
+        let lastAt = written.prev(written.end);
+        let last = written[lastAt];
         if (last != char'.' && last != char')') { return null; }
         var value = 0;
-        for (var i = 0; i < written.length - 1; i += 1) {
-          value = value * 10 + written.codeAt(i) - char'0';
+        for (var i = String.begin; i < lastAt; i = written.next(i)) {
+          value = value * 10 + written[i] - char'0';
         }
         value
       }
@@ -1119,10 +1136,9 @@ something, with no whitespace, brackets, backslashes, backticks, `<`,
 Bubbles if not.
 
     let checkFootnoteLabel(label: String): Void throws Bubble {
-      let source = new SourceText(label);
-      if (source.length == 0) { bubble(); }
-      for (var i = 0; i < source.length; i += 1) {
-        let c = source.codeAt(i);
+      if (label.isEmpty) { bubble(); }
+      for (var i = String.begin; label.hasIndex(i); i = label.next(i)) {
+        let c = label[i];
         if (
           isAsciiWhitespace(c) || c == char'[' || c == char']' || c == char'\\' || c == char'`' ||
           c == char'<' || c == char'|' || c == 0
@@ -1175,9 +1191,9 @@ Each column's alignment, from the delimiter row: `"left"` for `:--`,
         let kid = kids[i];
         if (kid is GreenToken) {
           if (kid.kind.id == tableDelimiterKind.id) {
-            let marker = new SourceText(kid.text);
-            let left = marker.codeAt(0) == char':';
-            let right = marker.codeAt(marker.length - 1) == char':';
+            let marker = kid.text;
+            let left = firstCodeOf(marker) == char':';
+            let right = lastCodeOf(marker) == char':';
             result.add(
               if (left && right) { "center" } else if (left) { "left" } else if (right) { "right" } else { "none" },
             );
@@ -1301,32 +1317,30 @@ spaces.
 
       public get code(): String {
         let raw = tokenTextOf(node, codeTextKind);
-        let source = new SourceText(raw);
         let out = new StringBuilder();
         var allSpaces = true;
-        for (var i = 0; i < source.length; i += 1) {
-          let c = source.codeAt(i);
+        for (var i = String.begin; raw.hasIndex(i); i = raw.next(i)) {
+          let c = raw[i];
           if (c != char' ' && c != char'\n' && c != char'\r') { allSpaces = false; }
         }
-        let n = source.length;
-        var start = 0;
-        var end = n;
-        if (
-          !allSpaces && n >= 2 && isLineSpace(source.codeAt(0)) && isLineSpace(source.codeAt(n - 1))
-        ) {
-          start = 1;
-          end = n - 1;
+        var start = String.begin;
+        var end = raw.end;
+        // Not all spaces, so at least two code points if both ends are.
+        if (!allSpaces && isLineSpace(firstCodeOf(raw)) && isLineSpace(lastCodeOf(raw))) {
+          start = raw.next(start);
+          end = raw.prev(end);
         }
-        for (var i = start; i < end; i += 1) {
-          let c = source.codeAt(i);
-          if (c == char'\r' && source.codeAt(i + 1) == char'\n') {
+        var runStart = start;
+        for (var i = start; i < end; i = raw.next(i)) {
+          let c = raw[i];
+          if (c == char'\n' || c == char'\r') {
+            out.append(raw.slice(runStart, i));
+            runStart = raw.next(i);
             // A CRLF is one line ending: one space, at its `\n`.
-          } else if (c == char'\n' || c == char'\r') {
-            out.append(" ");
-          } else {
-            out.append(source.slice(i, i + 1));
+            if (!(c == char'\r' && codeInAt(raw, runStart, raw.end) == char'\n')) { out.append(" "); }
           }
         }
+        out.append(raw.slice(runStart, end));
         out.toString()
       }
     }
@@ -1489,8 +1503,7 @@ As `Link.withDestination`.
       let style = linkStyleOf(node);
       if (style == "inline") { return null; }
       if (style == "full") {
-        let label = new SourceText(lineTextOf(node.childOfKind(linkLabelKind) as RedNode orelse panic(), labelTextKind));
-        return label.slice(1, label.length - 1);
+        return withoutEnds(lineTextOf(node.childOfKind(linkLabelKind) as RedNode orelse panic(), labelTextKind));
       }
       let out = new StringBuilder();
       let kids = node.green.children;
@@ -1615,10 +1628,7 @@ one can hold a `:`), and `http://` before a `www.` domain.
         let written = text;
         if (node.hasKind(wwwAutolinkKind)) { return new LinkTarget("http://${written}"); }
         if (node.hasKind(emailAutolinkKind)) {
-          let source = new SourceText(written);
-          for (var i = 0; i < source.length; i += 1) {
-            if (source.codeAt(i) == char':') { return new LinkTarget(written); }
-          }
+          if (written.indexOf(":") is StringIndex) { return new LinkTarget(written); }
           return new LinkTarget("mailto:${written}");
         }
         new LinkTarget(if (isEmail) { "mailto:${written}" } else { written })
@@ -1815,10 +1825,9 @@ among its definition's references.
     }
 
     let utf8Length(text: String): Int {
-      let source = new SourceText(text);
       var length = 0;
-      for (var i = 0; i < source.length; i += 1) {
-        let c = source.codeAt(i);
+      for (var i = String.begin; text.hasIndex(i); i = text.next(i)) {
+        let c = text[i];
         length += if (c < 0x80) { 1 } else if (c < 0x800) { 2 } else if (c < 0x10000) { 3 } else { 4 };
       }
       length
@@ -1973,10 +1982,10 @@ each `|`, for a table cell.
 Edits change only their own span: the text before and after it stays.
 
     let checkLocal(before: String, after: String, prefix: Int, suffix: Int): Boolean {
-      let a = new SourceText(before);
-      let b = new SourceText(after);
-      a.slice(0, prefix) == b.slice(0, prefix) &&
-        a.slice(a.length - suffix, a.length) == b.slice(b.length - suffix, b.length)
+      before.slice(String.begin, before.step(String.begin, prefix)) ==
+        after.slice(String.begin, after.step(String.begin, prefix)) &&
+        before.slice(before.step(before.end, -suffix), before.end) ==
+        after.slice(after.step(after.end, -suffix), after.end)
     }
 
     test("withLevel changes only the marker") {

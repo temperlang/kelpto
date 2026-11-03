@@ -15,9 +15,9 @@ use it directly.
 - **`replaceWith`:** a new root, copying only the path to the
   replaced node; **`replaceAll`** makes many `Replacement`s at once,
   copying each shared path once.
-- **`Span`** (start and length in code points), **`Kind`** (an id and
-  a name), and **`SourceText`** (a string indexed by code point; the
-  parsers read by `StringIndex` instead).
+- **`Span`** (start and length in code points) and **`Kind`** (an id
+  and a name). Everything reads text by `StringIndex`, so nothing is
+  decoded.
 
 ```temper
 let word = new Kind(1000, "Word");

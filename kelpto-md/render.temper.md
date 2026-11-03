@@ -55,21 +55,22 @@ and anywhere in an HTML block.
     }
 
     let filterDisallowedTags(html: String, everywhere: Boolean): String {
-      let source = new SourceText(html);
       var changed = false;
-      for (var i = 0; i < source.length; i += 1) {
-        if (source.codeAt(i) == char'<' && isDisallowedTag(source, i)) { changed = true; }
+      for (var i = String.begin; html.hasIndex(i); i = html.next(i)) {
+        if (html[i] == char'<' && isDisallowedTag(html, i)) { changed = true; }
         if (!everywhere) { break; }
       }
       if (!changed) { return html; }
       let out = new StringBuilder();
-      for (var i = 0; i < source.length; i += 1) {
-        if (source.codeAt(i) == char'<' && (everywhere || i == 0) && isDisallowedTag(source, i)) {
+      var runStart = String.begin;
+      for (var i = String.begin; html.hasIndex(i); i = html.next(i)) {
+        if (html[i] == char'<' && (everywhere || i == String.begin) && isDisallowedTag(html, i)) {
+          out.append(html.slice(runStart, i));
           out.append("&lt;");
-        } else {
-          out.append(source.slice(i, i + 1));
+          runStart = html.next(i);
         }
       }
+      out.append(html.slice(runStart, html.end));
       out.toString()
     }
 
@@ -80,17 +81,18 @@ and anywhere in an HTML block.
 Whether the `<` at `at` starts one: `<` or `</`, the name in any case,
 then whitespace, `>`, or `/>`.
 
-    let isDisallowedTag(source: SourceText, at: Int): Boolean {
-      let nameStart = if (source.codeAt(at + 1) == char'/') { at + 2 } else { at + 1 };
+    let isDisallowedTag(html: String, at: StringIndex): Boolean {
+      let end = html.end;
+      var nameStart = html.next(at);
+      if (codeInAt(html, nameStart, end) == char'/') { nameStart = html.next(nameStart); }
       for (var k = 0; k < disallowedTags.length; k += 1) {
         let name = disallowedTags[k];
-        let length = name.countBetween(String.begin, name.end);
-        let after = nameStart + length;
-        if (after < source.length && asciiLowercase(source.slice(nameStart, after)) == name) {
-          let c = source.codeAt(after);
+        let after = html.step(nameStart, name.countBetween(String.begin, name.end));
+        if (html.hasIndex(after) && asciiLowercase(html.slice(nameStart, after)) == name) {
+          let c = html[after];
           if (
             c == char' ' || c == char'\t' || c == char'\n' || c == char'\r' || c == char'>' ||
-            (c == char'/' && source.codeAt(after + 1) == char'>')
+            (c == char'/' && codeInAt(html, html.next(after), end) == char'>')
           ) {
             return true;
           }
@@ -557,11 +559,13 @@ bytes.
     }
 
     let percentByte(b: Int, out: StringBuilder): Void {
-      let digits = "0123456789ABCDEF";
-      let source = new SourceText(digits);
       out.append("%");
-      out.append(source.slice(b >> 4, (b >> 4) + 1));
-      out.append(source.slice(b & 15, (b & 15) + 1));
+      out.appendCodePoint(hexDigit(b >> 4)) orelse panic();
+      out.appendCodePoint(hexDigit(b & 15)) orelse panic();
+    }
+
+    let hexDigit(d: Int): Int {
+      if (d < 10) { char'0' + d } else { char'A' + d - 10 }
     }
 
 A list's `start` attribute: for an ordered list not starting at 1.

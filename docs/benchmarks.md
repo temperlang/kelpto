@@ -165,6 +165,30 @@ Step 3 of the plan, fewer and larger tokens, found nothing to merge:
 runs of plain text are one token already, and each node's child list
 is exactly its children in every backend.
 
+## C++, Rust, and JavaScript's garbage (2026-11-03)
+
+kelpto-md alone, after the steps above, on a busy machine (a shared
+lock kept other heavy jobs out of each timing); full numbers in
+[bench/results/2026-11-03-compiled.md](../bench/results/2026-11-03-compiled.md):
+
+- **Rust is 1.6 times faster, in 45% less memory:** the spec parses
+  in 61 ms (94 ms on 2026-11-02), spec-x10 in 578 ms (918 ms), with
+  peak memory 49 MiB above reading it (87 MiB).
+- **C++ is 24 times slower:** 580 ms for the spec (24.5 ms), 11.8 ms
+  for Hrefine's README (4.9 ms). Temper's C++ passes a `String` by
+  value, so each helper call reading the source by `StringIndex`
+  copies the whole document; spec-x10 would take minutes. That needs a
+  Temper fix (strings by reference); nothing in Kelpto's source.
+- **JavaScript's peak** on spec-x10 isn't the tree (14 MiB kept) but
+  V8's young generation, grown to fit a parse allocating 85 MiB, plus
+  what lives until the parse ends: each line's and block's data. With
+  a 1 MiB young generation (`--max-semi-space-size=1`) the peak is
+  115 MiB instead of 171. The tree writer now reuses one inline parser
+  for all paragraphs, and lines' container prefixes are one list, not
+  one per line: a parse allocates 73 MiB (sampled), and peak is 151 to
+  169 MiB, against 171 to 172 before (total, including Node's 67 MiB
+  for reading the file).
+
 ## Where kelpto-md is slower, and why
 
 kelpto-md is slower everywhere but against flexmark: 1.5 to 3.6 times

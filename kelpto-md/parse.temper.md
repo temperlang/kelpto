@@ -413,7 +413,7 @@ Whether any is on, so the document is GFM's.
       let blocks = new BlockParser(text, extensions);
       blocks.parse();
       let labels = definitionLabels(text, blocks.lines);
-      new TreeWriter(text, blocks.lines, rawHtmlHandler, labels, extensions)
+      new TreeWriter(text, blocks.lines, blocks.prefixes.toList(), rawHtmlHandler, labels, extensions)
         .writeDocument(blocks.document)
     }
 
@@ -445,7 +445,7 @@ with the inline extensions of `extensions`, and in a table cell if
 
     let inlineContentGreen(text: String, extensions: Extensions, inCell: Boolean): GreenNode {
       let line = new LineData(String.begin, text.end, text.end);
-      new TreeWriter(text, [line], opaqueRawHtml, new Map<String, Boolean>([]), extensions)
+      new TreeWriter(text, [line], [], opaqueRawHtml, new Map<String, Boolean>([]), extensions)
         .inlinesOnly(inCell)
     }
 
@@ -459,6 +459,7 @@ prefix tokens on lines after its first.
     class TreeWriter {
       private source: String;
       private lines: List<LineData>;
+      private prefixes: List<PrefixToken>;
       private handler: RawHtmlHandler;
       private labels: Mapped<String, Boolean>;
       private extensions: Extensions;
@@ -467,15 +468,24 @@ prefix tokens on lines after its first.
       private var inText: Boolean = false;
       private var inCell: Boolean = false;
 
+One inline parser for every paragraph, reset for each.
+
+      private inlines: InlineParser;
+
       public constructor(
-        source: String, lines: List<LineData>, handler: RawHtmlHandler,
+        source: String, lines: List<LineData>, prefixes: List<PrefixToken>, handler: RawHtmlHandler,
         labels: Mapped<String, Boolean>, extensions: Extensions,
       ) {
         this.source = source;
         this.lines = lines;
+        this.prefixes = prefixes;
         this.handler = handler;
         this.labels = labels;
         this.extensions = extensions;
+        this.inlines = new InlineParser(
+          source, String.begin, String.begin, labels, extensions.strikethrough, extensions.autolinks,
+          extensions.footnotes, false, extensions.gfm,
+        );
       }
 
       public writeDocument(document: BlockData): GreenNode {
@@ -488,9 +498,8 @@ prefix tokens on lines after its first.
             open.removeLast();
           }
           let line = lines[n];
-          let prefix = line.prefix;
-          for (var i = 0; i < prefix.length; i += 1) {
-            let token = prefix[i];
+          for (var i = line.prefixStart; i < line.prefixEnd; i += 1) {
+            let token = prefixes[i];
             ensureOpen(token.owner);
             sourceToken(token.kind, token.start, token.end);
           }
@@ -555,9 +564,9 @@ its depth there.
 The prefix tokens of line `n`, inside a leaf.
 
       private prefixOf(n: Int): Void {
-        let prefix = lines[n].prefix;
-        for (var i = 0; i < prefix.length; i += 1) {
-          let token = prefix[i];
+        let line = lines[n];
+        for (var i = line.prefixStart; i < line.prefixEnd; i += 1) {
+          let token = prefixes[i];
           sourceToken(token.kind, token.start, token.end);
         }
       }
@@ -741,7 +750,7 @@ container prefixes split them; then each line is opaque text.
         var whole = first.tabRemainder == 0;
         for (var n = leaf.firstLine + 1; n <= leaf.lastLine; n += 1) {
           let line = lines[n];
-          if (!line.prefix.isEmpty || line.leafStart != line.start) { whole = false; }
+          if (line.prefixEnd > line.prefixStart || line.leafStart != line.start) { whole = false; }
         }
         if (whole) {
           rawHtmlChildren(source.slice(first.leafStart, lines[leaf.lastLine].breakEnd));
@@ -931,10 +940,8 @@ here, so each range becomes tokens with the line breaks between lines
 written as `emit` writes them.
 
       private parseInlines(content: Content, start: StringIndex, end: StringIndex, inCell: Boolean): Void {
-        let parser = new InlineParser(
-          content.text, start, end, labels, extensions.strikethrough, extensions.autolinks,
-          extensions.footnotes, inCell, extensions.gfm,
-        );
+        let parser = inlines;
+        parser.reset(content.text, start, end, inCell);
         this.inCell = inCell;
         parser.parse();
         builder.startNode(inlineContentKind);
@@ -1015,7 +1022,7 @@ stays opaque text between line breaks' prefixes if not.
         var whole = true;
         for (var i = first; i < last; i += 1) {
           let next = lines[content.firstLine + i + 1];
-          if (!next.prefix.isEmpty || content.sourceStarts[i + 1] != next.start) { whole = false; }
+          if (next.prefixEnd > next.prefixStart || content.sourceStarts[i + 1] != next.start) { whole = false; }
         }
         if (whole) {
 

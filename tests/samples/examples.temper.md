@@ -8,7 +8,6 @@ Two jobs on whole documents, with kelpto-md's `descendants` and
       Autolink, Heading, Image, Link, LinkReferenceDefinition, LinkTarget, MarkdownDocument,
       MarkdownNode, MarkdownParser,
     } = import("../../kelpto-md");
-    let { SourceText } = import("../../kelpto-core");
 
 ## Scraping: a table of contents and every link
 
@@ -79,13 +78,12 @@ it only joins, without removing dot segments.
     }
 
     let isRelative(url: String): Boolean {
-      let source = new SourceText(url);
-      if (source.length == 0 || source.codeAt(0) == char'#' || (source.length >= 2 && source.slice(0, 2) == "//")) {
+      if (url.isEmpty || url[String.begin] == char'#' || url.slice(String.begin, url.step(String.begin, 2)) == "//") {
         return false;
       }
-      for (var i = 0; i < source.length; i += 1) {
-        let c = source.codeAt(i);
-        if (c == char':') { return i == 0 || !isSchemeStart(source.codeAt(0)); }
+      for (var i = String.begin; url.hasIndex(i); i = url.next(i)) {
+        let c = url[i];
+        if (c == char':') { return i == String.begin || !isSchemeStart(url[String.begin]); }
         if (!isSchemeStart(c) && !(c >= char'0' && c <= char'9') && c != char'+' && c != char'-' && c != char'.') {
           return true;
         }
@@ -99,13 +97,12 @@ it only joins, without removing dot segments.
 origin instead.
 
     let resolve(base: String, url: String): String {
-      if (new SourceText(url).codeAt(0) != char'/') { return "${base}${url}"; }
-      let source = new SourceText(base);
+      if (url.isEmpty || url[String.begin] != char'/') { return "${base}${url}"; }
       var slashes = 0;
-      for (var i = 0; i < source.length; i += 1) {
-        if (source.codeAt(i) == char'/') {
+      for (var i = String.begin; base.hasIndex(i); i = base.next(i)) {
+        if (base[i] == char'/') {
           slashes += 1;
-          if (slashes == 3) { return "${source.slice(0, i)}${url}"; }
+          if (slashes == 3) { return "${base.slice(String.begin, i)}${url}"; }
         }
       }
       "${base}${url}"
@@ -124,10 +121,16 @@ wrong, or the empty string.
       let before = doc.descendants;
       let after = edited.descendants;
       if (viewKinds(before) != viewKinds(after)) { return "views changed"; }
-      let old = new SourceText(doc.asWritten);
-      let now = new SourceText(edited.asWritten);
+      let old = doc.asWritten;
+      let now = edited.asWritten;
+
+Where in each text the views' code point offsets so far are, by
+`StringIndex` too.
+
       var oldAt = 0;
       var newAt = 0;
+      var oldIndex = String.begin;
+      var newIndex = String.begin;
       var edits = 0;
       for (var i = 0; i < before.length; i += 1) {
         let a = before[i];
@@ -141,15 +144,19 @@ span.
         if (isEdited(a)) {
           edits += 1;
           if (a.span.start >= oldAt) {
-            if (old.slice(oldAt, a.span.start) != now.slice(newAt, b.span.start)) {
+            let oldStart = old.step(oldIndex, a.span.start - oldAt);
+            let newStart = now.step(newIndex, b.span.start - newAt);
+            if (old.slice(oldIndex, oldStart) != now.slice(newIndex, newStart)) {
               return "bytes changed before ${a.span.toString()}";
             }
+            oldIndex = old.step(oldStart, a.span.end - a.span.start);
+            newIndex = now.step(newStart, b.span.end - b.span.start);
             oldAt = a.span.end;
             newAt = b.span.end;
           }
         }
       }
-      if (old.slice(oldAt, old.length) != now.slice(newAt, now.length)) { return "bytes changed at the end"; }
+      if (old.slice(oldIndex, old.end) != now.slice(newIndex, now.end)) { return "bytes changed at the end"; }
       let parser = if (gfm) { MarkdownParser.gfm } else { MarkdownParser.commonMark };
       let reparsed = parser.parse(edited.asWritten);
       if (viewKinds(reparsed.descendants) != viewKinds(after)) { return "reads back as other views"; }

@@ -148,7 +148,14 @@ line ending ends.
 
       public contentEnd: StringIndex;
       public breakEnd: StringIndex;
-      public prefix: ListBuilder<PrefixToken> = new ListBuilder<PrefixToken>();
+
+Its container prefix tokens: from `prefixStart` up to `prefixEnd` in
+the parser's `prefixes`, one list for the document rather than one per
+line (in JavaScript, an empty list per line was a tenth of a parse's
+allocation, kept to the end).
+
+      public var prefixStart: Int = 0;
+      public var prefixEnd: Int = 0;
 
 The leaf block taking the rest of the line, or null if the line only
 opens containers.
@@ -214,6 +221,10 @@ Where `target` is in `text` from `start`, or the end.
     class BlockParser {
       public text: String;
       public lines: List<LineData>;
+
+Every line's container prefix tokens, in order (see `LineData`).
+
+      public prefixes: ListBuilder<PrefixToken> = new ListBuilder<PrefixToken>();
       public document: BlockData;
       private extensions: Extensions;
       private var nextId: Int = 1;
@@ -348,7 +359,11 @@ Moves to `target`, on this line, a whole code point at a time.
 
       private prefixToken(owner: BlockData, kind: Kind, start: StringIndex, end: StringIndex): Void {
         if (start < end) {
-          lines[lineNumber].prefix.add(new PrefixToken(owner, kind, start, end));
+          // A line's tokens are added together, while it's parsed.
+          let line = lines[lineNumber];
+          if (line.prefixEnd == line.prefixStart) { line.prefixStart = prefixes.length; }
+          prefixes.add(new PrefixToken(owner, kind, start, end));
+          line.prefixEnd = prefixes.length;
         }
       }
 
@@ -915,9 +930,8 @@ Sets each block's `lastLine` from the lines holding its text.
           let line = lines[n];
           let leaf = line.leaf;
           if (leaf != null) { reach(leaf, n); }
-          let prefix = line.prefix;
-          for (var i = 0; i < prefix.length; i += 1) {
-            reach(prefix[i].owner, n);
+          for (var i = line.prefixStart; i < line.prefixEnd; i += 1) {
+            reach(prefixes[i].owner, n);
           }
         }
       }

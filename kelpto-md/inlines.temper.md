@@ -105,9 +105,9 @@ points (a run's length, a label's at most 999), the parser counts them
 as it steps; its markers and delimiters are ASCII.
 
     class InlineParser {
-      private text: String;
-      private start: StringIndex;
-      private end: StringIndex;
+      private var text: String;
+      private var start: StringIndex;
+      private var end: StringIndex;
       private labels: Mapped<String, Boolean>;
 
 GFM's inline extensions, and whether this is a table cell's content.
@@ -115,7 +115,7 @@ GFM's inline extensions, and whether this is a table cell's content.
       private strikethrough: Boolean;
       private autolinks: Boolean;
       private footnotes: Boolean;
-      private inCell: Boolean;
+      private var inCell: Boolean;
 
 Whether this is a GFM document, parsed with any extension on, where
 `![^` is never an image, footnotes or not, as cmark-gfm reads it.
@@ -207,6 +207,52 @@ The start of plain text not yet in an item.
         this.noDeclarationEnd = end;
         this.noCdataEnd = end;
         this.pending = start;
+        newNode(inlineContentKind);
+      }
+
+Ready for other content of the same document, as if new. A tree
+writer keeps one parser for all its paragraphs, so their lists are
+made once and grow only as needed: made new per paragraph, they were
+a third of what a parse allocated in JavaScript (2026-11-03).
+
+      public reset(text: String, start: StringIndex, end: StringIndex, inCell: Boolean): Void {
+        this.text = text;
+        this.start = start;
+        this.end = end;
+        this.inCell = inCell;
+        kinds.clear();
+        starts.clear();
+        ends.clear();
+        nodes.clear();
+        textual.clear();
+        firsts.clear();
+        lasts.clear();
+        nexts.clear();
+        prevs.clear();
+        delimiterItems.clear();
+        delimiterChars.clear();
+        delimiterLengths.clear();
+        delimiterLefts.clear();
+        canOpen.clear();
+        canClose.clear();
+        delimiterPrevs.clear();
+        delimiterNexts.clear();
+        lastDelimiter = -1;
+        bracketItems.clear();
+        bracketImages.clear();
+        bracketDelimiters.clear();
+        bracketTextStarts.clear();
+        bracketAfter.clear();
+        activeFrom = 0;
+        backtickRuns.clear();
+        backticksScanned = false;
+        noCommentEnd = end;
+        noInstructionEnd = end;
+        noDeclarationEnd = end;
+        noCdataEnd = end;
+        newlines.clear();
+        newlinesScanned = false;
+        pending = start;
         newNode(inlineContentKind);
       }
 
