@@ -6,6 +6,8 @@ publish = false
 
 [dependencies]
 # Built by `temper build` at the repo's top.
+kelpto = { path = "../../../temper.out/rust/kelpto" }
+kelpto-html = { path = "../../../temper.out/rust/kelpto-html" }
 kelpto-md = { path = "../../../temper.out/rust/kelpto-md" }
 # Temper's runtime, for `cast`, to test a view's type.
 temper-core = { path = "../../../temper.out/rust/temper-core" }

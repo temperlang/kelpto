@@ -1,4 +1,4 @@
-// A tour of Kelpto's Markdown library, from C++.
+// A tour of Kelpto's Markdown and HTML libraries, from C++.
 //
 // The same tour exists for each language Kelpto supports, and they all print
 // the same text. See demos/README.md for how to run them.
@@ -9,8 +9,21 @@
 #include <string>
 #include <vector>
 
+#include "kelpto-html/init.hpp"
 #include "kelpto-md/init.hpp"
+#include "kelpto/init.hpp"
 
+using kelpto::buildHtml;
+using kelpto::markdownNodeOf;
+using kelpto::parseMarkdownWithHtml;
+using kelpto::renderSafe;
+using kelpto_html::BuiltNode;
+using kelpto_html::Element;
+using kelpto_html::FragmentContext;
+using kelpto_html::SanitizerPolicy;
+using kelpto_html::parseHtml;
+using kelpto_html::parseHtmlFragment;
+using kelpto_html::tokenizeHtml;
 using kelpto_md::FootnoteDefinition;
 using kelpto_md::Heading;
 using kelpto_md::Inlines;
@@ -79,6 +92,24 @@ std::string labelOf(std::shared_ptr<FootnoteDefinition> const &definition) {
   return definition ? definition->get_label() : "nothing";
 }
 
+// Each element, indented, and where it came from: its raw start tag, its
+// Markdown node, or neither.
+void origins(std::vector<std::shared_ptr<BuiltNode>> const &nodes, int depth) {
+  for (auto const &node : nodes) {
+    if (auto element = std::dynamic_pointer_cast<Element>(node)) {
+      std::string source = "implied";
+      if (auto tag = element->get_startTag()) {
+        source = tag->get_asWritten();
+      } else if (auto markdown = markdownNodeOf(element)) {
+        source = markdown->get_node()->get_kind()->get_name();
+      }
+      std::cout << std::string(depth * 2, ' ') << element->get_name() << " <- " << source << "\n";
+      auto children = element->get_children();
+      origins(*children, depth + 1);
+    }
+  }
+}
+
 int main() {
   std::cout << "# Kelpto tour\n";
 
@@ -91,10 +122,12 @@ Kelpto keeps *every*   byte.
 | Library     | Status |
 |:------------|-------:|
 | kelpto-md   | ready  |
-| kelpto-html | early  |
+| kelpto-html | ready  |
+| Hrefine     | early  |
 
 - [x] CommonMark
-- [ ] HTML trees
+- [x] HTML trees
+- [ ] Hrefine links
 
 Read [the docs][docs].
 
@@ -128,8 +161,8 @@ Read [the docs][docs].
 
   // Each edit gives a new document; the old one stays as it was.
   auto edited = doc->get_headings()->at(0)->withText("Release notes, 0.1");
-  edited = edited->get_tables()->at(0)->get_rows()->at(1)->get_cells()->at(1)->withText("ready");
-  edited = edited->get_taskListItems()->at(1)->withChecked(true);
+  edited = edited->get_tables()->at(0)->get_rows()->at(2)->get_cells()->at(1)->withText("ready");
+  edited = edited->get_taskListItems()->at(2)->withChecked(true);
   edited = edited->get_linkReferenceDefinitions()->at(0)->withDestination(LinkTarget::make("https://example.com/new"));
   changes(text, edited->get_asWritten());
   std::cout << "at level 2: " << shown(edited->get_headings()->at(0)->withLevel(2)->get_headings()->at(0)->get_asWritten()) << "\n";
@@ -259,4 +292,43 @@ Read [the docs][docs].
   auto advised = adviceEditor->toDocument();
   rendered("markdown", advised->get_asWritten());
   std::cout << "heading: " << advised->get_headings()->at(1)->get_text() << "\n";
+
+  section("9. Parse HTML, as browsers do");
+
+  // The HTML standard's tokenizer and tree construction, lossless too.
+  std::string htmlText = "<p id=a id=b>One<p>Two<table><td>x</table>";
+  auto htmlDoc = parseHtml(htmlText);
+  std::cout << "printed back exactly: " << (htmlDoc->get_asWritten() == htmlText ? "true" : "false") << "\n";
+  rendered("html", htmlDoc->get_html());
+  auto paragraphs = htmlDoc->get_body()->get_children();
+  std::vector<std::string> names;
+  for (auto const &node : *paragraphs) names.push_back(std::dynamic_pointer_cast<Element>(node)->get_name());
+  auto firstId = std::dynamic_pointer_cast<Element>(paragraphs->at(0))->attribute("id");
+  std::cout << "body: " << joined(names) << ", the first with id " << firstId.value << "\n";
+  auto errors = htmlDoc->get_errors();
+  for (auto const &error : *errors) {
+    std::cout << "error: " << error->get_code() << " at " << error->get_offset() << "\n";
+  }
+  // A fragment, as innerHTML parses it: where it goes decides what it is.
+  std::cout << "in a tr: " << parseHtmlFragment("<td>1<td>2", FragmentContext::make("tr"))->get_html() << "\n";
+  std::cout << "in a div: " << parseHtmlFragment("<td>1<td>2", FragmentContext::make("div"))->get_html() << "\n";
+  // Tokens edit like Markdown: one part changes, the rest stays as written.
+  auto anchor = tokenizeHtml("<a href='/old' class=x>Go</a>")->get_startTags()->at(0);
+  std::cout << "edited: " << anchor->attribute("href")->withValue("/new")->get_asWritten() << "\n";
+
+  section("10. Markdown and raw HTML, one tree");
+
+  // The tree a browser builds from the rendering, each element knowing
+  // where it came from.
+  auto mixed = parseMarkdownWithHtml("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n");
+  auto tree = buildHtml(mixed);
+  rendered("html", tree->get_html());
+  origins(*tree->get_children(), 0);
+
+  section("11. Render Markdown from anyone");
+
+  // That tree, sanitized: only what the policy allows, with every URL checked.
+  auto untrusted = parseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n");
+  rendered("safe", renderSafe(untrusted)->get_html());
+  rendered("text only", renderSafe(parseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy::textOnly())->get_html());
 }

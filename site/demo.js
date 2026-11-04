@@ -1,14 +1,18 @@
 // The opening demo: Markdown in, rendered HTML out, and edits through
 // kelpto-md's API on what's clicked in the preview, with the output shown
 // as a diff against the input. Each edit is a step (editcode.js), which the
-// code panel shows in every language. kelpto-md comes from Temper's JS
-// output, as plain ES modules named by the page's import map.
+// code panel shows in every language. Raw HTML is escaped, trusted, or
+// sanitized with Markdown (kelpto's `renderSafe`), and the Tree view shows
+// what a browser builds from it all, each node linked to its source
+// (tree.js). Kelpto comes from Temper's JS output, as plain ES modules
+// named by the page's import map.
 
 import {
   Autolink, BlockQuote, Emphasis, FootnoteReference, Heading, Link, ListBlock, MarkdownRenderer, Paragraph,
   Strikethrough, Strong, Table, normalizeLabel,
 } from "kelpto-md";
 import { applyStep, parserFor } from "./editcode.js";
+import { highlighter, loadHtmlSide, treeHtml, treeView } from "./tree.js";
 
 const SAMPLE = `Release notes
 =============
@@ -19,11 +23,13 @@ Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save.
 | Library     | Status |   Since |
 |:------------|:------:|--------:|
 | kelpto-md   | ready  |     0.1 |
-| kelpto-html | early  |         |
+| kelpto-html | ready  |     0.1 |
+| Hrefine     | early  |         |
 
 * [x] CommonMark
-* [ ] HTML trees
-    * [ ] html5lib's tests
+* [x] HTML trees
+    * [x] html5lib's and WPT's tests
+* [ ] Hrefine links
 
 ## Links
 
@@ -314,16 +320,42 @@ function previewCss() {
 const outsideFootnotes = (d, selector) =>
   /** @type {HTMLElement[]} */ ([...d.querySelectorAll(selector)]).filter((el) => !el.closest("section.footnotes"));
 
+/** What each choice for raw HTML says about the output. */
+const RAW_NOTES = {
+  escape: "Raw HTML is escaped, as it is by default.",
+  trust: "Raw HTML is trusted here, so it renders; the preview is sandboxed, so scripts don't run.",
+  sanitize:
+    "Sanitized through renderSafe: the tree a browser builds from Markdown and raw HTML together, " +
+    "keeping only what the policy allows, with every URL checked.",
+};
+
+/** The same, for the Tree view. */
+const TREE_NOTES = {
+  escape: "With raw HTML escaped, it's text here. Choose Trust or Sanitize to see it as elements.",
+  trust: "The tree a browser builds from the rendering, Markdown and raw HTML together (buildHtml).",
+  sanitize: "The tree renderSafe judges, before sanitizing; the preview shows what it keeps.",
+};
+
+/**
+ * @typedef {"escape" | "trust" | "sanitize"} RawMode
+ * @typedef {{
+ *   load: (text: string, options: { gfm: boolean, raw: RawMode }) => void,
+ *   showTree: () => void,
+ * }} Demo
+ */
+
 /**
  * Starts the demo. `onProgram` gets the input, parser, and edits so far
  * each time they change.
  *
  * @param {(program: import("./editcode.js").Program) => void} [onProgram]
+ * @returns {Demo}
  */
 export function initDemo(onProgram = () => {}) {
   const input = /** @type {HTMLTextAreaElement} */ ($("md-input"));
   const gfmOption = /** @type {HTMLInputElement} */ ($("opt-gfm"));
-  const trustedOption = /** @type {HTMLInputElement} */ ($("opt-trusted"));
+  const rawOptions = /** @type {HTMLInputElement[]} */ ([...document.querySelectorAll("input[name=raw-html]")]);
+  const marks = highlighter(input);
   const preview = /** @type {HTMLIFrameElement} */ ($("preview"));
   const editor = /** @type {HTMLFormElement} */ ($("editor"));
   const editValue = /** @type {HTMLInputElement} */ ($("edit-value"));
@@ -346,7 +378,25 @@ export function initDemo(onProgram = () => {}) {
   let refocus = null;
 
   const parser = () => parserFor({ input: input.value, gfm: gfmOption.checked, steps: [] });
-  const renderer = () => (trustedOption.checked ? new MarkdownRenderer().withRawHtmlTrusted() : new MarkdownRenderer());
+  const rawMode = () => /** @type {RawMode} */ (rawOptions.find((option) => option.checked)?.value ?? "escape");
+  /** kelpto-html and kelpto, once loaded. @type {{ html: any, kelpto: any } | null} */
+  let side = null;
+  /** Calls `then` with the HTML side, now if it's loaded, or once it is. @param {() => void} then */
+  const withSide = (then) => {
+    if (side) return true;
+    loadHtmlSide().then((loaded) => {
+      side = loaded;
+      then();
+    });
+    return false;
+  };
+  /** The rendering, by the raw HTML choice, or null until the HTML side loads. */
+  const rendering = () => {
+    const mode = rawMode();
+    if (mode === "escape") return new MarkdownRenderer().render(current);
+    if (mode === "trust") return new MarkdownRenderer().withRawHtmlTrusted().render(current);
+    return withSide(show) && side ? side.kelpto.renderSafe(current).html : null;
+  };
 
   function parseInput() {
     parsed = parser().parse(input.value);
@@ -362,11 +412,9 @@ export function initDemo(onProgram = () => {}) {
 
   function show() {
     parts = partsOf(current);
-    const html = renderer().render(current);
+    const html = rendering() ?? "";
     $("html-out").textContent = html;
-    $("render-note").textContent = trustedOption.checked
-      ? "Raw HTML is trusted here, so it renders; the preview is sandboxed, so scripts don't run."
-      : "Raw HTML is escaped, as it is by default.";
+    showTree();
     preview.srcdoc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${previewCss()}</style></head><body>${html}</body></html>`;
     const diff = diffView(input.value, current.asWritten);
     $("diff").innerHTML = diff.html;
@@ -579,24 +627,63 @@ export function initDemo(onProgram = () => {}) {
     timer = window.setTimeout(parseInput, 150);
   });
   gfmOption.addEventListener("change", parseInput);
-  trustedOption.addEventListener("change", show);
+  for (const option of rawOptions) option.addEventListener("change", show);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", show);
 
-  // Preview and HTML views.
-  const views = [$("view-preview"), $("view-html")];
+  // The tree a browser builds from the rendering, Markdown and raw HTML
+  // together (kelpto's `buildHtml`), each node linked to its source:
+  // hovering or focusing one highlights it in the input.
+  const treePanel = $("tree-panel");
+  const tree = treeView(
+    $("tree-out"),
+    $("tree-note"),
+    (span) => {
+      // Spans are in the document as edited; they match the input until an edit.
+      if (span && current.asWritten === input.value) marks.show(span, true);
+      else marks.clear();
+    },
+    (span) => Array.from(current.asWritten).slice(span.from, span.to).join(""),
+  );
+
+  function showTree() {
+    note();
+    if (treePanel.hidden) return;
+    if (!withSide(showTree) || !side) {
+      $("tree-out").textContent = "Loading the HTML parser…";
+      return;
+    }
+    const { html, kelpto } = side;
+    // Parsed again with raw HTML parsed too, so its elements point at their
+    // start tags, not just at the raw HTML around them.
+    const doc = parser().withRawHtmlHandler(new kelpto.ParsedRawHtml()).parse(current.asWritten);
+    const renderer = rawMode() === "escape" ? new MarkdownRenderer() : new MarkdownRenderer().withRawHtmlTrusted();
+    const built = kelpto.buildHtml(doc, new html.FragmentContext("body"), renderer);
+    tree.show(treeHtml(built.children, side, true), "Nothing to build: the document is empty.");
+  }
+
+  const note = () => {
+    $("render-note").textContent = (treePanel.hidden ? RAW_NOTES : TREE_NOTES)[rawMode()];
+  };
+
+  // Preview, HTML, and Tree views.
+  const views = [$("view-preview"), $("view-html"), $("view-tree")];
+  const panels = [$("preview-panel"), $("html-panel"), treePanel];
   const select = (/** @type {number} */ i) => {
     views.forEach((tab, j) => {
       tab.setAttribute("aria-selected", String(i === j));
       tab.tabIndex = i === j ? 0 : -1;
+      panels[j].hidden = i !== j;
     });
-    $("preview-panel").hidden = i !== 0;
-    $("html-panel").hidden = i !== 1;
+    if (i === 2) showTree();
+    else marks.clear();
+    note();
   };
   views.forEach((tab, i) => {
     tab.addEventListener("click", () => select(i));
     tab.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-        const next = 1 - i;
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      if (step) {
+        const next = (i + step + views.length) % views.length;
         select(next);
         views[next].focus();
       }
@@ -604,4 +691,18 @@ export function initDemo(onProgram = () => {}) {
   });
 
   parseInput();
+  // The HTML side loads once the page is up, so it's ready when asked for.
+  setTimeout(() => withSide(() => {}), 300);
+
+  return {
+    load(text, { gfm, raw }) {
+      input.value = text;
+      gfmOption.checked = gfm;
+      for (const option of rawOptions) option.checked = option.value === raw;
+      parseInput();
+    },
+    showTree() {
+      select(2);
+    },
+  };
 }

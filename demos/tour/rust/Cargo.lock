@@ -25,9 +25,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "kelpto"
+version = "0.0.1"
+dependencies = [
+ "kelpto-core",
+ "kelpto-html",
+ "kelpto-md",
+ "temper-core",
+ "temper-std",
+]
+
+[[package]]
 name = "kelpto-core"
 version = "0.0.1"
 dependencies = [
+ "temper-core",
+ "temper-std",
+]
+
+[[package]]
+name = "kelpto-html"
+version = "0.0.1"
+dependencies = [
+ "kelpto-core",
  "temper-core",
  "temper-std",
 ]
@@ -59,6 +79,8 @@ dependencies = [
 name = "tour"
 version = "0.0.0"
 dependencies = [
+ "kelpto",
+ "kelpto-html",
  "kelpto-md",
  "temper-core",
 ]

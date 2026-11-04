@@ -4,13 +4,15 @@ version = "0.0.0"
 requires-python = ">=3.11"
 # Temper's runtime too, so its sources below apply, not PyPI's older
 # releases.
-dependencies = ["kelpto-md", "kelpto-core", "temper-core", "temper-std"]
+dependencies = ["kelpto", "kelpto-html", "kelpto-md", "kelpto-core", "temper-core", "temper-std"]
 
 [tool.uv]
 package = false
 
 # The libraries `temper build` generates at the repo's top.
 [tool.uv.sources]
+kelpto = { path = "../../../temper.out/py/kelpto", editable = true }
+kelpto-html = { path = "../../../temper.out/py/kelpto-html", editable = true }
 kelpto-md = { path = "../../../temper.out/py/kelpto-md", editable = true }
 kelpto-core = { path = "../../../temper.out/py/kelpto-core", editable = true }
 temper-core = { path = "../../../temper.out/py/temper-core", editable = true }

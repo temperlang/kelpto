@@ -1,4 +1,4 @@
--- A tour of Kelpto's Markdown library, from Lua.
+-- A tour of Kelpto's Markdown and HTML libraries, from Lua.
 --
 -- The same tour exists for each language Kelpto supports, and they all print
 -- the same text. See demos/README.md for how to run them.
@@ -8,6 +8,12 @@ local LinkTarget, MarkdownParser, MarkdownRenderer = md.LinkTarget, md.MarkdownP
 local parseMarkdown = md.parseMarkdown
 local Heading, Link, LinkReferenceDefinition = md.Heading, md.Link, md.LinkReferenceDefinition
 local Inlines, MarkdownBuilder, Paragraph = md.Inlines, md.MarkdownBuilder, md.Paragraph
+local html = require("kelpto-html")
+local Element, FragmentContext, SanitizerPolicy = html.Element, html.FragmentContext, html.SanitizerPolicy
+local parseHtml, parseHtmlFragment, tokenizeHtml = html.parseHtml, html.parseHtmlFragment, html.tokenizeHtml
+local kelpto = require("kelpto")
+local buildHtml, markdownNodeOf = kelpto.buildHtml, kelpto.markdownNodeOf
+local parseMarkdownWithHtml, renderSafe = kelpto.parseMarkdownWithHtml, kelpto.renderSafe
 local null_to_nil = require("temper-core").null_to_nil
 local instance_of = require("temper-core").instance_of
 
@@ -69,10 +75,12 @@ Kelpto keeps *every*   byte.
 | Library     | Status |
 |:------------|-------:|
 | kelpto-md   | ready  |
-| kelpto-html | early  |
+| kelpto-html | ready  |
+| Hrefine     | early  |
 
 - [x] CommonMark
-- [ ] HTML trees
+- [x] HTML trees
+- [ ] Hrefine links
 
 Read [the docs][docs].
 
@@ -102,8 +110,8 @@ section("2. Edit one part")
 
 -- Each edit gives a new document; the old one stays as it was.
 local edited = doc.headings[1]:withText("Release notes, 0.1")
-edited = edited.tables[1].rows[2].cells[2]:withText("ready")
-edited = edited.taskListItems[2]:withChecked(true)
+edited = edited.tables[1].rows[3].cells[2]:withText("ready")
+edited = edited.taskListItems[3]:withChecked(true)
 edited = edited.linkReferenceDefinitions[1]:withDestination(LinkTarget("https://example.com/new"))
 changes(text, edited.asWritten)
 print("at level 2: " .. shown(edited.headings[1]:withLevel(2).headings[1].asWritten))
@@ -231,3 +239,54 @@ end
 local advised = adviceEditor:toDocument()
 rendered("markdown", advised.asWritten)
 print("heading: " .. advised.headings[2].text)
+
+section("9. Parse HTML, as browsers do")
+
+-- The HTML standard's tokenizer and tree construction, lossless too.
+local htmlText = "<p id=a id=b>One<p>Two<table><td>x</table>"
+local htmlDoc = parseHtml(htmlText)
+print("printed back exactly: " .. tostring(htmlDoc.asWritten == htmlText))
+rendered("html", htmlDoc.html)
+local paragraphs = htmlDoc.body.children
+local names = {}
+for i, p in ipairs(paragraphs) do
+  names[i] = p.name
+end
+print("body: " .. table.concat(names, ", ") .. ", the first with id " .. paragraphs[1]:attribute("id"))
+for _, err in ipairs(htmlDoc.errors) do
+  print("error: " .. err.code .. " at " .. err.offset)
+end
+-- A fragment, as innerHTML parses it: where it goes decides what it is.
+print("in a tr: " .. parseHtmlFragment("<td>1<td>2", FragmentContext("tr")).html)
+print("in a div: " .. parseHtmlFragment("<td>1<td>2", FragmentContext("div")).html)
+-- Tokens edit like Markdown: one part changes, the rest stays as written.
+local anchor = tokenizeHtml("<a href='/old' class=x>Go</a>").startTags[1]
+print("edited: " .. anchor:attribute("href"):withValue("/new").asWritten)
+
+section("10. Markdown and raw HTML, one tree")
+
+-- The tree a browser builds from the rendering, each element knowing
+-- where it came from: its raw start tag, its Markdown node, or neither.
+local function origins(nodes, depth)
+  for _, node in ipairs(nodes) do
+    if instance_of(node, Element) then
+      local tag = null_to_nil(node.startTag)
+      local markdown = null_to_nil(markdownNodeOf(node))
+      local source = tag and tag.asWritten or markdown and markdown.node.kind.name or "implied"
+      print(string.rep("  ", depth) .. node.name .. " <- " .. source)
+      origins(node.children, depth + 1)
+    end
+  end
+end
+
+local mixed = parseMarkdownWithHtml("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n")
+local tree = buildHtml(mixed)
+rendered("html", tree.html)
+origins(tree.children, 0)
+
+section("11. Render Markdown from anyone")
+
+-- That tree, sanitized: only what the policy allows, with every URL checked.
+local untrusted = parseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n")
+rendered("safe", renderSafe(untrusted).html)
+rendered("text only", renderSafe(parseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy.textOnly).html)

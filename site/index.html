@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kelpto: change one part, keep every byte</title>
-  <meta name="description" content="Lossless Markdown: parse, edit one heading, table cell, task, or link, and write it back with everything else exactly as written. CommonMark and GFM, in C++, C#, Java, JavaScript, Lua, Python, and Rust.">
+  <meta name="description" content="Lossless Markdown and a WHATWG HTML parser: parse, edit one heading, table cell, task, or link, and write it back with everything else exactly as written. Raw HTML parsed as browsers parse it, and Markdown from anyone rendered safely. CommonMark and GFM, in C++, C#, Java, JavaScript, Lua, Python, and Rust.">
   <link rel="stylesheet" href="style.css">
   <script type="importmap"><!--IMPORT_MAP--></script>
   <script type="module" src="app.js"></script>
@@ -16,8 +16,10 @@
       <p class="brand"><a href="#">Kelpto</a> <span class="beta-tag">beta</span></p>
       <nav aria-label="Sections">
         <a href="#try">Try it</a>
-        <!-- Later: "HTML" (#html), "Safe rendering" (#safe), "Speed" (#speed),
-             and "Compare" (#compare), as each section ships; see docs/site.md. -->
+        <a href="#html">HTML</a>
+        <a href="#safe">Safe rendering</a>
+        <!-- Later: "Speed" (#speed) and "Compare" (#compare), as each
+             section ships; see docs/site.md. -->
         <a href="#tour">Tour</a>
         <a href="https://github.com/temperlang/kelpto">GitHub</a>
       </nav>
@@ -35,8 +37,9 @@
         Kelpto parses Markdown into a tree that remembers how it was
         written. Change a heading, a table cell, a task, or a link, and
         write the file back with everything else exactly as it was:
-        same spacing, same markers, same mess. In C++, C#, Java,
-        JavaScript, Lua, Python, and Rust.
+        same spacing, same markers, same mess. Its raw HTML parses as
+        browsers parse it, so Markdown from anyone renders safely. In
+        C++, C#, Java, JavaScript, Lua, Python, and Rust.
       </p>
       <p class="conformance">
         <span class="check" aria-hidden="true">✓</span>
@@ -63,12 +66,20 @@
         </p>
         <div class="options" role="group" aria-label="Options">
           <label><input type="checkbox" id="opt-gfm" checked> GitHub Flavored Markdown</label>
-          <label><input type="checkbox" id="opt-trusted"> Trust raw HTML</label>
+          <div class="raw-choice" role="radiogroup" aria-labelledby="raw-label">
+            <span id="raw-label">Raw HTML:</span>
+            <label><input type="radio" name="raw-html" value="escape" checked> Escape</label>
+            <label><input type="radio" name="raw-html" value="trust"> Trust</label>
+            <label><input type="radio" name="raw-html" value="sanitize"> Sanitize</label>
+          </div>
         </div>
         <div class="panes">
           <div class="pane">
             <label for="md-input" class="pane-title">Your Markdown</label>
-            <textarea id="md-input" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+            <div class="marked">
+              <pre class="marks" aria-hidden="true"></pre>
+              <textarea id="md-input" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+            </div>
             <p class="status" id="roundtrip" aria-live="polite"></p>
           </div>
           <div class="pane">
@@ -77,6 +88,7 @@
               <div class="view-tabs" role="tablist" aria-label="Rendered view">
                 <button type="button" role="tab" id="view-preview" aria-selected="true" aria-controls="preview-panel">Preview</button>
                 <button type="button" role="tab" id="view-html" aria-selected="false" aria-controls="html-panel" tabindex="-1">HTML</button>
+                <button type="button" role="tab" id="view-tree" aria-selected="false" aria-controls="tree-panel" tabindex="-1">Tree</button>
               </div>
             </div>
             <div id="preview-panel" role="tabpanel" aria-labelledby="view-preview">
@@ -85,6 +97,10 @@
             </div>
             <div id="html-panel" role="tabpanel" aria-labelledby="view-html" hidden>
               <pre class="source html-out" tabindex="0" aria-label="Rendered HTML"><code id="html-out"></code></pre>
+            </div>
+            <div id="tree-panel" role="tabpanel" aria-labelledby="view-tree" hidden>
+              <div class="tree" id="tree-out" aria-label="The tree a browser builds"></div>
+              <p class="small-note tree-note" id="tree-note" aria-live="polite">Hover over or focus a node to see where it came from.</p>
             </div>
             <p class="small-note" id="render-note"></p>
           </div>
@@ -125,10 +141,93 @@
       </div>
     </section>
 
+    <section id="html" class="html-side" aria-labelledby="html-title">
+      <div class="wrap">
+        <h2 id="html-title">HTML, parsed as browsers parse it.</h2>
+        <p class="lead">
+          kelpto-html is the HTML standard's tokenizer and tree
+          construction, written once: every tokenizer state and insertion
+          mode, foreign content, the adoption agency algorithm, and foster
+          parenting. Lossless too, so any HTML prints back exactly. Kelpto
+          parses Markdown's raw HTML with it, so <a href="#try" id="show-tree">the
+          demo's Tree view</a> is the very tree a browser builds.
+        </p>
+        <p class="conformance">
+          <span class="check" aria-hidden="true">✓</span>
+          All <strong><!--TOKENIZER_COUNT--></strong> of html5lib-tests'
+          tokenizer tests pass, and <!--TREE_LINE-->
+        </p>
+        <div class="options" role="group" aria-label="How to parse">
+          <label>Parse as
+            <select id="html-context">
+              <option value="">a whole document</option>
+              <option value="body">innerHTML of a body</option>
+              <option value="tr">innerHTML of a tr</option>
+              <option value="table">innerHTML of a table</option>
+              <option value="select">innerHTML of a select</option>
+              <option value="textarea">innerHTML of a textarea</option>
+              <option value="svg svg">innerHTML of an svg</option>
+            </select>
+          </label>
+        </div>
+        <div class="panes">
+          <div class="pane">
+            <label for="html-input" class="pane-title">Your HTML</label>
+            <div class="marked">
+              <pre class="marks" aria-hidden="true"></pre>
+              <textarea id="html-input" class="short" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+            </div>
+            <p class="status" id="html-status" aria-live="polite"></p>
+          </div>
+          <div class="pane">
+            <div class="pane-head">
+              <h3 class="pane-title" id="html-tree-title">The tree a browser builds</h3>
+              <div class="view-tabs" role="tablist" aria-label="Parsed view">
+                <button type="button" role="tab" id="html-view-tree" aria-selected="true" aria-controls="html-tree-panel">Tree</button>
+                <button type="button" role="tab" id="html-view-html" aria-selected="false" aria-controls="html-html-panel" tabindex="-1">Serialized</button>
+              </div>
+            </div>
+            <div id="html-tree-panel" role="tabpanel" aria-labelledby="html-view-tree">
+              <div class="tree short" id="html-tree" aria-labelledby="html-tree-title"></div>
+              <p class="small-note tree-note" id="html-tree-note" aria-live="polite">Hover over or focus a node to see where it came from.</p>
+            </div>
+            <div id="html-html-panel" role="tabpanel" aria-labelledby="html-view-html" hidden>
+              <pre class="source html-out short" tabindex="0" aria-label="Serialized HTML"><code id="html-serialized"></code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="safe" class="safe" aria-labelledby="safe-title">
+      <div class="wrap">
+        <h2 id="safe-title">Safe for Markdown from anyone.</h2>
+        <p class="lead">
+          <code>renderSafe</code> doesn't judge tags one at a time. It
+          builds the tree a browser builds from the rendering, Markdown and
+          raw HTML together, keeps only what its policy allows, and checks
+          every URL. So pieces that only do harm together are caught too,
+          and what it gives is checked to parse back to itself.
+        </p>
+        <p class="small-note">
+          <!--SAFE_COUNT--> hostile inputs, rendered by this build of Kelpto
+          when the site was built. Try any one in the demo, sanitized.
+        </p>
+<!--SAFE_GALLERY-->
+        <h3 id="view-title">Kelpto in your view function</h3>
+        <p>
+          If you build pages from state, as with htpy, maud, j2html, or
+          React-style views, Kelpto renders the documents inside a view,
+          not the view itself: parse and sanitize each post once per text,
+          and drop the HTML into your layout.
+        </p>
+        <div class="tabs" role="tablist" aria-label="Language for the view" data-tabs="view-source"></div>
+        <pre class="source view-source" tabindex="0" aria-labelledby="view-title"><code id="view-source"></code></pre>
+      </div>
+    </section>
+
     <!-- Later sections slot in here, in this order, each with a nav link;
          see docs/site.md:
-           #html     The HTML side: WHATWG tokenizer and tree, html5lib's tests.
-           #safe     Safe rendering: the sanitizer, with links checked by Hrefine.
            #speed    Benchmarks against other parsers.
            #compare  Conformance against other parsers, as a table. -->
 
@@ -136,9 +235,11 @@
       <div class="wrap">
         <h2 id="tour-title">The tour, in seven languages</h2>
         <p>
-          One program through kelpto-md's API, written in each language:
-          parse and print back, edit one part, render safely, GFM, and
-          footnotes. Every version prints exactly the same text.
+          One program through Kelpto's API, written in each language:
+          parse and print back, edit one part, render, GFM, footnotes,
+          walk, build, and rearrange; then HTML, as a document and as a
+          fragment, Markdown and its raw HTML as one tree, and rendering
+          Markdown from anyone. Every version prints exactly the same text.
         </p>
         <div class="tabs" role="tablist" aria-label="Language" data-tabs="tour-source"></div>
         <p class="run">Run it: <code id="run-command"></code></p>
@@ -160,7 +261,9 @@
         and open source, Apache-2.0 or MIT:
         <a href="https://github.com/temperlang/kelpto">github.com/temperlang/kelpto</a>.
         Its tests come from the CommonMark spec and cmark-gfm, under
-        CC-BY-SA 4.0, and aren't part of the libraries; see
+        CC-BY-SA 4.0, html5lib-tests, under the MIT license, and
+        web-platform-tests, under the 3-Clause BSD License, and aren't
+        part of the libraries; see
         <a href="https://github.com/temperlang/kelpto/blob/main/NOTICE">NOTICE</a>.
       </p>
     </div>

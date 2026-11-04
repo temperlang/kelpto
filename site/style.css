@@ -21,6 +21,9 @@
   --ins-bg: #d8f5e3;
   --del: #a1262b;
   --del-bg: #fde3e3;
+  --mark-bg: #ffe28a;
+  --md: #1d5fa8;
+  --raw: #8a2be2;
   color-scheme: light dark;
 }
 
@@ -50,6 +53,9 @@
     --ins-bg: #173a27;
     --del: #ffadb0;
     --del-bg: #44201f;
+    --mark-bg: #6b5410;
+    --md: #8cc4ff;
+    --raw: #c9a0ff;
   }
 }
 
@@ -256,6 +262,27 @@ main > section {
   vertical-align: -0.15em;
 }
 
+.raw-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+}
+
+.raw-choice label {
+  white-space: nowrap;
+}
+
+.options select {
+  font: inherit;
+  font-size: 0.92rem;
+  margin-left: 0.3rem;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--text);
+}
+
 .panes {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -313,6 +340,42 @@ textarea {
   tab-size: 4;
   white-space: pre;
   overflow-wrap: normal;
+}
+
+/* A textarea with a span of its text highlighted behind it (tree.js): the
+   copy behind matches its text, metrics, and scrolling exactly. */
+
+.marked {
+  position: relative;
+}
+
+.marked textarea {
+  position: relative;
+  background: transparent;
+}
+
+.marks {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: transparent;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  tab-size: 4;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.marks mark {
+  color: transparent;
+  background: var(--mark-bg);
+  border-radius: 0.15rem;
 }
 
 textarea:focus-visible,
@@ -522,6 +585,208 @@ pre.html-out {
   background: var(--code-bg);
 }
 
+/* The tree a browser builds (tree.js). */
+
+.tree {
+  height: 27rem;
+  overflow: auto;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--code-bg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 1.1rem;
+  border-left: 1px dotted var(--border);
+}
+
+.tree > ul.tree-root {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.tree .row {
+  display: inline-block;
+  padding: 0 0.3rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.tree .row.on {
+  background: var(--mark-bg);
+}
+
+.tree .row:focus-visible {
+  outline-offset: 0;
+}
+
+.t-tag {
+  color: var(--accent);
+}
+
+.t-attr {
+  color: var(--type);
+}
+
+.t-value,
+.t-text {
+  color: var(--string);
+}
+
+.t-text.space {
+  color: var(--muted);
+}
+
+.t-comment,
+.t-content {
+  color: var(--comment);
+  font-style: italic;
+}
+
+.badge {
+  margin-left: 0.35rem;
+  padding: 0 0.35rem;
+  border: 1px solid currentColor;
+  border-radius: 1rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.badge.md {
+  color: var(--md);
+}
+
+.badge.raw {
+  color: var(--raw);
+}
+
+.badge.implied,
+.badge.reopened {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.tree-note {
+  min-height: 2.6em;
+  margin: 0.4rem 0 0;
+}
+
+.tree-note code {
+  white-space: pre-wrap;
+}
+
+.status code {
+  white-space: nowrap;
+}
+
+textarea.short,
+.tree.short,
+pre.html-out.short {
+  height: 19rem;
+}
+
+/* The #safe gallery. */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.case {
+  min-width: 0;
+  padding: 0.6rem 0.75rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.case-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.case-label {
+  margin: 0;
+  font-weight: 650;
+  font-size: 0.95rem;
+}
+
+.case .try {
+  padding: 0.1rem 0.6rem;
+  font-size: 0.82rem;
+  flex: none;
+}
+
+.case pre {
+  margin: 0.4rem 0 0;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.35rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.case-in {
+  background: var(--del-bg);
+  color: var(--del);
+}
+
+.case-out {
+  background: var(--ins-bg);
+  color: var(--ins);
+}
+
+.case-in::before,
+.case-out::before {
+  display: block;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.case-in::before {
+  content: "Markdown";
+}
+
+.case-out::before {
+  content: "Kelpto renders";
+}
+
+.case-out .nothing {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.gallery-more {
+  margin-top: 0.75rem;
+}
+
+.gallery-more summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+pre.view-source {
+  max-height: 30rem;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -584,8 +849,15 @@ footer {
 
   textarea,
   #preview,
-  .html-out {
+  .html-out,
+  .tree {
     height: 20rem;
+  }
+
+  textarea.short,
+  .tree.short,
+  pre.html-out.short {
+    height: 15rem;
   }
 }
 
@@ -596,6 +868,11 @@ footer {
 
   h2 {
     font-size: 1.55rem;
+  }
+
+  /* The choice's label on its own line, so its three options stay together. */
+  #raw-label {
+    flex-basis: 100%;
   }
 
   .slogan {

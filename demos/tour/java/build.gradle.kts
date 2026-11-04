@@ -10,7 +10,7 @@ val temperOut = file("../../../temper.out/java")
 sourceSets {
     main {
         java {
-            for (library in listOf("temper-core", "std", "kelpto-core", "kelpto-md")) {
+            for (library in listOf("temper-core", "std", "kelpto-core", "kelpto-md", "kelpto-html", "kelpto")) {
                 srcDir(temperOut.resolve("$library/src/main/java"))
             }
         }

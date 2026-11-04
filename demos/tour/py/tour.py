@@ -1,4 +1,4 @@
-"""A tour of Kelpto's Markdown library, from Python.
+"""A tour of Kelpto's Markdown and HTML libraries, from Python.
 
 The same tour exists for each language Kelpto supports, and they all print
 the same text. See demos/README.md for how to run them.
@@ -8,6 +8,8 @@ from kelpto_md import (
     Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownParser, MarkdownRenderer,
     Paragraph, parse_markdown,
 )
+from kelpto_html import Element, FragmentContext, SanitizerPolicy, parse_html, parse_html_fragment, tokenize_html
+from kelpto import build_html, markdown_node_of, parse_markdown_with_html, render_safe
 
 
 def section(title):
@@ -50,10 +52,12 @@ Kelpto keeps *every*   byte.
 | Library     | Status |
 |:------------|-------:|
 | kelpto-md   | ready  |
-| kelpto-html | early  |
+| kelpto-html | ready  |
+| Hrefine     | early  |
 
 - [x] CommonMark
-- [ ] HTML trees
+- [x] HTML trees
+- [ ] Hrefine links
 
 Read [the docs][docs].
 
@@ -80,8 +84,8 @@ section("2. Edit one part")
 
 # Each edit gives a new document; the old one stays as it was.
 edited = doc.headings[0].with_text("Release notes, 0.1")
-edited = edited.tables[0].rows[1].cells[1].with_text("ready")
-edited = edited.task_list_items[1].with_checked(True)
+edited = edited.tables[0].rows[2].cells[1].with_text("ready")
+edited = edited.task_list_items[2].with_checked(True)
 edited = edited.link_reference_definitions[0].with_destination(LinkTarget("https://example.com/new"))
 changes(text, edited.as_written)
 print(f"at level 2: {shown(edited.headings[0].with_level(2).headings[0].as_written)}")
@@ -198,3 +202,53 @@ for view in advice_doc.descendants:
 advised = advice_editor.to_document()
 rendered("markdown", advised.as_written)
 print(f"heading: {advised.headings[1].text}")
+
+section("9. Parse HTML, as browsers do")
+
+# The HTML standard's tokenizer and tree construction, lossless too.
+html_text = "<p id=a id=b>One<p>Two<table><td>x</table>"
+html_doc = parse_html(html_text)
+print(f"printed back exactly: {str(html_doc.as_written == html_text).lower()}")
+rendered("html", html_doc.html)
+paragraphs = html_doc.body.children
+print(f"body: {', '.join(p.name for p in paragraphs)}, the first with id {paragraphs[0].attribute('id')}")
+for error in html_doc.errors:
+    print(f"error: {error.code} at {error.offset}")
+# A fragment, as innerHTML parses it: where it goes decides what it is.
+print(f"in a tr: {parse_html_fragment('<td>1<td>2', FragmentContext('tr')).html}")
+print(f"in a div: {parse_html_fragment('<td>1<td>2', FragmentContext('div')).html}")
+# Tokens edit like Markdown: one part changes, the rest stays as written.
+anchor = tokenize_html("<a href='/old' class=x>Go</a>").start_tags[0]
+print(f"edited: {anchor.attribute('href').with_value('/new').as_written}")
+
+section("10. Markdown and raw HTML, one tree")
+
+# The tree a browser builds from the rendering, each element knowing
+# where it came from: its raw start tag, its Markdown node, or neither.
+mixed = parse_markdown_with_html("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n")
+tree = build_html(mixed)
+rendered("html", tree.html)
+
+
+def origins(nodes, depth):
+    for node in nodes:
+        if isinstance(node, Element):
+            markdown = markdown_node_of(node)
+            if node.start_tag is not None:
+                source = node.start_tag.as_written
+            elif markdown is not None:
+                source = markdown.node.kind.name
+            else:
+                source = "implied"
+            print(f"{'  ' * depth}{node.name} <- {source}")
+            origins(node.children, depth + 1)
+
+
+origins(tree.children, 0)
+
+section("11. Render Markdown from anyone")
+
+# That tree, sanitized: only what the policy allows, with every URL checked.
+untrusted = parse_markdown_with_html("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n")
+rendered("safe", render_safe(untrusted).html)
+rendered("text only", render_safe(parse_markdown_with_html("# *a* [b](/c)\n"), SanitizerPolicy.text_only).html)

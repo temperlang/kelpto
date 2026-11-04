@@ -5,7 +5,9 @@ printed back exactly: true
 heading 1: Release notes
 table: Library, Status (left, right)
 row: kelpto-md, ready
-row: kelpto-html, early
+row: kelpto-html, ready
+row: Hrefine, early
+task: [x] checked
 task: [x] checked
 task: [ ] not checked
 definition: docs -> https://example.com/old
@@ -17,13 +19,13 @@ definition: docs -> https://example.com/old
 ## 2. Edit one part
 - # Release notes
 + # Release notes, 0.1
-- | kelpto-html | early  |
-+ | kelpto-html | ready  |
-- - [ ] HTML trees
-+ - [x] HTML trees
+- | Hrefine     | early  |
++ | Hrefine     | ready  |
+- - [ ] Hrefine links
++ - [x] Hrefine links
 - [docs]: https://example.com/old
 + [docs]: https://example.com/new
-4 of 15 lines changed, the rest byte for byte
+4 of 17 lines changed, the rest byte for byte
 at level 2: ## Release notes, 0.1\n
 level 7: throws
 
@@ -133,3 +135,34 @@ markdown:
 
 The end.
 heading: Tip #1
+
+## 9. Parse HTML, as browsers do
+printed back exactly: true
+html:
+<html><head></head><body><p id="a">One</p><p>Two<table><tbody><tr><td>x</td></tr></tbody></table></p></body></html>
+body: p, p, the first with id a
+error: duplicate-attribute at 10
+in a tr: <td>1</td><td>2</td>
+in a div: 12
+edited: <a href="/new" class=x>Go</a>
+
+## 10. Markdown and raw HTML, one tree
+html:
+<p>a <b>bold</b></p><b>
+</b><p><b>still bold</b></p>
+<table><tbody><tr><td>x</td></tr></tbody></table>
+p <- Paragraph
+  b <- <b>
+b <- <b>
+p <- Paragraph
+  b <- <b>
+table <- <table>
+  tbody <- implied
+    tr <- implied
+      td <- <td>
+
+## 11. Render Markdown from anyone
+safe:
+<p><a>a</a> <b>b</b></p>
+text only:
+a b

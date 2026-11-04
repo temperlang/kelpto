@@ -1,12 +1,27 @@
-// A tour of Kelpto's Markdown library, from Java.
+// A tour of Kelpto's Markdown and HTML libraries, from Java.
 //
 // The same tour exists for each language Kelpto supports, and they all print
 // the same text. See demos/README.md for how to run them.
 
+import static kelpto.KelptoGlobal.buildHtml;
+import static kelpto.KelptoGlobal.markdownNodeOf;
+import static kelpto.KelptoGlobal.parseMarkdownWithHtml;
+import static kelpto.KelptoGlobal.renderSafe;
+import static kelpto_html.KelptoHtmlGlobal.parseHtml;
+import static kelpto_html.KelptoHtmlGlobal.parseHtmlFragment;
+import static kelpto_html.KelptoHtmlGlobal.tokenizeHtml;
 import static kelpto_md.KelptoMdGlobal.parseMarkdown;
 
 import java.util.List;
 import java.util.stream.Collectors;
+import kelpto.BuiltHtml;
+import kelpto_html.BuiltNode;
+import kelpto_html.Element;
+import kelpto_html.FragmentContext;
+import kelpto_html.HtmlDocument;
+import kelpto_html.HtmlParseError;
+import kelpto_html.SanitizerPolicy;
+import kelpto_html.StartTag;
 import kelpto_md.FootnoteDefinition;
 import kelpto_md.FootnoteReference;
 import kelpto_md.Heading;
@@ -68,6 +83,22 @@ public final class Tour {
         return definition == null ? "nothing" : definition.getLabel();
     }
 
+    /**
+     * Each element, indented, and where it came from: its raw start tag, its
+     * Markdown node, or neither.
+     */
+    static void origins(List<BuiltNode> nodes, int depth) {
+        for (BuiltNode node : nodes) {
+            if (node instanceof Element element) {
+                StartTag tag = element.getStartTag();
+                MarkdownNode markdown = markdownNodeOf(element);
+                String source = tag != null ? tag.getAsWritten() : markdown != null ? markdown.getNode().getKind().getName() : "implied";
+                System.out.println("  ".repeat(depth) + element.getName() + " <- " + source);
+                origins(element.getChildren(), depth + 1);
+            }
+        }
+    }
+
     public static void main(String[] args) {
         System.out.println("# Kelpto tour");
 
@@ -81,10 +112,12 @@ public final class Tour {
             | Library     | Status |
             |:------------|-------:|
             | kelpto-md   | ready  |
-            | kelpto-html | early  |
+            | kelpto-html | ready  |
+            | Hrefine     | early  |
 
             - [x] CommonMark
-            - [ ] HTML trees
+            - [x] HTML trees
+            - [ ] Hrefine links
 
             Read [the docs][docs].
 
@@ -114,8 +147,8 @@ public final class Tour {
 
         // Each edit gives a new document; the old one stays as it was.
         MarkdownDocument edited = doc.getHeadings().get(0).withText("Release notes, 0.1");
-        edited = edited.getTables().get(0).getRows().get(1).getCells().get(1).withText("ready");
-        edited = edited.getTaskListItems().get(1).withChecked(true);
+        edited = edited.getTables().get(0).getRows().get(2).getCells().get(1).withText("ready");
+        edited = edited.getTaskListItems().get(2).withChecked(true);
         edited = edited.getLinkReferenceDefinitions().get(0).withDestination(new LinkTarget("https://example.com/new"));
         changes(text, edited.getAsWritten());
         System.out.println("at level 2: " + shown(edited.getHeadings().get(0).withLevel(2).getHeadings().get(0).getAsWritten()));
@@ -239,5 +272,42 @@ public final class Tour {
         MarkdownDocument advised = adviceEditor.toDocument();
         rendered("markdown", advised.getAsWritten());
         System.out.println("heading: " + advised.getHeadings().get(1).getText());
+
+        section("9. Parse HTML, as browsers do");
+
+        // The HTML standard's tokenizer and tree construction, lossless too.
+        String htmlText = "<p id=a id=b>One<p>Two<table><td>x</table>";
+        HtmlDocument htmlDoc = parseHtml(htmlText);
+        System.out.println("printed back exactly: " + htmlDoc.getAsWritten().equals(htmlText));
+        rendered("html", htmlDoc.getHtml());
+        List<Element> paragraphs = htmlDoc.getBody().getChildren().stream()
+            .filter(Element.class::isInstance).map(Element.class::cast).toList();
+        System.out.println("body: " + paragraphs.stream().map(Element::getName).collect(Collectors.joining(", "))
+            + ", the first with id " + paragraphs.get(0).attribute("id"));
+        for (HtmlParseError error : htmlDoc.getErrors()) {
+            System.out.println("error: " + error.getCode() + " at " + error.getOffset());
+        }
+        // A fragment, as innerHTML parses it: where it goes decides what it is.
+        System.out.println("in a tr: " + parseHtmlFragment("<td>1<td>2", new FragmentContext("tr")).getHtml());
+        System.out.println("in a div: " + parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).getHtml());
+        // Tokens edit like Markdown: one part changes, the rest stays as written.
+        StartTag anchor = tokenizeHtml("<a href='/old' class=x>Go</a>").getStartTags().get(0);
+        System.out.println("edited: " + anchor.attribute("href").withValue("/new").getAsWritten());
+
+        section("10. Markdown and raw HTML, one tree");
+
+        // The tree a browser builds from the rendering, each element knowing
+        // where it came from.
+        MarkdownDocument mixed = parseMarkdownWithHtml("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n");
+        BuiltHtml tree = buildHtml(mixed);
+        rendered("html", tree.getHtml());
+        origins(tree.getChildren(), 0);
+
+        section("11. Render Markdown from anyone");
+
+        // That tree, sanitized: only what the policy allows, with every URL checked.
+        MarkdownDocument untrusted = parseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n");
+        rendered("safe", renderSafe(untrusted).getHtml());
+        rendered("text only", renderSafe(parseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy.textOnly).getHtml());
     }
 }

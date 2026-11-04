@@ -1,11 +1,15 @@
-// A tour of Kelpto's Markdown library, from C#.
+// A tour of Kelpto's Markdown and HTML libraries, from C#.
 //
 // The same tour exists for each language Kelpto supports, and they all print
 // the same text. See demos/README.md for how to run them.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using KelptoHtml;
 using KelptoMd;
+using static Kelpto.KelptoGlobal;
+using static KelptoHtml.KelptoHtmlGlobal;
 using static KelptoMd.KelptoMdGlobal;
 
 static void Section(string title)
@@ -42,6 +46,18 @@ static void Changes(string before, string after)
     Console.WriteLine($"{changed} of {oldLines.Length - 1} lines changed, the rest byte for byte");
 }
 
+// Each element, indented, and where it came from: its raw start tag, its
+// Markdown node, or neither.
+static void Origins(IReadOnlyList<IBuiltNode> nodes, int depth)
+{
+    foreach (var element in nodes.OfType<Element>())
+    {
+        var source = element.StartTag?.AsWritten ?? MarkdownNodeOf(element)?.Node.Kind.Name ?? "implied";
+        Console.WriteLine($"{new string(' ', depth * 2)}{element.Name} <- {source}");
+        Origins(element.Children, depth + 1);
+    }
+}
+
 Console.WriteLine("# Kelpto tour");
 
 Section("1. Parse and print, losslessly");
@@ -53,10 +69,12 @@ Kelpto keeps *every*   byte.
 | Library     | Status |
 |:------------|-------:|
 | kelpto-md   | ready  |
-| kelpto-html | early  |
+| kelpto-html | ready  |
+| Hrefine     | early  |
 
 - [x] CommonMark
-- [ ] HTML trees
+- [x] HTML trees
+- [ ] Hrefine links
 
 Read [the docs][docs].
 
@@ -89,8 +107,8 @@ Section("2. Edit one part");
 
 // Each edit gives a new document; the old one stays as it was.
 var edited = doc.Headings[0].WithText("Release notes, 0.1");
-edited = edited.Tables[0].Rows[1].Cells[1].WithText("ready");
-edited = edited.TaskListItems[1].WithChecked(true);
+edited = edited.Tables[0].Rows[2].Cells[1].WithText("ready");
+edited = edited.TaskListItems[2].WithChecked(true);
 edited = edited.LinkReferenceDefinitions[0].WithDestination(new LinkTarget("https://example.com/new"));
 Changes(text, edited.AsWritten);
 Console.WriteLine($"at level 2: {Shown(edited.Headings[0].WithLevel(2).Headings[0].AsWritten)}");
@@ -236,3 +254,39 @@ foreach (var view in adviceDoc.Descendants)
 var advised = adviceEditor.ToDocument();
 Rendered("markdown", advised.AsWritten);
 Console.WriteLine($"heading: {advised.Headings[1].Text}");
+
+Section("9. Parse HTML, as browsers do");
+
+// The HTML standard's tokenizer and tree construction, lossless too.
+var htmlText = "<p id=a id=b>One<p>Two<table><td>x</table>";
+var htmlDoc = ParseHtml(htmlText);
+Console.WriteLine($"printed back exactly: {(htmlDoc.AsWritten == htmlText ? "true" : "false")}");
+Rendered("html", htmlDoc.Html);
+var paragraphs = htmlDoc.Body!.Children.OfType<Element>().ToList();
+Console.WriteLine($"body: {string.Join(", ", paragraphs.Select(e => e.Name))}, the first with id {paragraphs[0].Attribute("id")}");
+foreach (var error in htmlDoc.Errors)
+{
+    Console.WriteLine($"error: {error.Code} at {error.Offset}");
+}
+// A fragment, as innerHTML parses it: where it goes decides what it is.
+Console.WriteLine($"in a tr: {ParseHtmlFragment("<td>1<td>2", new FragmentContext("tr")).Html}");
+Console.WriteLine($"in a div: {ParseHtmlFragment("<td>1<td>2", new FragmentContext("div")).Html}");
+// Tokens edit like Markdown: one part changes, the rest stays as written.
+var anchor = TokenizeHtml("<a href='/old' class=x>Go</a>").StartTags[0];
+Console.WriteLine($"edited: {anchor.Attribute("href")!.WithValue("/new").AsWritten}");
+
+Section("10. Markdown and raw HTML, one tree");
+
+// The tree a browser builds from the rendering, each element knowing
+// where it came from.
+var mixed = ParseMarkdownWithHtml("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n");
+var tree = BuildHtml(mixed);
+Rendered("html", tree.Html);
+Origins(tree.Children, 0);
+
+Section("11. Render Markdown from anyone");
+
+// That tree, sanitized: only what the policy allows, with every URL checked.
+var untrusted = ParseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n");
+Rendered("safe", RenderSafe(untrusted).Html);
+Rendered("text only", RenderSafe(ParseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy.TextOnly).Html);

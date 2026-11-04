@@ -1,4 +1,4 @@
-// A tour of Kelpto's Markdown library, from JavaScript.
+// A tour of Kelpto's Markdown and HTML libraries, from JavaScript.
 //
 // The same tour exists for each language Kelpto supports, and they all print
 // the same text. See demos/README.md for how to run them.
@@ -7,6 +7,8 @@ import {
   Heading, Inlines, Link, LinkReferenceDefinition, LinkTarget, MarkdownBuilder, MarkdownParser, MarkdownRenderer,
   Paragraph, parseMarkdown,
 } from "kelpto-md";
+import { Element, FragmentContext, SanitizerPolicy, parseHtml, parseHtmlFragment, tokenizeHtml } from "kelpto-html";
+import { buildHtml, markdownNodeOf, parseMarkdownWithHtml, renderSafe } from "kelpto";
 
 function section(title) {
   console.log();
@@ -48,10 +50,12 @@ Kelpto keeps *every*   byte.
 | Library     | Status |
 |:------------|-------:|
 | kelpto-md   | ready  |
-| kelpto-html | early  |
+| kelpto-html | ready  |
+| Hrefine     | early  |
 
 - [x] CommonMark
-- [ ] HTML trees
+- [x] HTML trees
+- [ ] Hrefine links
 
 Read [the docs][docs].
 
@@ -81,8 +85,8 @@ section("2. Edit one part");
 
 // Each edit gives a new document; the old one stays as it was.
 let edited = doc.headings[0].withText("Release notes, 0.1");
-edited = edited.tables[0].rows[1].cells[1].withText("ready");
-edited = edited.taskListItems[1].withChecked(true);
+edited = edited.tables[0].rows[2].cells[1].withText("ready");
+edited = edited.taskListItems[2].withChecked(true);
 edited = edited.linkReferenceDefinitions[0].withDestination(new LinkTarget("https://example.com/new"));
 changes(text, edited.asWritten);
 console.log(`at level 2: ${shown(edited.headings[0].withLevel(2).headings[0].asWritten)}`);
@@ -205,3 +209,47 @@ for (const view of adviceDoc.descendants) {
 const advised = adviceEditor.toDocument();
 rendered("markdown", advised.asWritten);
 console.log(`heading: ${advised.headings[1].text}`);
+
+section("9. Parse HTML, as browsers do");
+
+// The HTML standard's tokenizer and tree construction, lossless too.
+const htmlText = "<p id=a id=b>One<p>Two<table><td>x</table>";
+const htmlDoc = parseHtml(htmlText);
+console.log(`printed back exactly: ${htmlDoc.asWritten === htmlText}`);
+rendered("html", htmlDoc.html);
+const paragraphs = htmlDoc.body.children;
+console.log(`body: ${paragraphs.map((p) => p.name).join(", ")}, the first with id ${paragraphs[0].attribute("id")}`);
+for (const error of htmlDoc.errors) {
+  console.log(`error: ${error.code} at ${error.offset}`);
+}
+// A fragment, as innerHTML parses it: where it goes decides what it is.
+console.log(`in a tr: ${parseHtmlFragment("<td>1<td>2", new FragmentContext("tr")).html}`);
+console.log(`in a div: ${parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).html}`);
+// Tokens edit like Markdown: one part changes, the rest stays as written.
+const anchor = tokenizeHtml("<a href='/old' class=x>Go</a>").startTags[0];
+console.log(`edited: ${anchor.attribute("href").withValue("/new").asWritten}`);
+
+section("10. Markdown and raw HTML, one tree");
+
+// The tree a browser builds from the rendering, each element knowing
+// where it came from: its raw start tag, its Markdown node, or neither.
+const mixed = parseMarkdownWithHtml("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n");
+const tree = buildHtml(mixed);
+rendered("html", tree.html);
+function origins(nodes, depth) {
+  for (const node of nodes) {
+    if (node instanceof Element) {
+      const source = node.startTag?.asWritten ?? markdownNodeOf(node)?.node.kind.name ?? "implied";
+      console.log(`${"  ".repeat(depth)}${node.name} <- ${source}`);
+      origins(node.children, depth + 1);
+    }
+  }
+}
+origins(tree.children, 0);
+
+section("11. Render Markdown from anyone");
+
+// That tree, sanitized: only what the policy allows, with every URL checked.
+const untrusted = parseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n");
+rendered("safe", renderSafe(untrusted).html);
+rendered("text only", renderSafe(parseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy.textOnly).html);

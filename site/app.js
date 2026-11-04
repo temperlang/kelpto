@@ -1,11 +1,15 @@
 // Kelpto's site: the opening demo (demo.js), with its edits as code in each
-// language (editcode.js), and the tour in each language, with the
-// JavaScript one run in the page. kelpto-md comes from Temper's JS output,
-// as plain ES modules named by the page's import map.
+// language (editcode.js); the HTML side, with a parser to try and the
+// sanitizer's gallery (htmlside.js); Kelpto in a view function; and the
+// tour in each language, with the JavaScript one run in the page. Kelpto
+// comes from Temper's JS output, as plain ES modules named by the page's
+// import map.
 
 import * as kelptoMd from "kelpto-md";
 import { initDemo } from "./demo.js";
 import { codeFor, programFor } from "./editcode.js";
+import { initHtmlSection, initSafeGallery } from "./htmlside.js";
+import { loadHtmlSide } from "./tree.js";
 import { runTour } from "./tourrun.js";
 
 /** @param {string} id */
@@ -14,9 +18,9 @@ const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 /** @param {string} s */
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c);
 
-// Code tabs for the demo's edits and the tour, in each language, with a
-// small highlighter, as on Hrefine's site. Alphabetical, with Python first
-// chosen. Both rows of tabs share the choice.
+// Code tabs for the demo's edits, the view function, and the tour, in each
+// language, with a small highlighter, as on Hrefine's site. Alphabetical,
+// with Python first chosen. Every row of tabs shares the choice.
 
 /** Name, tour file extension, run command, line comment. */
 const LANGUAGES = [
@@ -75,7 +79,7 @@ function highlight(source, comment) {
   return out + escapeHtml(source.slice(last));
 }
 
-/** @type {Map<string, Promise<string>>} */
+/** Fetched files, by path. @type {Map<string, Promise<string>>} */
 const sources = new Map();
 let selected = DEFAULT_LANGUAGE;
 const tabRows = /** @type {HTMLElement[]} */ ([...document.querySelectorAll("[data-tabs]")]);
@@ -102,13 +106,20 @@ async function selectLanguage(file) {
   $("tour-run-note").textContent =
     file === "js"
       ? "Runs the JavaScript tour in this page."
-      : "Only JavaScript runs in this page. Run this one locally with the command above.";
-  const source = await loadSource(file).catch(() => "// Couldn't load this tour.");
-  if (selected === file) $("tour-source").innerHTML = highlight(source, comment);
+      : file === "rs"
+        ? "Only JavaScript runs in this page. Rust's doesn't build yet: Temper's Rust backend has a bug that rustc rejects in kelpto-md."
+        : "Only JavaScript runs in this page. Run this one locally with the command above.";
+  const [source, view] = await Promise.all([
+    loadSource(`tour/tour.${file}`).catch(() => `${comment} Couldn't load this tour.`),
+    loadSource(`view/view.${file}`).catch(() => `${comment} Couldn't load this example.`),
+  ]);
+  if (selected !== file) return;
+  $("tour-source").innerHTML = highlight(source, comment);
+  $("view-source").innerHTML = highlight(view, comment);
 }
 
 /**
- * A tour's source, fetched once, or again after a failure.
+ * A file's text, fetched once, or again after a failure.
  *
  * @param {string} file
  * @returns {Promise<string>}
@@ -116,9 +127,9 @@ async function selectLanguage(file) {
 function loadSource(file) {
   let source = sources.get(file);
   if (!source) {
-    source = fetch(`tour/tour.${file}`)
+    source = fetch(file)
       .then((response) => {
-        if (!response.ok) throw new Error(`Couldn't load the tour (${response.status}).`);
+        if (!response.ok) throw new Error(`Couldn't load ${file} (${response.status}).`);
         return response.text();
       })
       .catch((error) => {
@@ -215,15 +226,17 @@ $("code-copy").addEventListener("click", async () => {
   }
 });
 
-initDemo((next) => {
+const demo = initDemo((next) => {
   if (next.input !== program?.input) literalOpen = false;
   program = next;
   showCode();
 });
 selectLanguage(DEFAULT_LANGUAGE);
+initHtmlSection();
+initSafeGallery(demo);
 
 // The JavaScript tour runs in the page (tourrun.js, which the build also
-// runs in Node), with kelpto-md from this page's copy, and its output is
+// runs in Node), with Kelpto from this page's copy, and its output is
 // compared with the text every language's tour prints.
 
 $("tour-run").addEventListener("click", async () => {
@@ -234,7 +247,9 @@ $("tour-run").addEventListener("click", async () => {
   output.textContent = "Running…";
   try {
     // Waits for the source, in case the click beat it.
-    const out = await runTour(await loadSource("js"), { "kelpto-md": kelptoMd });
+    const { html, kelpto } = await loadHtmlSide();
+    const modules = { "kelpto-md": kelptoMd, "kelpto-html": html, kelpto };
+    const out = await runTour(await loadSource("tour/tour.js"), modules);
     output.textContent = out;
     const expected = await (await fetch("tour/expected.txt")).text();
     note.textContent =
@@ -245,7 +260,7 @@ $("tour-run").addEventListener("click", async () => {
   }
 });
 
-// What the page loads for kelpto-md, measured when the site was built.
+// What the page loads for Kelpto, measured when the site was built.
 
 fetch("sizes.json")
   .then((response) => response.json())

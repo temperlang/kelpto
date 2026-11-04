@@ -8,6 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Built by `temper build -b csharp` at the repo's top. -->
+    <ProjectReference Include="../../../temper.out/csharp/kelpto/src/Kelpto.csproj" />
+    <ProjectReference Include="../../../temper.out/csharp/kelpto-html/src/KelptoHtml.csproj" />
     <ProjectReference Include="../../../temper.out/csharp/kelpto-md/src/KelptoMd.csproj" />
   </ItemGroup>
 </Project>

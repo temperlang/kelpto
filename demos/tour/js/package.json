@@ -8,7 +8,9 @@
   "dependencies": {
     "@temperlang/core": "file:../../../temper.out/js/temper-core",
     "@temperlang/std": "file:../../../temper.out/js/std",
+    "kelpto": "file:../../../temper.out/js/kelpto",
     "kelpto-core": "file:../../../temper.out/js/kelpto-core",
+    "kelpto-html": "file:../../../temper.out/js/kelpto-html",
     "kelpto-md": "file:../../../temper.out/js/kelpto-md"
   }
 }

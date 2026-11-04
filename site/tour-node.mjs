@@ -5,10 +5,10 @@
 //     node site/tour-node.mjs site/build
 
 import { readFileSync } from "node:fs";
-import { loadLibrary } from "./lib-node.mjs";
+import { loadLibraries } from "./lib-node.mjs";
 import { runTour } from "./tourrun.js";
 
 const build = process.argv[2] ?? "site/build";
-const modules = { "kelpto-md": await loadLibrary(build) };
+const modules = await loadLibraries(build);
 const source = readFileSync(`${build}/tour/tour.js`, "utf8");
 process.stdout.write(await runTour(source, modules));

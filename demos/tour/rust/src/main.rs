@@ -1,4 +1,4 @@
-//! A tour of Kelpto's Markdown library, from Rust.
+//! A tour of Kelpto's Markdown and HTML libraries, from Rust.
 //!
 //! The same tour exists for each language Kelpto supports, and they all
 //! print the same text. See demos/README.md for how to run them.
@@ -8,6 +8,10 @@ use kelpto_md::{
     MarkdownParser,
     MarkdownRenderer, Paragraph, TableCell,
 };
+use kelpto::{build_html, markdown_node_of, parse_markdown_with_html, render_safe};
+use kelpto_html::builders::FragmentContextBuilder;
+use kelpto_html::{parse_html, parse_html_fragment, tokenize_html, BuiltNode, Element, FragmentContext, HtmlNodeTrait, SanitizerPolicy};
+use std::sync::Arc;
 use temper_core::cast;
 
 fn section(title: &str) {
@@ -48,6 +52,29 @@ fn label_of(definition: Option<FootnoteDefinition>) -> String {
     definition.map_or("nothing".into(), |found| found.label().to_string())
 }
 
+/// A fragment's context element, by name, with the rest as defaults.
+fn inside(name: &str) -> FragmentContext {
+    FragmentContextBuilder { name: Arc::new(name.to_string()) }.build()
+}
+
+/// Each element, indented, and where it came from: its raw start tag, its
+/// Markdown node, or neither.
+fn origins(nodes: &[BuiltNode], depth: usize) {
+    for node in nodes.iter() {
+        if let Some(element) = cast::<Element>(node.clone()) {
+            let source = if let Some(tag) = element.start_tag() {
+                tag.as_written().to_string()
+            } else if let Some(markdown) = markdown_node_of(node.clone()) {
+                markdown.node().kind().name().to_string()
+            } else {
+                "implied".to_string()
+            };
+            println!("{}{} <- {source}", "  ".repeat(depth), element.name());
+            origins(&element.children(), depth + 1);
+        }
+    }
+}
+
 fn main() {
     println!("# Kelpto tour");
 
@@ -60,10 +87,12 @@ Kelpto keeps *every*   byte.
 | Library     | Status |
 |:------------|-------:|
 | kelpto-md   | ready  |
-| kelpto-html | early  |
+| kelpto-html | ready  |
+| Hrefine     | early  |
 
 - [x] CommonMark
-- [ ] HTML trees
+- [x] HTML trees
+- [ ] Hrefine links
 
 Read [the docs][docs].
 
@@ -95,8 +124,8 @@ Read [the docs][docs].
     // Each edit gives a new document; the old one stays as it was. Edits
     // that can fail give a Result.
     let mut edited = doc.headings()[0].with_text("Release notes, 0.1");
-    edited = edited.tables()[0].rows()[1].cells()[1].with_text("ready");
-    edited = edited.task_list_items()[1].with_checked(true);
+    edited = edited.tables()[0].rows()[2].cells()[1].with_text("ready");
+    edited = edited.task_list_items()[2].with_checked(true);
     edited = edited.link_reference_definitions()[0].with_destination(LinkTarget::new("https://example.com/new")).expect("one line");
     changes(text, &edited.as_written());
     let level2 = edited.headings()[0].with_level(2).expect("a level from 1 to 6");
@@ -231,4 +260,41 @@ Read [the docs][docs].
     let advised = advice_editor.to_document().expect("edits that fit");
     rendered("markdown", &advised.as_written());
     println!("heading: {}", advised.headings()[1].text());
+
+    section("9. Parse HTML, as browsers do");
+
+    // The HTML standard's tokenizer and tree construction, lossless too.
+    let html_text = "<p id=a id=b>One<p>Two<table><td>x</table>";
+    let html_doc = parse_html(html_text);
+    println!("printed back exactly: {}", html_doc.as_written().as_str() == html_text);
+    rendered("html", &html_doc.html());
+    let paragraphs: Vec<Element> = html_doc.body().expect("a body").children().iter().filter_map(|node| cast::<Element>(node.clone())).collect();
+    let names: Vec<String> = paragraphs.iter().map(|p| p.name().to_string()).collect();
+    println!("body: {}, the first with id {}", names.join(", "), paragraphs[0].attribute("id").expect("an id"));
+    for error in html_doc.errors().iter() {
+        println!("error: {} at {}", error.code(), error.offset());
+    }
+    // A fragment, as innerHTML parses it: where it goes decides what it is.
+    println!("in a tr: {}", parse_html_fragment("<td>1<td>2", inside("tr")).html());
+    println!("in a div: {}", parse_html_fragment("<td>1<td>2", inside("div")).html());
+    // Tokens edit like Markdown: one part changes, the rest stays as written.
+    let anchor = tokenize_html("<a href='/old' class=x>Go</a>").start_tags()[0].clone();
+    println!("edited: {}", anchor.attribute("href").expect("an href").with_value("/new").as_written());
+
+    section("10. Markdown and raw HTML, one tree");
+
+    // The tree a browser builds from the rendering, each element knowing
+    // where it came from.
+    let mixed = parse_markdown_with_html("a <b>bold\n\nstill bold</b>\n\n<table><td>x</table>\n");
+    let tree = build_html(mixed, None, None);
+    rendered("html", &tree.html());
+    origins(&tree.children(), 0);
+
+    section("11. Render Markdown from anyone");
+
+    // That tree, sanitized: only what the policy allows, with every URL checked.
+    let untrusted = parse_markdown_with_html("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n");
+    rendered("safe", &render_safe(untrusted, None, None).html());
+    let text_only = render_safe(parse_markdown_with_html("# *a* [b](/c)\n"), Some(SanitizerPolicy::text_only()), None);
+    rendered("text only", &text_only.html());
 }
