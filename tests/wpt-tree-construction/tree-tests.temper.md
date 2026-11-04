@@ -1,13 +1,13 @@
 # Testing against web-platform-tests
 
-Each test parses its input as a document and writes the tree in the
-`.dat` files' dump format: a line per node, indented two spaces per
+Each test parses its input as a document, or as a fragment in its
+context element, and writes the tree in the `.dat` files' dump format: a line per node, indented two spaces per
 level, attributes sorted by name under their element, and a template's
 contents under `content`.
 
     let {
       BuiltComment, BuiltDoctype, BuiltNode, BuiltProcessingInstruction, BuiltText, Element,
-      HtmlParser,
+      FragmentContext, HtmlParser,
     } = import("../../kelpto-html");
 
     let dump(nodes: List<BuiltNode>, depth: Int, out: ListBuilder<String>): Void {
@@ -85,31 +85,62 @@ The tree a parse gives, in the dump format.
       out.join("\n") { (s: String): String => s }
     }
 
-What a test gives: `ok`, `fragment` (not run yet), or the tree it got.
+A fragment's tree, its context written as the files write it: a
+name, or `svg` or `math`, a space, and a name.
+
+    let fragmentTreeOf(input: String, context: String, scripting: Boolean): String {
+      let parts = context.split(" ");
+      let fragmentContext = if (parts.length == 2) {
+        new FragmentContext(parts[1], parts[0])
+      } else {
+        new FragmentContext(context)
+      };
+      let fragment = HtmlParser.html.withScripting(scripting).parseFragment(input, fragmentContext);
+      if (fragment.asWritten != input) { return "not lossless"; }
+      let out = new ListBuilder<String>();
+      dump(fragment.children, 0, out);
+      out.join("\n") { (s: String): String => s }
+    }
+
+    let treeFor(test: TreeTest, scripting: Boolean): String {
+      if (test.fragment.isEmpty) {
+        treeOf(test.input, scripting)
+      } else {
+        fragmentTreeOf(test.input, test.fragment, scripting)
+      }
+    }
+
+What a test gives: `ok`, or the tree it got.
 
     let check(test: TreeTest): String {
-      if (!test.fragment.isEmpty) { return "fragment"; }
-      let expected = "#document\n${test.tree}";
+      let expected = if (test.fragment.isEmpty) { "#document\n${test.tree}" } else { test.tree };
       if (test.scripting != "off") {
-        let got = treeOf(test.input, true);
+        let got = treeFor(test, true);
         if (got != expected) { return got; }
       }
       if (test.scripting != "on") {
-        let got = treeOf(test.input, false);
+        let got = treeFor(test, false);
         if (got != expected) { return got; }
       }
       "ok"
     }
 
-Counts by file, as `file: passed/total`, with fragment tests counted
-apart, and the failures.
+Counts by file, as `file: passed/total`, documents and fragments
+apart, and the failures. Gives how many documents and how many
+fragments passed.
 
-    let report(tests: List<TreeTest>, failures: ListBuilder<String>): Int {
+    class Counts(public documents: Int, public fragments: Int) {}
+
+    let report(tests: List<TreeTest>, failures: ListBuilder<String>): Counts {
       let files = new ListBuilder<String>();
       let passed = new ListBuilder<Int>();
       let totals = new ListBuilder<Int>();
+      let fragmentsPassed = new ListBuilder<Int>();
       let fragments = new ListBuilder<Int>();
-      var allPassed = 0;
+      var documentsPassed = 0;
+      var documentTotal = 0;
+      var allFragmentsPassed = 0;
+      var fragmentTotal = 0;
       for (var i = 0; i < tests.length; i += 1) {
         let test = tests[i];
         var at = -1;
@@ -121,46 +152,67 @@ apart, and the failures.
           files.add(test.file);
           passed.add(0);
           totals.add(0);
+          fragmentsPassed.add(0);
           fragments.add(0);
         }
         let outcome = check(test);
-        if (outcome == "fragment") {
-          fragments.set(at, fragments[at] + 1);
-        } else {
+        let ok = outcome == "ok";
+        if (test.fragment.isEmpty) {
           totals.set(at, totals[at] + 1);
-          if (outcome == "ok") {
+          documentTotal += 1;
+          if (ok) {
             passed.set(at, passed[at] + 1);
-            allPassed += 1;
-          } else {
-            failures.add("${test.file}: ${test.input}\n--- expected\n${test.tree}\n--- got\n${outcome}");
+            documentsPassed += 1;
           }
+        } else {
+          fragments.set(at, fragments[at] + 1);
+          fragmentTotal += 1;
+          if (ok) {
+            fragmentsPassed.set(at, fragmentsPassed[at] + 1);
+            allFragmentsPassed += 1;
+          }
+        }
+        if (!ok) {
+          let context = if (test.fragment.isEmpty) { "" } else { " (in ${test.fragment})" };
+          failures.add("${test.file}: ${test.input}${context}\n--- expected\n${test.tree}\n--- got\n${outcome}");
         }
       }
       let out = new StringBuilder();
-      var total = 0;
       for (var j = 0; j < files.length; j += 1) {
-        total += totals[j];
-        let rest = if (fragments[j] > 0) { " (and ${fragments[j].toString()} fragment tests)" } else { "" };
-        out.append("  ${files[j]}: ${passed[j].toString()}/${totals[j].toString()}${rest}\n");
+        let documents = if (totals[j] > 0) { " ${passed[j].toString()}/${totals[j].toString()}" } else { "" };
+        let rest = if (fragments[j] > 0) {
+          " (fragments ${fragmentsPassed[j].toString()}/${fragments[j].toString()})"
+        } else {
+          ""
+        };
+        out.append("  ${files[j]}:${documents}${rest}\n");
       }
-      out.append("  all documents: ${allPassed.toString()}/${total.toString()}\n");
+      out.append("  all documents: ${documentsPassed.toString()}/${documentTotal.toString()}\n");
+      out.append("  all fragments: ${allFragmentsPassed.toString()}/${fragmentTotal.toString()}\n");
       console.log(out.toString());
-      allPassed
+      new Counts(documentsPassed, allFragmentsPassed)
     }
 
 ## Tests
 
 Not every test passes yet, so this checks that none that passed
-stops passing: at least `floor()` pass (a function, since Rust
-can't see test-only module values). Logs the counts for every file,
-and the first failures.
+stops passing: at least `documentFloor()` documents and
+`fragmentFloor()` fragments pass (functions, since Rust can't see
+test-only module values). Logs the counts for every file, and the
+first failures.
 
-    let floor(): Int { 1757 }
+    let documentFloor(): Int { 1757 }
+    let fragmentFloor(): Int { 206 }
 
     test("WPT tree construction tests") {
       let failures = new ListBuilder<String>();
-      let passed = report(treeTests(), failures);
+      let counts = report(treeTests(), failures);
       let all = failures.toList();
       for (var i = 0; i < all.length && i < 30; i += 1) { console.log(all[i]); }
-      assert(passed >= floor()) { "${passed.toString()} passed, fewer than ${floor().toString()}" };
+      assert(counts.documents >= documentFloor()) {
+        "${counts.documents.toString()} documents passed, fewer than ${documentFloor().toString()}"
+      };
+      assert(counts.fragments >= fragmentFloor()) {
+        "${counts.fragments.toString()} fragments passed, fewer than ${fragmentFloor().toString()}"
+      };
     }

@@ -191,8 +191,10 @@ way in `tests/gfm/`.
    construction started (2026-11-03): whole documents, every insertion
    mode and foreign content, against WPT's `.dat` files in
    `tests/wpt-tree-construction/` (see "kelpto-html's tree
-   construction"). Next: fragments, tree construction's parse errors,
-   and the rest of the `.dat` tests.
+   construction"). Fragments done (2026-11-04): all 206 of the `.dat`
+   files' fragment tests. Next: Markdown's raw HTML parsed into one
+   tree (planned in "Raw HTML in Markdown, as one tree"), and tree
+   construction's parse errors.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface
    filled in.
 6. **Tours and the site,** as in the other libraries.
@@ -203,3 +205,11 @@ way in `tests/gfm/`.
 - HTML to Markdown: in the bridge, or not at all.
 - How a lossless node API reads in each language (immutable values with
   `with` methods, as Hrefine's `Url`, or a mutable tree).
+- An emit-only builder mode, for immediate-mode users: nested calls
+  that write HTML straight to the output with no tree, by Kelpto's
+  escaping and serialization rules. Cheap if the builder API already
+  has that shape; consider it at the next builder API refinement.
+- Later: minimal text edits between two versions of a document, from
+  the lossless tree's source positions (live preview, collaborative
+  editing): the counterpart of immediate-mode frameworks' DOM
+  diffing.

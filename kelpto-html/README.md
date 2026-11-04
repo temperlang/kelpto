@@ -17,6 +17,10 @@ result.errors[0].code;           // "duplicate-attribute"
 let doc = parseHtml("<p>One<p>Two<table><td>x</table>");
 doc.body?.children.length;       // 2: the two p elements
 doc.html;                        // "<html><head></head><body><p>One</p><p>Two<table><tbody>…"
+
+let cells = parseHtmlFragment("<td>1<td>2", new FragmentContext("tr"));
+cells.html;                      // "<td>1</td><td>2</td>", as innerHTML of a tr reads it
+parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).html; // "12"
 ```
 
 - **The WHATWG tokenizer, in full:** every state of the HTML
@@ -40,8 +44,14 @@ doc.html;                        // "<html><head></head><body><p>One</p><p>Two<t
   `BuiltProcessingInstruction` nodes, each pointing back at its token
   (`Element.startTag`), and `html`, the standard's serialization. WPT's
   tree construction tests check it (see `tests/wpt-tree-construction`).
+- **Fragments,** as `innerHTML` parses them: `parseHtmlFragment` reads
+  text as if inside a context element (a `FragmentContext`: name,
+  namespace, attributes, whether it's in a `form`, and quirks mode, or
+  `Element.fragmentContext` for an element already parsed), giving an
+  `HtmlFragment` with the same tokens, nodes, and `html` as a
+  document.
 - **Parse errors** by the standard's codes, with offsets, from
   `HtmlTokenizer.tokenize`.
 
-Not yet: fragment parsing, tree construction's parse errors, and a
+Not yet: tree construction's parse errors, and a
 sanitizer (which will drop processing instructions by default).

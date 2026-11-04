@@ -13,14 +13,14 @@ html5lib-tests used to hold), at commit 4aa56d3beafc.
 
 All but 4 of the 1,761 document tests pass; those 4 (webkit02.dat)
 expect `<selectedcontent>` to copy the selected `<option>`, which
-kelpto-html doesn't do yet. The runner checks that at least 1,757
-pass. In C++, one more fails (`<?something ?\t   ?>`), since the
+kelpto-html doesn't do yet. All 206 fragment tests
+(`#document-fragment`, parsed in their context element) pass. The
+runner checks that at least 1,757 documents and 206 fragments pass. In C++, one more fails (`<?something ?\t   ?>`), since the
 `temper` C++ backend writes `??>` into a string literal, which C++14
 reads as a trigraph (`}`).
 
-Not yet checked: fragment tests (`#document-fragment`), since
-kelpto-html doesn't parse fragments yet, and error counts, since it
-doesn't keep tree construction's errors. Left out: the scripted_*.dat
+Not yet checked: error counts, since kelpto-html doesn't keep tree
+construction's errors. Left out: the scripted_*.dat
 files, which need a script engine.
 
 **Licensing:** web-platform-tests is under the 3-Clause BSD License,

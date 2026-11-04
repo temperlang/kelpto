@@ -45,6 +45,14 @@ a section has content.
 4. **Compare (`#compare`):** a conformance table against other
    parsers: spec examples passed, roundtrip, and edits.
 
+Also, in the tour or beside `#safe`: **Kelpto in your view function.**
+For people who build pages immediate-mode style (htpy, maud, templ, or
+React-style views, where each render describes the page from state):
+`view(state) = layout(nav, render(state.post.markdown))`, in each
+language, with the parse memoized by content. It shows where Kelpto
+fits in such code (documents inside a view, not the view itself)
+without new features.
+
 Data recorded from other parsers goes in `site/` as JSON, with a script
 to record it, as Hrefine's site does. Analytics wait for a GoatCounter
 name.

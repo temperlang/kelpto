@@ -80,6 +80,16 @@ A template element's contents, a fragment node, or -1.
 
       public contents: ListBuilder<Int> = new ListBuilder<Int>();
 
+The document's quirks mode, once parsed. For a fragment, the `html`
+element whose children are the fragment, and the context element
+(detached, so not in the tree), each -1 for a document, and whether
+the context is inside a form.
+
+      public var quirksMode: String = "no-quirks";
+      public var fragmentRoot: Int = -1;
+      public var fragmentContext: Int = -1;
+      public var contextInsideForm: Boolean = false;
+
       public constructor() {}
 
       public add(kind: Int, name: String, space: Int, data: String, tokenIndex: Int, tokenOffset: Int, attributes: List<String>): Int {
@@ -291,9 +301,64 @@ node gives it: a parent and the child to go before, or -1 for last.
       private var placeParent: Int = 0;
       private var placeBefore: Int = -1;
 
+The context element when parsing a fragment, or -1.
+
+      private var contextNode: Int = -1;
+
       public constructor(scripting: Boolean) {
         this.scripting = scripting;
         tree.add(documentNode, "", htmlNs, "", -1, 0, noStrings);
+      }
+
+### Starting a fragment
+
+The standard's fragment parsing algorithm, before the tokens: an
+`html` root on the stack, the context element known but not in the
+tree, the insertion mode reset from it, the form element pointer set
+if it's in a form, and the tokenizer's state from it, which this gives
+(as a `ContentState`'s id). The context's document's quirks mode
+carries over, which matters only for `<table>` closing a `<p>`.
+
+      public startFragment(context: FragmentContext): Int {
+        quirks = context.quirksMode;
+        let space = if (context.namespace == "svg") { svgNs } else if (context.namespace == "math") { mathNs } else { htmlNs };
+        let root = tree.add(elementNode, "html", htmlNs, "", -1, 0, noStrings);
+        tree.insert(0, root, -1);
+        stack.add(root);
+        let triples = new ListBuilder<String>();
+        let attributes = context.attributes;
+        for (var i = 0; i < attributes.length; i += 1) {
+          triples.add(attributes[i].prefix);
+          triples.add(attributes[i].name);
+          triples.add(attributes[i].value);
+        }
+        let name = if (space == htmlNs) { asciiLowercase(context.name) } else { context.name };
+        contextNode = tree.add(elementNode, name, space, "", -1, 0, triples.toList());
+        tree.fragmentRoot = root;
+        tree.fragmentContext = contextNode;
+        tree.contextInsideForm = context.insideForm;
+        let htmlName = if (space == htmlNs) { name } else { "" };
+        if (htmlName == "template") { templateModes.add(inTemplateMode); }
+        resetMode();
+        if (htmlName == "form") {
+          form = contextNode;
+        } else if (context.insideForm) {
+          form = tree.add(elementNode, "form", htmlNs, "", -1, 0, noStrings);
+        }
+        if (htmlName == "title" || htmlName == "textarea") {
+          ContentState.rcdata.id
+        } else if (
+          htmlName == "style" || htmlName == "xmp" || htmlName == "iframe" || htmlName == "noembed" ||
+          htmlName == "noframes" || (htmlName == "noscript" && scripting)
+        ) {
+          ContentState.rawtext.id
+        } else if (htmlName == "script") {
+          ContentState.scriptData.id
+        } else if (htmlName == "plaintext") {
+          ContentState.plaintext.id
+        } else {
+          ContentState.data.id
+        }
       }
 
 ### Taking tokens
@@ -362,6 +427,7 @@ node gives it: a parent and the child to go before, or -1 for last.
         t.index = -1;
         process(t);
         stack.clear();
+        tree.quirksMode = quirks;
       }
 
 The tree construction dispatcher: each rule gives whether to
@@ -426,7 +492,11 @@ reprocess the token, in whatever mode it switched to.
 
       private current(): Int { stack[stack.length - 1] }
 
-      private adjustedCurrent(): Int { current() }
+The context element stands in for the `html` root of a fragment.
+
+      private adjustedCurrent(): Int {
+        if (contextNode >= 0 && stack.length == 1) { contextNode } else { current() }
+      }
 
       private currentIs(name: String): Boolean { !stack.isEmpty && tree.isHtml(current(), name) }
 
@@ -524,6 +594,15 @@ HTML element named `name` is in that scope.
         }
         false
       }
+
+Whether in a `template`, or in a fragment whose context is one, as
+the form element pointer's rules ask.
+
+      private parsingTemplateContents(): Boolean {
+        hasTemplate() || contextIs("template")
+      }
+
+      private contextIs(name: String): Boolean { contextNode >= 0 && tree.isHtml(contextNode, name) }
 
       private popUntil(name: String): Void {
         while (!stack.isEmpty) {
@@ -885,10 +964,12 @@ to act as for any other end tag.
 
 ### Resetting the insertion mode
 
+In a fragment, the context element stands in for the root.
+
       private resetMode(): Void {
         for (var i = stack.length - 1; i >= 0; i -= 1) {
-          let node = stack[i];
           let last = i == 0;
+          let node = if (last && contextNode >= 0) { contextNode } else { stack[i] };
           let name = if (tree.spaces[node] == htmlNs) { tree.names[node] } else { "" };
           if ((name == "td" || name == "th") && !last) {
             mode = inCellMode;
@@ -1247,7 +1328,7 @@ Text in body: NUL dropped, the rest inserted.
           return false;
         }
         if (name == "form") {
-          let inTemplate = hasTemplate();
+          let inTemplate = parsingTemplateContents();
           if (form >= 0 && !inTemplate) { return false; }
           closePInButtonScope();
           let id = insertHtml(t);
@@ -1343,6 +1424,7 @@ Text in body: NUL dropped, the rest inserted.
           return false;
         }
         if (name == "input") {
+          if (contextIs("select")) { return false; }
           if (inScope("select", 0)) { popUntil("select"); }
           reconstruct();
           insertHtml(t);
@@ -1394,6 +1476,7 @@ Text in body: NUL dropped, the rest inserted.
           return false;
         }
         if (name == "select") {
+          if (contextIs("select")) { return false; }
           if (inScope("select", 0)) {
             popUntil("select");
           } else {
@@ -1459,7 +1542,7 @@ Text in body: NUL dropped, the rest inserted.
           return false;
         }
         if (name == "form") {
-          if (!hasTemplate()) {
+          if (!parsingTemplateContents()) {
             let node = form;
             form = -1;
             if (node < 0 || !nodeInScope(node)) { return false; }
@@ -1628,7 +1711,7 @@ Text in body: NUL dropped, the rest inserted.
             }
           }
           if (name == "form") {
-            let inTemplate = hasTemplate();
+            let inTemplate = parsingTemplateContents();
             if (form >= 0 && !inTemplate) { return false; }
             let id = insertHtml(t);
             if (!inTemplate) { form = id; }
@@ -1940,7 +2023,7 @@ Text in body: NUL dropped, the rest inserted.
         } else if (kind == startToken && t.name == "html") {
           return inBody(t);
         } else if (kind == endToken && t.name == "html") {
-          mode = afterAfterBodyMode;
+          if (contextNode < 0) { mode = afterAfterBodyMode; }
           return false;
         }
         mode = inBodyMode;
@@ -1986,7 +2069,7 @@ Keeps only the whitespace of text, as the frameset modes do.
         } else if (kind == endToken && name == "frameset") {
           if (stack.length > 1) {
             stack.removeLast();
-            if (!currentIs("frameset")) { mode = afterFramesetMode; }
+            if (contextNode < 0 && !currentIs("frameset")) { mode = afterFramesetMode; }
           }
         }
         false
@@ -2177,6 +2260,56 @@ Quirks mode from a DOCTYPE, as the standard's lists give it.
 
 ## Parsing
 
+The element a fragment is parsed as if inside: its local name (SVG's
+in mixed case, as `Element.name` gives it), its namespace (`"html"`,
+`"svg"`, or `"math"`), its attributes (which matter only for MathML's
+`annotation-xml`, whose `encoding` can make it HTML inside), whether
+it's inside a `form` (so a `<form>` in the fragment is ignored, as the
+standard's form element pointer has it), and its document's quirks
+mode. `Element.fragmentContext` gives all of these for an element
+already parsed.
+
+    export class FragmentContext {
+      public name: String;
+      // A getter over `namespaceName`, not a field or parameter named
+      // `namespace`: Temper's C# backend doesn't escape that keyword in
+      // fields and parameters (see notes/temper-fixes.md).
+      private namespaceName: String;
+      public attributes: List<BuiltAttribute>;
+      public insideForm: Boolean;
+      public quirksMode: String;
+
+      public constructor(
+        name: String,
+        namespaceName: String = "html",
+        attributes: List<BuiltAttribute> = [],
+        insideForm: Boolean = false,
+        quirksMode: String = "no-quirks",
+      ) {
+        this.name = name;
+        this.namespaceName = namespaceName;
+        this.attributes = attributes;
+        this.insideForm = insideForm;
+        this.quirksMode = quirksMode;
+      }
+
+      public get namespace(): String { namespaceName }
+
+      public withAttributes(attributes: List<BuiltAttribute>): FragmentContext {
+        new FragmentContext(name, namespaceName, attributes, insideForm, quirksMode)
+      }
+
+      public withInsideForm(on: Boolean): FragmentContext {
+        new FragmentContext(name, namespaceName, attributes, on, quirksMode)
+      }
+
+`"no-quirks"`, `"quirks"`, or `"limited-quirks"`.
+
+      public withQuirksMode(mode: String): FragmentContext {
+        new FragmentContext(name, namespaceName, attributes, insideForm, mode)
+      }
+    }
+
 How to parse: with scripting on (the default, as in browsers), or
 off, which changes how `<noscript>` reads.
 
@@ -2195,12 +2328,32 @@ off, which changes how `<noscript>` reads.
         let tokens = new HtmlTokens(redRoot(machine.green()));
         new HtmlDocument(tokens, builder.tree, builder.quirks, machine.parseErrors())
       }
+
+Parses a fragment as the standard's fragment parsing algorithm does,
+as `innerHTML` does in browsers: as if inside `context`, which decides
+how the text reads (`<td>` alone is a cell in a `tr`, ignored in a
+`div`; text is raw text in a `textarea`). Never fails.
+
+      public parseFragment(text: String, context: FragmentContext): HtmlFragment {
+        let builder = new TreeBuilder(scripting);
+        let state = builder.startFragment(context);
+        let machine = new Tokenizer(text, "", true, builder);
+        machine.run(state);
+        let tokens = new HtmlTokens(redRoot(machine.green()));
+        new HtmlFragment(tokens, builder.tree, context, machine.parseErrors())
+      }
     }
 
 Parses a whole document as browsers do. Never fails: any text is
 some HTML.
 
     export let parseHtml(text: String): HtmlDocument { HtmlParser.html.parse(text) }
+
+Parses a fragment as browsers do for `innerHTML`, with scripting on.
+
+    export let parseHtmlFragment(text: String, context: FragmentContext): HtmlFragment {
+      HtmlParser.html.parseFragment(text, context)
+    }
 
 ## The built tree's views
 
@@ -2281,6 +2434,36 @@ its absence) sets it.
       }
     }
 
+A fragment as parsed: the tokens as written, the nodes as built (what
+`innerHTML` would put in the context element), and the tokenizer's
+parse errors.
+
+    export class HtmlFragment {
+      public tokens: HtmlTokens;
+      private tree: BuiltTree;
+      public context: FragmentContext;
+      public errors: List<HtmlParseError>;
+
+      public constructor(tokens: HtmlTokens, tree: BuiltTree, context: FragmentContext, errors: List<HtmlParseError>) {
+        this.tokens = tokens;
+        this.tree = tree;
+        this.context = context;
+        this.errors = errors;
+      }
+
+      public get asWritten(): String { tokens.asWritten }
+      public get children(): List<BuiltNode> { childrenOf(tree, tokens, tree.fragmentRoot) }
+
+The nodes serialized as the context element's contents (so text in a
+`script` context isn't escaped).
+
+      public get html(): String {
+        let out = new StringBuilder();
+        serializeChildren(tree, tree.fragmentRoot, out);
+        out.toString()
+      }
+    }
+
 An attribute as built: a namespace designator (`""`, or `"xlink"`,
 `"xml"`, or `"xmlns"` on SVG and MathML), a name, and a value.
 
@@ -2343,6 +2526,25 @@ The first child element named `name`, or null.
           child = tree.nexts[child];
         }
         null
+      }
+
+How to parse a fragment as if inside this element, as setting its
+`innerHTML` does: its name, namespace, attributes, whether it or an
+element it's in is a `form`, and its document's quirks mode.
+
+      public get fragmentContext(): FragmentContext {
+        var insideForm = false;
+        var node = tree.parents[id];
+        while (node >= 0 && !insideForm) {
+          if (tree.isHtml(node, "form")) { insideForm = true; }
+          if (node == tree.fragmentRoot) {
+            if (tree.contextInsideForm || tree.isHtml(tree.fragmentContext, "form")) { insideForm = true; }
+            node = -1;
+          } else {
+            node = tree.parents[node];
+          }
+        }
+        new FragmentContext(name, namespace, attributes, insideForm, tree.quirksMode)
       }
 
 A `template`'s contents, which aren't its children.
@@ -2466,7 +2668,8 @@ overflow it; fine for now.
         serializeChildren(tree, id, out);
         out.append("</${name}>");
       } else if (kind == textNode) {
-        let parent = tree.parents[id];
+        var parent = tree.parents[id];
+        if (parent >= 0 && parent == tree.fragmentRoot) { parent = tree.fragmentContext; }
         if (parent >= 0 && tree.spaces[parent] == htmlNs && tree.kinds[parent] == elementNode && rawTextParents.has(tree.names[parent])) {
           out.append(tree.datas[id]);
         } else {
@@ -2542,4 +2745,33 @@ as the standard's serialization escapes them.
       assert(math == "<html><head></head><body><math>a&lt;b</math></body></html>") { math };
       let script = parseHtml("<script>a<b</script><textarea>\n<x></textarea>").html;
       assert(script == "<html><head><script>a<b</script></head><body><textarea>&lt;x&gt;</textarea></body></html>") { script };
+    }
+
+    test("fragments, in context") {
+      let cells = parseHtmlFragment("<td>1<td>2", new FragmentContext("tr"));
+      assert(cells.html == "<td>1</td><td>2</td>") { cells.html };
+      assert(cells.asWritten == "<td>1<td>2") { "lossless" };
+      let td = cells.children[0] as Element orelse panic();
+      assert((td.startTag as StartTag orelse panic()).asWritten == "<td>") { "start tag" };
+      let ignored = parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).html;
+      assert(ignored == "12") { ignored };
+      let raw = parseHtmlFragment("a<b>&amp;</textarea>", new FragmentContext("textarea")).html;
+      assert(raw == "a&lt;b&gt;&amp;&lt;/textarea&gt;") { raw };
+      let script = parseHtmlFragment("a<b", new FragmentContext("script")).html;
+      assert(script == "a<b") { script };
+      let svg = parseHtmlFragment("<foreignobject/><p>x", new FragmentContext("g", "svg")).html;
+      assert(svg == "<foreignObject></foreignObject><p>x</p>") { svg };
+    }
+
+    test("fragment contexts from elements") {
+      let doc = parseHtml("<form><div id=a></div></form><table><tr><td>x</table>");
+      let body = doc.body as Element orelse panic();
+      let div = (body.child("form") as Element orelse panic()).child("div") as Element orelse panic();
+      let context = div.fragmentContext;
+      assert(context.name == "div" && context.insideForm && context.quirksMode == "quirks") { "div context" };
+      let nested = parseHtmlFragment("<form><input>", context).html;
+      assert(nested == "<input>") { nested };
+      let tr = (body.child("table") as Element orelse panic()).child("tbody")?.child("tr") as Element orelse panic();
+      let row = parseHtmlFragment("<td>y", tr.fragmentContext).html;
+      assert(row == "<td>y</td>") { row };
     }

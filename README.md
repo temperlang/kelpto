@@ -5,14 +5,16 @@ every language Temper supports. Parse a document, change one part, and
 write it back with everything else exactly as it was. Render it safely,
 with raw HTML parsed as browsers parse it and links checked by Hrefine.
 
-**Status** (2026-11-03): all of CommonMark parses losslessly and
+**Status** (2026-11-04): all of CommonMark parses losslessly and
 renders as every one of the spec's 652 examples expects, and so do
 GitHub Flavored Markdown's extensions (tables, task list items,
 strikethrough, extended autolinks, and the disallowed raw HTML filter),
 as GFM's examples expect. On the HTML side, the WHATWG tokenizer is
 done, lossless, passing html5lib-tests' tokenizer tests, and tree
 construction builds whole documents as browsers do, passing all but 4
-of web-platform-tests' 1,761 document tests; fragments are next.
+of web-platform-tests' 1,761 document tests, and fragments as
+`innerHTML` does, passing all 206 fragment tests; parsing Markdown's
+raw HTML into one tree with them is next.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 

@@ -251,9 +251,9 @@ Built 2026-11-03, against html5lib-tests' tokenizer tests (in
 
 ### kelpto-html's tree construction
 
-Started 2026-11-03 (the first part: whole documents, every insertion
-mode, foreign content; not yet fragments or tree construction's parse
-errors), against WPT's tree construction tests (in
+Started 2026-11-03 (whole documents, every insertion mode, foreign
+content), with fragments 2026-11-04; not yet tree construction's parse
+errors. Checked against WPT's tree construction tests (in
 `tests/wpt-tree-construction/`).
 
 - **A built tree beside the token tree,** not views over it: the
@@ -293,15 +293,79 @@ errors), against WPT's tree construction tests (in
 - **What's lossless:** the tokens, always. The built tree keeps where
   each node came from, not how it was written; attributes are decoded
   values.
-- **Not yet:** fragment parsing (`parseHtmlFragment`), tree
-  construction's parse errors (only the tokenizer's are kept),
+- **Fragments,** by the standard's fragment parsing algorithm, as
+  `innerHTML` parses: `parseHtmlFragment(text, context)` and
+  `HtmlParser.parseFragment`, giving `HtmlFragment` (tokens, built
+  nodes, and errors, as `HtmlDocument` has them). A `FragmentContext`
+  is the context element without a DOM: its name, namespace,
+  attributes (for `annotation-xml`'s `encoding`), whether it's in a
+  `form`, and its document's quirks mode; `Element.fragmentContext`
+  reads all of them off a parsed element. The builder puts an `html`
+  root on the stack, keeps the context as a detached arena node (the
+  adjusted current node while the root is alone on the stack, and the
+  node the insertion mode reset reads last), points the form element
+  pointer at the context or a detached stand-in for its form, and
+  starts the tokenizer in the context's state (RCDATA in `textarea`,
+  and so on), with no last start tag, so no end tag closes it. The
+  standard's other fragment cases (`</html>` after body, `</frameset>`,
+  `<input>` and `<select>` in a `select` context, and "parsing template
+  contents" for a `template` context) are each a check of the context.
+  `html` serializes the nodes as the context's contents, so text in a
+  `script` context stays raw.
+- **Not yet:** tree construction's parse errors (only the tokenizer's
+  are kept),
   `<template shadowrootmode>` (declarative shadow roots) and
   `<template for>` patching, which the WPT `.dat` tests don't check,
   an end tag's link to the element it closed, and `<selectedcontent>`
   taking a copy of the selected `<option>` (DOM behavior the standard
   runs as options are inserted; the 4 `.dat` tests that fail).
-- **Tests:** all 1,761 of WPT's document tests (not fragments, and not
-  scripted_*.dat) give the expected tree but those 4.
+- **Tests:** all 1,761 of WPT's document tests (not scripted_*.dat)
+  give the expected tree but those 4, and all 206 fragment tests.
+
+### Raw HTML in Markdown, as one tree (a plan, 2026-11-04)
+
+Not built yet. How `kelpto` will parse a Markdown document's HTML
+blocks and inline HTML into the tree a browser builds from its
+rendering, still lossless.
+
+- **Why one parse, not one per piece:** a browser reads the rendered
+  page as one stream, so pieces interact: `<b>` in one paragraph and
+  `</b>` in the next, `<div>` in one HTML block closed in another, a
+  `<table>` foster parenting the Markdown text after it, or a
+  `<script>` or `<textarea>` left open, reading the Markdown after it
+  as raw text. Parsing each piece as its own fragment (the context
+  being its Markdown parent: `p` for inline HTML, `body` for blocks)
+  gets the common case right and is cheap, so it stays as a view for
+  tools looking at one piece; but sanitizing has to judge the tree
+  the browser builds, so `renderSafe` needs the joined one.
+- **One fragment parse over two kinds of token:** the renderer walks
+  the Markdown tree as it renders, and instead of writing text it
+  hands tree construction tokens: synthetic ones for what Markdown
+  renders (`<p>`, `<em>`, text, a code block's `<pre><code>`), each
+  pointing at its Markdown node, and, for each raw HTML piece, its
+  kelpto-html tokens, already in the Markdown green tree (as
+  `tokenizeHtmlGreen` puts them there now). One `TreeBuilder`, started
+  as a fragment in a context the caller picks (`body` by default, or
+  the element the page puts it in), takes them all, so the built tree
+  is exactly what parsing the rendered HTML gives.
+- **The tokenizer's state carries over:** raw pieces are tokenized in
+  order, each starting in the state the last left, with the last start
+  tag, so `<script>` in one block and `</script>` in a later one read
+  as browsers read them. Where a piece leaves the tokenizer in raw
+  text, RCDATA, PLAINTEXT, or an open comment, the Markdown rendered
+  after it is read as that text would be, not as tokens: the joined
+  parse tokenizes that rendered HTML as text, pointing back at its
+  Markdown nodes. Rare in real documents, but exactly the case a
+  sanitizer must not miss.
+- **Pointing back:** the arena's token index becomes an index into a
+  table of origins the parse gathers, each a red node (a kelpto-html
+  token inside the Markdown tree, or a Markdown node for synthetic
+  tokens), so `Element.startTag` still finds a raw start tag and a new
+  `Element.markdownNode`-like view finds where Markdown made it.
+  The lossless tree stays the Markdown tree, with the HTML tokens
+  inside it; the built tree is beside it, as for HTML alone.
+- **Edits:** changing a raw piece's tokens or a Markdown node rewrites
+  only that text, as now; the built tree is reparsed, not patched.
 
 ### Generated tables
 
@@ -441,6 +505,16 @@ user text never needs hand-escaping.
     interpolation for where it lands (heading, link text, URL, code
     span), using this builder's escaping rules per context.
 
+**Immediate-mode users** (a note, 2026-11-04): Kelpto keeps a lossless
+tree of documents that exist as text. Immediate-mode HTML (htpy, maud,
+templ, React-style views) generates HTML from state on each render and
+keeps nothing. The two meet where a view embeds a document: render
+Markdown inside a view, memoized by a hash of its content. Safety
+there comes from the planned sanitizer bridge to secure-composition's
+`SafeHtml`, a separate small adapter, as "Foreign content" above has
+it. An emit-only builder for these users is an open question in
+[plan.md](plan.md).
+
 **Next,** roughly in order:
 
 1. More edits: link text, titles, and emphasis, and list items as
@@ -449,7 +523,9 @@ user text never needs hand-escaping.
    inserting, replacing, and removing blocks, with `Inlines` content
    for headings, paragraphs, and cells (2026-11-03).
 2. The WHATWG tree construction, against WPT's `.dat` files, driving
-   the tokenizer's state. The tokenizer is done (2026-11-03).
+   the tokenizer's state. Done for documents (2026-11-03) and
+   fragments (2026-11-04); next, Markdown's raw HTML as one tree (see
+   "Raw HTML in Markdown, as one tree").
 3. A real sanitizer on the built tree, with links checked, replacing
    the `renderSafe` sketch.
 4. Chunked children, once documents are big enough to measure;
