@@ -2,7 +2,8 @@
 
 Typed views over the red tree, each wrapping one red node, as in
 kelpto-md. `HtmlToken` is what the tokenizer gives at the top level:
-`StartTag`, `EndTag`, `Comment`, `Text`, `Doctype`, and `DroppedTag`.
+`StartTag`, `EndTag`, `Comment`, `Text`, `Doctype`,
+`ProcessingInstruction`, and `DroppedTag`.
 Each reads its parts as browsers do (names lowercased, character
 references decoded, line endings as `\n`), while `asWritten` stays the
 input.
@@ -59,6 +60,7 @@ The typed view of a token node.
       if (node.hasKind(endTagKind)) { return new EndTag(node); }
       if (node.hasKind(commentKind)) { return new Comment(node); }
       if (node.hasKind(doctypeKind) || node.hasKind(quirksDoctypeKind)) { return new Doctype(node); }
+      if (node.hasKind(processingInstructionKind)) { return new ProcessingInstruction(node); }
       if (node.hasKind(droppedTagKind)) { return new DroppedTag(node); }
       new Text(node)
     }
@@ -253,9 +255,31 @@ document in quirks mode.
       public get forceQuirks(): Boolean { node.hasKind(quirksDoctypeKind) }
     }
 
-A tag browsers drop: one cut off by the end of the input, or `</>`.
-It's not a token to them, but its text stays, and `tag` is its
-`StartTag` or `EndTag` view.
+A processing instruction, such as `<?php echo 1 ?>`, as the HTML
+standard reads them since 2026 (before, browsers read them as
+comments). Wherever one is written fresh, it ends in `?>`, which HTML
+and XML both read.
+
+    export class ProcessingInstruction extends HtmlToken {
+      public node: RedNode;
+      public constructor(node: RedNode) { this.node = node; }
+      public get asWritten(): String { node.asWritten }
+      public get span(): Span { node.span }
+
+The target, as written (the standard keeps its case).
+
+      public get target(): String { node.childOfKind(piTargetKind)?.asWritten ?? "" }
+
+What follows the target and its whitespace, up to `?>` or `>`, with
+line endings as `\n`.
+
+      public get data(): String { normalizeText(node.childOfKind(piDataKind)?.asWritten ?? "", false) }
+    }
+
+A tag browsers drop: one cut off by the end of the input, or `</>`,
+or a processing instruction cut off by the end of the input. It's not
+a token to them, but its text stays, and `tag` is its `StartTag`,
+`EndTag`, or `ProcessingInstruction` view.
 
     export class DroppedTag extends HtmlToken {
       public node: RedNode;
@@ -320,4 +344,19 @@ It's not a token to them, but its text stays, and `tag` is its
       assert((dropped.tag as StartTag orelse panic()).name == "div") { "dropped" };
       assert(tokenizeHtml("<!doctype>").children[0] is Doctype) { "quirks doctype" };
       assert((tokenizeHtml("<!doctype>").children[0] as Doctype orelse panic()).forceQuirks) { "quirks" };
+    }
+
+    test("processing instructions") {
+      // No `??>` in literals: C++14 reads it as a trigraph.
+      let tokens = tokenizeHtml("<?php echo a?b?><?Foo\r\nx\r\ny><?xml version=1?><?1><?a");
+      let children = tokens.children;
+      assert(children.length == 5) { children.length.toString() };
+      let php = children[0] as ProcessingInstruction orelse panic();
+      assert(php.target == "php" && php.data == "echo a?b") { php.data };
+      let foo = children[1] as ProcessingInstruction orelse panic();
+      assert(foo.target == "Foo" && foo.data == "x\ny") { foo.data };
+      assert((children[2] as Comment orelse panic()).text == "?xml version=1?") { "xml" };
+      assert((children[3] as Comment orelse panic()).text == "?1") { "digit" };
+      let dropped = children[4] as DroppedTag orelse panic();
+      assert((dropped.tag as ProcessingInstruction orelse panic()).target == "a") { "dropped" };
     }

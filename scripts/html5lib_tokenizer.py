@@ -22,8 +22,7 @@ writes kelpto-html's output in:
   its name, `Comment` and its text, and `DOCTYPE`, its name, public and
   system identifiers (U+0000 alone for none), and `true` or `false`
   for the force-quirks flag being off; and `ProcessingInstruction`, its
-  target, and its data, which some tests expect for `<?`, though the
-  standard Kelpto follows reads that as a bogus comment;
+  target, and its data;
 - errors as `code:line:col`, joined by `,`.
 
 Tests whose input, once `doubleEscaped` is undone, holds a lone

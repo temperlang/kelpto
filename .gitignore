@@ -10,3 +10,4 @@ obj/
 target/
 .gradle/
 .venv/
+/data/wpt-*/

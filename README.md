@@ -10,8 +10,9 @@ renders as every one of the spec's 652 examples expects, and so do
 GitHub Flavored Markdown's extensions (tables, task list items,
 strikethrough, extended autolinks, and the disallowed raw HTML filter),
 as GFM's examples expect. On the HTML side, the WHATWG tokenizer is
-done, lossless, passing html5lib-tests' tokenizer tests; tree
-construction is next.
+done, lossless, passing html5lib-tests' tokenizer tests, and tree
+construction builds whole documents as browsers do, passing all but 4
+of web-platform-tests' 1,761 document tests; fragments are next.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 
@@ -19,7 +20,7 @@ The design is in [docs/design.md](docs/design.md) and the plan in
 |---|---|
 | [kelpto-core](kelpto-core/README.md) | The lossless red-green tree both parsers share. |
 | [kelpto-md](kelpto-md/README.md) | Markdown: parse, edit, print exactly, and render. |
-| [kelpto-html](kelpto-html/README.md) | HTML: tokenize, edit, and print exactly. |
+| [kelpto-html](kelpto-html/README.md) | HTML: tokenize, edit, and print exactly; build the tree browsers build. |
 | [kelpto](kelpto/README.md) | Both together: HTML inside Markdown, and safe rendering. |
 
 kelpto-md never imports kelpto-html. It finds raw HTML by CommonMark's

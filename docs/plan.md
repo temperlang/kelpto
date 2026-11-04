@@ -155,7 +155,7 @@ page("/README.md") {
 | commonmark/commonmark-spec, 0.31.2 (latest tag) | `spec.txt`'s examples, input and expected HTML | spec text CC-BY-SA 4.0; test tools BSD-2-Clause |
 | github/cmark-gfm, 0.29.0.gfm.13 | GFM's spec, extension, and regression examples | CC-BY-SA 4.0 |
 | html5lib/html5lib-tests | tokenizer (named, numeric, and other character references, among others), serializer, and encoding tests | MIT |
-| web-platform-tests, `html/syntax/parsing/resources/` | tree-construction `.dat` files, maintained there now, not in html5lib-tests | BSD-3-Clause |
+| web-platform-tests, `html/syntax/parsing/resources/` | tree-construction `.dat` files, maintained there now, not in html5lib-tests; vendored (2026-11-03) in `tests/wpt-tree-construction/` | BSD-3-Clause |
 
 The CommonMark examples come from a CC-BY-SA document, so the extracted
 tests carry CC-BY-SA. They're vendored (2026-10-30) in
@@ -185,9 +185,14 @@ way in `tests/gfm/`.
 4. **HTML tokenizer,** then tree construction, against html5lib-tests
    and WPT's `.dat` files. The tokenizer is done (2026-11-03): every
    state, lossless, with parse errors; all of html5lib-tests' tokenizer
-   tests pass, in `tests/html5lib-tokenizer/`, but those expecting
-   processing instructions (see "kelpto-html's tokenizer" in
-   [design.md](design.md)). Next: tree construction.
+   tests pass, in `tests/html5lib-tokenizer/`, processing instructions
+   included, as the standard reads them since 2026 (see
+   "kelpto-html's tokenizer" in [design.md](design.md)). Tree
+   construction started (2026-11-03): whole documents, every insertion
+   mode and foreign content, against WPT's `.dat` files in
+   `tests/wpt-tree-construction/` (see "kelpto-html's tree
+   construction"). Next: fragments, tree construction's parse errors,
+   and the rest of the `.dat` tests.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface
    filled in.
 6. **Tours and the site,** as in the other libraries.

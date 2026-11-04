@@ -35,7 +35,8 @@ replaced where the standard replaces it.
 - **Text** is an `HtmlText` node of `Chars` tokens, with each
   character reference a `CharacterReference` token, each NUL the
   standard replaces (outside the data state) a `ReplacedChar` token,
-  and a CDATA section's `]]>` a `CdataClose` token.
+  and a CDATA section's `<![CDATA[` and `]]>` `CdataOpen` and
+  `CdataClose` tokens.
 - **Tags** are `HtmlStartTag` and `HtmlEndTag` nodes: `TagOpen`,
   `TagName`, whitespace, an `HtmlAttribute` node for each attribute
   (name, `=`, and value with its quotes, as written), a stray `/` as
@@ -48,18 +49,27 @@ replaced where the standard replaces it.
   the standard sets the force-quirks flag: `DoctypeOpen`, `DoctypeName`,
   `DoctypeKeyword`, `DoctypePublicId`, `DoctypeSystemId` (with their
   quotes), anything bogus as `Unknown`, and `TagClose`.
-- **What browsers drop,** a tag cut off by the end of the input and
-  `</>`, is an `HtmlDroppedTag` node holding the tag's node, so its
-  text stays but no view takes it for a tag.
+- **Processing instructions** (`<?target data?>`, as the standard
+  has read them since 2026) are `HtmlProcessingInstruction` nodes:
+  `PiOpen` (`<?`), `PiTarget`, whitespace, `PiData`, and `PiClose`
+  (`?>` or `>`). `<?` not followed by a target the standard takes
+  (one starting with an ASCII letter or `_`, of letters, digits, `-`,
+  and `_`, other than `xml` and `xml-stylesheet`) is a bogus comment,
+  as all of `<?` used to be.
+- **What browsers drop,** a tag or processing instruction cut off by
+  the end of the input, and `</>`, is an `HtmlDroppedTag` node holding
+  the tag's node, so its text stays but no view takes it for a tag.
 
-Two parts of the standard belong to tree construction, which comes
-next: switching to the RCDATA, RAWTEXT, script data, and PLAINTEXT
-states after a start tag, and reading `<![CDATA[` as CDATA in foreign
-content (SVG and MathML). Until then, `HtmlTokenizer.html` switches
-after the start tags that tree construction switches after in HTML
-content (`title`, `textarea`, `style`, `xmp`, `iframe`, `noembed`,
-`noframes`, `noscript` with scripting on, `script`, and `plaintext`),
-and `<![CDATA[` is always a bogus comment, as in HTML content.
+Two parts of the standard belong to tree construction: switching to
+the RCDATA, RAWTEXT, script data, and PLAINTEXT states after a start
+tag, and reading `<![CDATA[` as CDATA in foreign content (SVG and
+MathML). When tree construction runs (see `build.temper.md`), it
+takes each token as it's done, through a `TokenSink`, and decides
+both. On its own, `HtmlTokenizer.html` switches after the start tags
+that tree construction switches after in HTML content (`title`,
+`textarea`, `style`, `xmp`, `iframe`, `noembed`, `noframes`,
+`noscript` with scripting on, `script`, and `plaintext`), and
+`<![CDATA[` is always a bogus comment, as in HTML content.
 
 ## Kinds
 
@@ -94,6 +104,12 @@ and `<![CDATA[` is always a bogus comment, as in HTML content.
     export let doctypeKeywordKind = new Kind(227, "DoctypeKeyword");
     export let publicIdKind = new Kind(228, "DoctypePublicId");
     export let systemIdKind = new Kind(229, "DoctypeSystemId");
+    export let processingInstructionKind = new Kind(230, "HtmlProcessingInstruction");
+    export let piOpenKind = new Kind(231, "PiOpen");
+    export let piTargetKind = new Kind(232, "PiTarget");
+    export let piDataKind = new Kind(233, "PiData");
+    export let piCloseKind = new Kind(234, "PiClose");
+    export let cdataOpenKind = new Kind(235, "CdataOpen");
 
 ## The entry points
 
@@ -164,13 +180,13 @@ The last start tag's name, lowercase, or empty for none.
       }
 
       public tokenize(text: String): TokenizedHtml {
-        let machine = new Tokenizer(text, lastStartTag, switchesState);
+        let machine = new Tokenizer(text, lastStartTag, switchesState, null);
         machine.run(initialState.id);
         new TokenizedHtml(new HtmlTokens(redRoot(machine.green())), machine.parseErrors())
       }
 
       public tokenizeGreen(text: String): GreenNode {
-        let machine = new Tokenizer(text, lastStartTag, switchesState);
+        let machine = new Tokenizer(text, lastStartTag, switchesState, null);
         machine.run(initialState.id);
         machine.green()
       }
@@ -187,6 +203,30 @@ read, or the end for errors at the end of the input).
 
     export class HtmlParseError(public code: String, public offset: Int) {
       public toString(): String { "${code}@${offset.toString()}" }
+    }
+
+## Handing tokens on
+
+What tree construction implements to take each top-level token (a
+tag, comment, DOCTYPE, processing instruction, dropped tag, or run of
+text) as soon as it's done: its green node, where it starts in code
+points, and its index among the tokens. For a start tag it gives the
+state the tokenizer goes on in (a `ContentState`'s id), and before
+`<![CDATA[` the tokenizer asks whether CDATA is allowed there.
+
+    interface TokenSink {
+      public take(green: GreenNode, offset: Int, index: Int): Int;
+      public cdataAllowed(): Boolean;
+      public end(): Void;
+    }
+
+For the tokenizer on its own.
+
+    class NoTokenSink extends TokenSink {
+      public constructor() {}
+      public take(green: GreenNode, offset: Int, index: Int): Int { 0 }
+      public cdataAllowed(): Boolean { false }
+      public end(): Void {}
     }
 
 ## States
@@ -248,6 +288,11 @@ gives the same tokens and errors.
     let cdataSectionState = 68;
     let cdataSectionBracketState = 69;
     let cdataSectionEndState = 70;
+    let piOpenState = 71;
+    let piTargetState = 72;
+    let afterPiTargetState = 73;
+    let piDataState = 74;
+    let piQuestionableState = 75;
     let doneState = -1;
 
 The less-than sign and end tag states of RCDATA, RAWTEXT, and script
@@ -266,6 +311,8 @@ that methods share are fields.
       private end: StringIndex;
       private var lastStartTag: String;
       private switchesState: Boolean;
+      private sink: TokenSink;
+      private hasSink: Boolean;
       private references: ReferenceMatcher;
       private builder: GreenNodeBuilder = new GreenNodeBuilder();
       private errorCodes: ListBuilder<String> = new ListBuilder<String>();
@@ -290,12 +337,35 @@ clearing anything.
       private var tagNumber: Int = 0;
       private attributeNames: MapBuilder<String, Int> = new MapBuilder<String, Int>();
 
-      public constructor(text: String, lastStartTag: String, switchesState: Boolean) {
+How many top-level tokens the sink has, where the next starts, and
+what it said after the last.
+
+      private var delivered: Int = 0;
+      private var deliveredWidth: Int = 0;
+      private var sinkState: Int = 0;
+
+      public constructor(text: String, lastStartTag: String, switchesState: Boolean, sink: TokenSink?) {
         this.text = text;
         this.end = text.end;
         this.references = new ReferenceMatcher(text);
         this.lastStartTag = lastStartTag;
         this.switchesState = switchesState;
+        this.sink = sink ?? new NoTokenSink();
+        this.hasSink = sink != null;
+      }
+
+Hands the sink every finished top-level token it doesn't have yet.
+Called only when no node but the root is open.
+
+      private deliver(): Void {
+        if (!hasSink) { return; }
+        let count = builder.checkpoint();
+        while (delivered < count) {
+          let green = builder.childAt(delivered) as GreenNode orelse panic();
+          sinkState = sink.take(green, deliveredWidth, delivered);
+          deliveredWidth += green.width;
+          delivered += 1;
+        }
       }
 
       public green(): GreenNode { builder.finish() }
@@ -371,6 +441,7 @@ known only then.
 
       private beginMarkup(at: StringIndex): Void {
         endText(at);
+        deliver();
         markupMark = builder.checkpoint();
       }
 
@@ -431,7 +502,12 @@ it.
         }
         finishMarkup(startTagKind);
         if (!switchesState) { return dataState; }
-        let state = stateAfter(nameStart, nameEnd);
+        let state = if (hasSink) {
+          deliver();
+          sinkState
+        } else {
+          stateAfter(nameStart, nameEnd)
+        };
         if (state != dataState) {
           lastStartTag = htmlName(text.slice(nameStart, nameEnd));
         }
@@ -615,10 +691,14 @@ The ambiguous ampersand state: the letters and digits are text.
 
 Positions past which input-stream errors (controls, noncharacters)
 have been reported, so a character read again isn't reported twice.
+A character that ends a processing instruction's target, making it a
+bogus comment, is reported in the bogus comment state, after the
+error that says so, as html5lib-tests has it.
 
         var checkedTo = String.begin;
         var markupStart = String.begin;
         var nameStart = String.begin;
+        var attributeStart = String.begin;
         var nameEnd = String.begin;
         var dataStart = String.begin;
         var closeStart = String.begin;
@@ -626,7 +706,10 @@ have been reported, so a character read again isn't reported twice.
         var quirks = false;
         while (state != doneState) {
           let c = if (i < end) { text[i] } else { -1 };
-          if (((c > 0 && c < 0x20 && c != char'\n') || c >= 0x7F) && i >= checkedTo) {
+          if (
+            ((c > 0 && c < 0x20 && c != char'\n') || c >= 0x7F) && i >= checkedTo &&
+            state != piOpenState && state != piTargetState
+          ) {
             inputError(c, i);
             checkedTo = text.next(i);
           }
@@ -693,17 +776,17 @@ have been reported, so a character read again isn't reported twice.
               } else {
                 if (c == char'=') { error("unexpected-equals-sign-before-attribute-name", i); }
                 beginAttribute(i);
-                nameStart = i;
+                attributeStart = i;
                 if (c == char'=') { i = text.next(i); }
                 state = attributeNameState;
               }
             }
             attributeNameState -> do {
               if (isAsciiWhitespace(c) || c == char'/' || c == char'>' || c == -1) {
-                endAttributeName(nameStart, i);
+                endAttributeName(attributeStart, i);
                 state = afterAttributeNameState;
               } else if (c == char'=') {
-                endAttributeName(nameStart, i);
+                endAttributeName(attributeStart, i);
                 i = text.next(i);
                 seg(equalsKind, i);
                 state = beforeAttributeValueState;
@@ -750,7 +833,7 @@ have been reported, so a character read again isn't reported twice.
               } else {
                 closeAttribute();
                 beginAttribute(i);
-                nameStart = i;
+                attributeStart = i;
                 state = attributeNameState;
               }
             }
@@ -853,10 +936,8 @@ have been reported, so a character read again isn't reported twice.
                 i = text.next(i);
                 state = markupDeclarationOpenState;
               } else if (c == char'?') {
-                error("unexpected-question-mark-instead-of-tag-name", i);
-                beginMarkup(markupStart);
-                seg(commentOpenKind, i);
-                state = bogusCommentState;
+                i = text.next(i);
+                state = piOpenState;
               } else if (c == -1) {
                 error("eof-before-tag-name", i);
                 state = dataState;
@@ -977,16 +1058,26 @@ have been reported, so a character read again isn't reported twice.
                 quirks = false;
                 state = doctypeState;
               } else {
-                if (text.hasAtLeast(i, end, 7) && text.slice(i, text.step(i, 7)) == "[CDATA[") {
-                  // Only in HTML content, until tree construction says
-                  // otherwise. Reported at the last `[`, as html5lib-tests has it.
-                  error("cdata-in-html-content", text.step(i, 6));
-                } else {
-                  error("incorrectly-opened-comment", i);
+                let cdata = text.hasAtLeast(i, end, 7) && text.slice(i, text.step(i, 7)) == "[CDATA[";
+                if (cdata) {
+                  endText(markupStart);
+                  deliver();
                 }
-                beginMarkup(markupStart);
-                seg(commentOpenKind, i);
-                state = bogusCommentState;
+                if (cdata && hasSink && sink.cdataAllowed()) {
+                  i = text.step(i, 7);
+                  textToken(cdataOpenKind, markupStart, i);
+                  state = cdataSectionState;
+                } else {
+                  if (cdata) {
+                    // Reported at the last `[`, as html5lib-tests has it.
+                    error("cdata-in-html-content", text.step(i, 6));
+                  } else {
+                    error("incorrectly-opened-comment", i);
+                  }
+                  beginMarkup(markupStart);
+                  seg(commentOpenKind, i);
+                  state = bogusCommentState;
+                }
               }
             }
             bogusCommentState -> do {
@@ -1496,9 +1587,97 @@ have been reported, so a character read again isn't reported twice.
                 state = cdataSectionState;
               }
             }
+            piOpenState -> do {
+              if (isAsciiAlpha(c) || c == char'_') {
+                nameStart = i;
+                state = piTargetState;
+              } else if (c == -1) {
+                error("eof-in-processing-instruction", i);
+                beginMarkup(markupStart);
+                seg(piOpenKind, i);
+                finishMarkup(processingInstructionKind);
+                finishMarkup(droppedTagKind);
+                state = doneState;
+              } else {
+                error("invalid-first-character-of-processing-instruction-target", i);
+                beginMarkup(markupStart);
+                seg(commentOpenKind, text.prev(i));
+                state = bogusCommentState;
+              }
+            }
+            piTargetState -> do {
+              if (isAsciiWhitespace(c) || c == char'?' || c == char'>') {
+                beginMarkup(markupStart);
+                if (nameIs(nameStart, i, "xml") || nameIs(nameStart, i, "xml-stylesheet")) {
+                  error("disallowed-processing-instruction-target", i);
+                  seg(commentOpenKind, text.prev(nameStart));
+                  state = bogusCommentState;
+                } else {
+                  seg(piOpenKind, nameStart);
+                  seg(piTargetKind, i);
+                  nameEnd = i;
+                  state = afterPiTargetState;
+                }
+              } else if (c == -1) {
+                error("eof-in-processing-instruction", i);
+                beginMarkup(markupStart);
+                seg(piOpenKind, nameStart);
+                seg(piTargetKind, i);
+                finishMarkup(processingInstructionKind);
+                finishMarkup(droppedTagKind);
+                state = doneState;
+              } else if (isAsciiAlphanumeric(c) || c == char'-' || c == char'_') {
+                i = text.next(i);
+              } else {
+                error("invalid-processing-instruction-target", i);
+                beginMarkup(markupStart);
+                seg(commentOpenKind, text.prev(nameStart));
+                state = bogusCommentState;
+              }
+            }
+            afterPiTargetState -> do {
+              if (isAsciiWhitespace(c)) {
+                i = text.next(i);
+              } else {
+                seg(htmlWhitespaceKind, i);
+                state = piDataState;
+              }
+            }
+            piDataState, piQuestionableState -> do {
+              if (c == char'>') {
+                seg(piDataKind, if (state == piQuestionableState) { closeStart } else { i });
+                i = text.next(i);
+                seg(piCloseKind, i);
+                finishMarkup(processingInstructionKind);
+                state = dataState;
+              } else if (c == -1) {
+                // Where the target ends, as html5lib-tests has it.
+                error("eof-in-processing-instruction", nameEnd);
+                seg(piDataKind, i);
+                finishMarkup(processingInstructionKind);
+                finishMarkup(droppedTagKind);
+                state = doneState;
+              } else if (c == char'?') {
+                closeStart = i;
+                i = text.next(i);
+                state = piQuestionableState;
+              } else {
+                state = piDataState;
+                i = text.next(i);
+                while (i < end) {
+                  let d = text[i];
+                  if (d == char'?' || d == char'>') { break; }
+                  if ((d < 0x20 && d != char'\n') || d >= 0x7F) { inputError(d, i); }
+                  i = text.next(i);
+                }
+                checkedTo = i;
+              }
+            }
             else -> panic();
           }
         }
+        deliver();
+        if (hasSink) { sink.end(); }
         builder.finishNode();
       }
 
@@ -1776,6 +1955,7 @@ U+FFFD.
         "<!doctype", "<!DOCTYPE a SYSTEM \"x", "<![CDATA[x]]>", "<?xml?>", "<title>a<b>&amp;</title>",
         "<script><!--<script></script>--></script>x", "<style>\u{0}</style", "<plaintext></plaintext>",
         "<a b='&notit;' c=&amp d=\"&#x80;\">", "<!--a--!>b<!--c--!d-->", "<a/ b>", "<textarea>\r\n</textarea>",
+        "<?php x ?>", "<?a?>", "<?a", "<?", "<?a b?", "<?>", "<?_x-1\r\n?y>", "<?xml-stylesheet href=x?>", "<?a!>",
       ]
     }
 
@@ -1803,6 +1983,7 @@ U+FFFD.
         "<!DOCTYPE html><!doctype>", "HtmlDoctype HtmlQuirksDoctype",
         "<title><b></title>", "HtmlStartTag HtmlText HtmlEndTag",
         "<script>a</script >b", "HtmlStartTag HtmlText HtmlEndTag HtmlText",
+        "<?php ?>x<?xml?><?a", "HtmlProcessingInstruction HtmlText HtmlComment HtmlDroppedTag",
       ];
       for (var i = 0; i < cases.length; i += 2) {
         let kinds = kindsOf(cases[i]);

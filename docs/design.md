@@ -48,8 +48,11 @@ it in use, and the top README shows them alone and together.
 - **kelpto-html:** the WHATWG tokenizer in full, lossless, with parse
   errors kept beside the tree (see "kelpto-html's tokenizer", below),
   typed views (`StartTag`, `EndTag`, `Comment`, `Text`, `Doctype`,
-  `DroppedTag`, and `Attribute`), and `Attribute.withValue`. `Element`
-  is saved for the built tree.
+  `ProcessingInstruction`, `DroppedTag`, and `Attribute`), and
+  `Attribute.withValue`; and tree construction's first part,
+  `parseHtml`, building the tree browsers build beside the tokens,
+  with `Element` and the other built nodes pointing back at them (see
+  "kelpto-html's tree construction", below).
 - **kelpto:** `ParsedRawHtml`, `parseMarkdownWithHtml`, `htmlOf`, and
   a `renderSafe` sketch giving `SafeHtml`.
 
@@ -219,19 +222,86 @@ Built 2026-11-03, against html5lib-tests' tokenizer tests (in
   standard's code, and an offset in code points, counted once at the
   end). Errors don't take text, so they aren't tokens; `tokenizeHtml`
   gives only the tokens, as before.
-- **Until tree construction:** it switches the tokenizer's state after
-  a start tag, and decides whether `<![CDATA[` is CDATA (in SVG and
-  MathML). Meanwhile `HtmlTokenizer.html` switches after the start
-  tags tree construction switches after in HTML content (`script`,
-  `style`, `title`, `textarea`, and the others), and CDATA is always
-  a bogus comment. `withStateSwitching(false)`, `withInitialState`,
-  and `withLastStartTag` set it up as html5lib-tests do. Tree
-  construction will drive the same loop, telling it the state after
-  each start tag.
-- **Different from html5lib-tests:** at commit c777c408b610 it expects
-  `<?` to start a processing instruction, which the standard Kelpto
-  follows reads as a bogus comment (and domjs.test there still
-  expects that); those tests fail until the standard is checked.
+- **Driven by tree construction:** two parts of the tokenizer belong
+  to tree construction: the state after a start tag, and whether
+  `<![CDATA[` is CDATA (in SVG and MathML). `parseHtml` hands each
+  top-level token to tree construction through a `TokenSink` as soon
+  as it's done, and the sink gives the state for each start tag and
+  answers the CDATA question from the adjusted current node. On its
+  own, `HtmlTokenizer.html` switches after the start tags tree
+  construction switches after in HTML content (`script`, `style`,
+  `title`, `textarea`, and the others), and CDATA is always a bogus
+  comment. `withStateSwitching(false)`, `withInitialState`, and
+  `withLastStartTag` set it up as html5lib-tests do.
+- **Processing instructions,** as the standard reads them since
+  whatwg/html#12118 (merged 2026-06-25, with #12653, #12654, and
+  #13037; the user's decision, 2026-11-03): `<?` opens, the first `>`
+  closes (the characters a bogus comment took before), and the target
+  is ASCII letters, digits, `-`, and `_`, starting with a letter or
+  `_`. Its case is kept: the standard doesn't lowercase it, and WPT's
+  tests expect `<?UPPERCASE ?>`. A `?` before the `>` isn't data. `<?`
+  without such a target, or with `xml` or `xml-stylesheet` (any case),
+  is a bogus comment as before, and one cut off by the end of the
+  input is dropped (an `HtmlDroppedTag`, as for tags). All of
+  html5lib-tests' tokenizer tests pass; three in domjs.test still
+  expect the old error code for `<?`, and the runner expects the new
+  one there. Printing keeps the bytes as written; anything writing a
+  processing instruction fresh (the built tree's serialization) ends
+  it in `?>`, which XML reads too.
+
+### kelpto-html's tree construction
+
+Started 2026-11-03 (the first part: whole documents, every insertion
+mode, foreign content; not yet fragments or tree construction's parse
+errors), against WPT's tree construction tests (in
+`tests/wpt-tree-construction/`).
+
+- **A built tree beside the token tree,** not views over it: the
+  standard's tree can't be read off the tokens' nesting (implied
+  `html`, `head`, `body`, and `tbody`, foster parenting, the adoption
+  agency algorithm, attributes of a second `<body>` merged into the
+  first), so tree construction builds its own tree as tokens arrive,
+  and each node points back at the token it came from: an element at
+  its start tag (`Element.startTag`, null where implied; remade
+  formatting elements share their original's), a comment, DOCTYPE, or
+  processing instruction at its token. The tokens stay the lossless
+  tree, so `asWritten` and token edits work as before; the built tree
+  is what browsers see, for reading, sanitizing (step 5), and
+  serializing (`html`, the standard's serialization, normalized).
+- **An arena, not node objects:** parallel lists of each node's kind,
+  name, namespace, parent, first and last child, siblings, token,
+  attributes, and text, with nodes as `Int`s. The adoption agency
+  algorithm and foster parenting move nodes, which is a few list
+  writes here; there are no parent pointers to make cycles (which
+  `Arc` and `shared_ptr` would leak), and no object per node to
+  collect. Views (`Element`, `BuiltText`, `BuiltComment`,
+  `BuiltDoctype`, and `BuiltProcessingInstruction`, names provisional)
+  wrap the arena and a node's number.
+- **Insertion modes as Temper:** one method per mode, as the standard
+  lists them, each taking the current token and giving whether to
+  reprocess it (in whatever mode it switched to), so "process using
+  the rules for in body" is a plain call. The dispatcher picks foreign
+  content by the adjusted current node, as the standard says. The
+  stack of open elements and the list of active formatting elements
+  are `ListBuilder<Int>`s (a marker is -1), and scopes walk the stack.
+- **Tokens a run at a time:** text arrives as a run, decoded by the
+  `Text` view (references, `\r\n`, NUL as the standard has them), and
+  the rules split off what they treat differently (leading
+  whitespace, NUL), rather than a call per character. One token
+  object is reused for every token, so the per-token allocations are
+  its view and each attribute's name and value.
+- **What's lossless:** the tokens, always. The built tree keeps where
+  each node came from, not how it was written; attributes are decoded
+  values.
+- **Not yet:** fragment parsing (`parseHtmlFragment`), tree
+  construction's parse errors (only the tokenizer's are kept),
+  `<template shadowrootmode>` (declarative shadow roots) and
+  `<template for>` patching, which the WPT `.dat` tests don't check,
+  an end tag's link to the element it closed, and `<selectedcontent>`
+  taking a copy of the selected `<option>` (DOM behavior the standard
+  runs as options are inserted; the 4 `.dat` tests that fail).
+- **Tests:** all 1,761 of WPT's document tests (not fragments, and not
+  scripted_*.dat) give the expected tree but those 4.
 
 ### Generated tables
 
@@ -652,6 +722,10 @@ What the pair adds that neither can alone:
 - Name the dangerous choices plainly (`Trusted`, `WithCredentials`),
   never with "safe" or "secure".
 - Never log or echo raw input in errors.
+- The sanitizer (step 5) drops processing instructions by default.
+  The standard parses them now, and the WICG Sanitizer API has an
+  open issue on how to configure them; until that settles, keeping one
+  is an explicit choice.
 
 ## Open questions
 

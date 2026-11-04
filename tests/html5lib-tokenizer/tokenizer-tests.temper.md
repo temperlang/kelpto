@@ -7,7 +7,7 @@ wrote the expected ones in (see `scripts/html5lib_tokenizer.py`).
 
     let {
       ContentState, Comment, Doctype, DroppedTag, EndTag, HtmlParseError, HtmlToken,
-      HtmlTokenizer, StartTag, Text,
+      HtmlTokenizer, ProcessingInstruction, StartTag, Text,
     } = import("../../kelpto-html");
 
     let stateFor(name: String): ContentState {
@@ -74,6 +74,7 @@ writes them.
         }
         is EndTag -> "EndTag${fieldSeparator}${token.name}";
         is Comment -> "Comment${fieldSeparator}${token.text}";
+        is ProcessingInstruction -> "ProcessingInstruction${fieldSeparator}${token.target}${fieldSeparator}${token.data}";
         is Doctype -> [
           "DOCTYPE", orNone(token.name), orNone(token.publicId), orNone(token.systemId),
           if (token.forceQuirks) { "false" } else { "true" },
@@ -114,28 +115,29 @@ What a test gives: `ok`, or what went wrong.
       let tokens = tokenStrings(test, tokenizer).join("\u{1E}") { (s: String): String => s };
       if (tokens != test.tokens) { return "tokens: ${tokens}"; }
       let errors = result.errors.join(",") { (e: HtmlParseError): String => errorString(test.input, e) };
-      if (errors != test.errors) { return "errors: ${errors}"; }
+      if (errors != expectedErrors(test)) { return "errors: ${errors}"; }
       "ok"
     }
 
-Tests expecting `<?` to start a processing instruction, as
-html5lib-tests now does, though the standard Kelpto follows reads it as
-a bogus comment (see docs/design.md). They're counted apart.
+At this commit, three of domjs.test's tests (`<?` then a line ending)
+still expect the error `<?` gave before the standard read processing
+instructions (whatwg/html#12118), at the `?`; the rest of
+html5lib-tests expects what it gives now,
+`invalid-first-character-of-processing-instruction-target`, at the
+character after it. Their tokens are the same either way.
 
-    let expectsProcessingInstruction(test: TokenizerTest): Boolean {
-      test.tokens.indexOf("ProcessingInstruction") is StringIndex ||
-        test.errors.indexOf("processing-instruction") is StringIndex
+    let expectedErrors(test: TokenizerTest): String {
+      if (test.file != "domjs.test") { return test.errors; }
+      test.errors.split("unexpected-question-mark-instead-of-tag-name:1:2")
+        .join("invalid-first-character-of-processing-instruction-target:1:3") { (s: String): String => s }
     }
 
-Counts by file, as `file: passed/total`, and the failures; tests
-expecting a processing instruction count as passed if they pass, and
-are otherwise left out of both counts and failures.
+Counts by file, as `file: passed/total`, and the failures.
 
     let report(tests: List<TokenizerTest>, failures: ListBuilder<String>): String {
       let files = new ListBuilder<String>();
       let passed = new ListBuilder<Int>();
       let totals = new ListBuilder<Int>();
-      let left = new ListBuilder<Int>();
       for (var i = 0; i < tests.length; i += 1) {
         let test = tests[i];
         var at = -1;
@@ -147,30 +149,25 @@ are otherwise left out of both counts and failures.
           files.add(test.file);
           passed.add(0);
           totals.add(0);
-          left.add(0);
         }
         let outcome = check(test);
+        totals.set(at, totals[at] + 1);
         if (outcome == "ok") {
-          totals.set(at, totals[at] + 1);
           passed.set(at, passed[at] + 1);
-        } else if (expectsProcessingInstruction(test)) {
-          left.set(at, left[at] + 1);
         } else {
-          totals.set(at, totals[at] + 1);
           failures.add("${test.file} ${test.state} ${test.description} ${test.input}: ${outcome}");
         }
       }
       let out = new StringBuilder();
       for (var j = 0; j < files.length; j += 1) {
-        let pi = if (left[j] > 0) { " (and ${left[j].toString()} expecting processing instructions)" } else { "" };
-        out.append("  ${files[j]}: ${passed[j].toString()}/${totals[j].toString()}${pi}\n");
+        out.append("  ${files[j]}: ${passed[j].toString()}/${totals[j].toString()}\n");
       }
       out.toString()
     }
 
 ## Tests
 
-Every test passes, but those expecting processing instructions.
+Every test passes.
 Logs the counts for every file.
 
     test("html5lib tokenizer tests") {

@@ -13,6 +13,10 @@ href.withValue("/new").asWritten; // "<A HREF=\"/new\" class=x>Go</a>"
 
 let result = HtmlTokenizer.html.tokenize("<p id=a id=b>");
 result.errors[0].code;           // "duplicate-attribute"
+
+let doc = parseHtml("<p>One<p>Two<table><td>x</table>");
+doc.body?.children.length;       // 2: the two p elements
+doc.html;                        // "<html><head></head><body><p>One</p><p>Two<table><tbody>…"
 ```
 
 - **The WHATWG tokenizer, in full:** every state of the HTML
@@ -26,11 +30,18 @@ result.errors[0].code;           // "duplicate-attribute"
   cut off by the end of the input) is kept as text the views skip.
 - **Typed views:** `StartTag` (name, attributes, and self-closing),
   `EndTag`, `Comment`, `Text`, `Doctype` (name, identifiers, and
-  force-quirks), `DroppedTag`, and `Attribute`, each read as browsers
-  read it. `Element` is saved for the tree a browser builds.
+  force-quirks), `ProcessingInstruction` (target and data, as the
+  standard reads `<?target data?>` since 2026), `DroppedTag`, and
+  `Attribute`, each read as browsers read it.
+- **The tree browsers build:** `parseHtml` runs the standard's tree
+  construction (every insertion mode, foreign content, the adoption
+  agency algorithm, and foster parenting) beside the tokens, giving
+  `Element`, `BuiltText`, `BuiltComment`, `BuiltDoctype`, and
+  `BuiltProcessingInstruction` nodes, each pointing back at its token
+  (`Element.startTag`), and `html`, the standard's serialization. WPT's
+  tree construction tests check it (see `tests/wpt-tree-construction`).
 - **Parse errors** by the standard's codes, with offsets, from
   `HtmlTokenizer.tokenize`.
 
-Not yet: the WHATWG tree construction, so the tokenizer switches to
-raw text after `<script>` and the like as it does in HTML content, and
-reads `<![CDATA[` as a bogus comment even in SVG; and a sanitizer.
+Not yet: fragment parsing, tree construction's parse errors, and a
+sanitizer (which will drop processing instructions by default).

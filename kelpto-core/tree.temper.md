@@ -245,6 +245,12 @@ parser, shared rather than copied.
         children.add(green);
       }
 
+The element added at `index` among those not yet in a finished node,
+as counted by `checkpoint`: with only the root open, its children so
+far, for a parser that hands each one on as it's done.
+
+      public childAt(index: Int): GreenElement { children[index] }
+
 Finishes the node started last.
 
       public finishNode(): Void {
