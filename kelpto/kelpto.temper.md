@@ -8,26 +8,24 @@ the other:
   with kelpto-html, so each raw HTML span and HTML block in a Markdown
   document holds an HTML subtree, in the same green tree, still
   lossless.
-- **Rendering:** `renderSafe` fills in kelpto-md's `RawHtmlRenderer`,
-  keeping only a few allowlisted elements.
+- **Rendering safely:** `renderSafe` sanitizes the tree a browser
+  builds from the rendering, raw HTML and Markdown together.
 
 ```temper inert
 let doc = parseMarkdownWithHtml("Hi <b class=x>there</b><script>alert(1)</script>");
 htmlOf(doc.rawHtml[0]).startTags[0].name; // "b", through kelpto-html's views
-renderSafe(doc).html;                     // "<p>Hi <b>there</b>alert(1)</p>\n"
+renderSafe(doc).html;                     // "<p>Hi <b class=\"x\">there</b></p>\n"
 ```
 
-    let { GreenElement, RedNode, escapeHtml } = import("../kelpto-core");
+    let { GreenElement, RedNode } = import("../kelpto-core");
     let {
       Emphasis, HtmlBlock, MarkdownDocument, MarkdownNode, MarkdownParser, MarkdownRenderer, Paragraph,
-      RawHtml, RawHtmlContent, RawHtmlHandler, RawHtmlRenderer, RenderSink,
+      RawHtml, RawHtmlContent, RawHtmlHandler, RenderSink,
       parseMarkdown, viewOf,
     } = import("../kelpto-md");
     let {
-      Attribute, BuiltComment, BuiltNode, BuiltText, Comment, Doctype, DroppedTag, Element, EndTag,
-      FragmentContext, FragmentStream,
-      HtmlFragment, HtmlTokens, StartTag, Text, htmlTokensKind, parseHtmlFragment, tokenizeHtml,
-      tokenizeHtmlGreen,
+      Attribute, BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, FragmentStream, HtmlFragment,
+      HtmlTokens, SafeHtml, SanitizerPolicy, StartTag, UrlCheck, htmlTokensKind, parseHtmlFragment, tokenizeHtml, tokenizeHtmlGreen,
     } = import("../kelpto-html");
 
 ## Parsing
@@ -112,6 +110,10 @@ standard's serialization of them.
       public get context(): FragmentContext { stream.context }
       public get children(): List<BuiltNode> { stream.children }
       public get html(): String { stream.html }
+
+The tree sanitized by `policy`, as `renderSafe` gives it.
+
+      public sanitize(policy: SanitizerPolicy = SanitizerPolicy.standard): SafeHtml { stream.sanitize(policy) }
     }
 
 The Markdown node a built node came from: the one that rendered it,
@@ -195,60 +197,29 @@ it was parsed with `parseMarkdownWithHtml` and rendered as written.
       }
     }
 
-## Rendering
+## Rendering safely
 
-**A sketch, not a sanitizer.** HTML the renderer made from Markdown
-and checked, as a type of its own, so code can ask for it by type
-rather than trusting any string.
+Renders `doc` for a page, safe for Markdown from anyone: the tree a
+browser builds from the rendering (`buildHtml`, with raw HTML parsed
+as written), sanitized by `policy` (kelpto-html's
+`SanitizerPolicy.standard` by default: what Markdown and GFM render,
+and common formatting) for `context`. So raw HTML and Markdown are
+judged together, as the browser joins them, and Markdown's own links
+and images are checked like any other URL: `[x](javascript:alert(1))`
+keeps its text and loses its `href`. See kelpto-html's `sanitizeHtml`
+for what's kept and what's guaranteed.
 
-    export class SafeHtml {
-      public html: String;
-      private constructor(html: String) { this.html = html; }
-      public toString(): String { html }
-    }
+```temper inert
+let doc = parseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>");
+renderSafe(doc).html;   // "<p><a>a</a> <b>b</b></p>\n"
+```
 
-Renders `doc` to HTML, keeping only the start and end tags of a few
-inline elements (`b`, `i`, `em`, `strong`, and `code`), without their
-attributes, and dropping all other raw HTML. Text stays escaped.
-
-**This is a sketch, not a real sanitizer, so don't rely on it yet.**
-It judges each raw HTML tag alone, not the tree a browser would
-build, so the text between `<script>` and `</script>` stays (escaped,
-as harmless text), unbalanced tags pass through, and Markdown's own
-links aren't checked yet, so `[x](javascript:alert(1))` stays a live
-link. The real one sanitizes the built HTML tree, with
-an allowlist of elements and attributes and every URL checked.
-
-    export let renderSafe(doc: MarkdownDocument): SafeHtml {
-      new SafeHtml(new MarkdownRenderer(new AllowlistRawHtml()).render(doc))
-    }
-
-    let allowedElements = ["b", "i", "em", "strong", "code"];
-
-    let isAllowed(name: String): Boolean {
-      for (var i = 0; i < allowedElements.length; i += 1) {
-        if (allowedElements[i] == name) { return true; }
-      }
-      false
-    }
-
-    class AllowlistRawHtml extends RawHtmlRenderer {
-      public constructor() {}
-
-      public renderRawHtml(rawHtml: RawHtmlContent): String {
-        let out = new StringBuilder();
-        let tokens = htmlOf(rawHtml).children;
-        for (var i = 0; i < tokens.length; i += 1) {
-          let token = tokens[i];
-          when (token) {
-            is StartTag -> if (isAllowed(token.name)) { out.append("<${token.name}>"); };
-            is EndTag -> if (isAllowed(token.name)) { out.append("</${token.name}>"); };
-            is Text -> out.append(escapeHtml(token.text));
-            is Comment, is Doctype, is DroppedTag -> do {};
-          }
-        }
-        out.toString()
-      }
+    export let renderSafe(
+      doc: MarkdownDocument,
+      policy: SanitizerPolicy = SanitizerPolicy.standard,
+      context: FragmentContext = new FragmentContext("body"),
+    ): SafeHtml {
+      buildHtml(doc, context).sanitize(policy)
     }
 
 ## Tests
@@ -297,14 +268,114 @@ An edit through kelpto-html's views, inside a Markdown document.
       assert(edited.headings[0].text == "Title") { "still a Markdown document" };
     }
 
-    test("renderSafe keeps allowlisted elements and drops the rest") {
+    test("renderSafe keeps what the policy allows, judged on the built tree") {
       let doc = parseMarkdownWithHtml(
         "Hi <b onclick=\"x()\">there</b><script>alert(1)</script> <em>ok</em> <img src=x onerror=alert(1)><!-- c -->",
       );
       let html = renderSafe(doc).html;
-      assert(html == "<p>Hi <b>there</b>alert(1) <em>ok</em> </p>\n") { html };
+      assert(html == "<p>Hi <b>there</b> <em>ok</em> <img src=\"x\"></p>\n") { html };
+      // The script swallows the rest, `</p>` included, so the `p` ends with the fragment.
       let fromPlain = renderSafe(parseMarkdown("<i>x</i><script>")).html;
-      assert(fromPlain == "<p><i>x</i></p>\n") { fromPlain };
+      assert(fromPlain == "<p><i>x</i></p>") { fromPlain };
+    }
+
+### The `#safe` gallery
+
+Hostile Markdown, each with what `renderSafe` gives: a label, the
+Markdown, and the HTML. The site's `#safe` section shows these (see
+docs/site.md). Each is also checked to parse back to itself: parsing
+the output as a fragment in `body` and serializing gives it again,
+and sanitizing that changes nothing.
+
+    let safeGallery(): List<List<String>> {
+      [
+        ["javascript: link", "[a](javascript:alert(1))", "<p><a>a</a></p>\n"],
+        ["javascript: in any case", "[a](JaVaScRiPt:alert(1))", "<p><a>a</a></p>\n"],
+        ["javascript: autolink", "<javascript:alert(1)>", "<p><a>javascript:alert(1)</a></p>\n"],
+        ["javascript: as an image", "![a](javascript:alert(1))", "<p><img alt=\"a\"></p>\n"],
+        ["a tab, as a reference", "<a href=\"java&#x09;script:alert(1)\">a</a>", "<p><a>a</a></p>\n"],
+        ["a newline inside", "<a href=\"jav&#x0A;ascript:alert(1)\">a</a>", "<p><a>a</a></p>\n"],
+        ["letters as references", "<a href=\"&#106;&#x61;vascript&colon;alert(1)\">a</a>", "<p><a>a</a></p>\n"],
+        ["leading controls and spaces", "<a href=\"&#1; &#x1F;javascript:alert(1)\">a</a>", "<p><a>a</a></p>\n"],
+        ["a Markdown escape", "[a](javascript\\:alert(1))", "<p><a>a</a></p>\n"],
+        ["a reference definition", "[a]\n\n[a]: JAVASCRIPT:alert(1)", "<p><a>a</a></p>\n"],
+        ["data: link", "[a](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)", "<p><a>a</a></p>\n"],
+        ["vbscript: link", "<a href=\"vbscript:msgbox(1)\">a</a>", "<p><a>a</a></p>\n"],
+        ["safe links stay", "[a](https://example.com/?q=1&r=2) [b](/rel) [c](#top) <mailto:me@example.com>", "<p><a href=\"https://example.com/?q=1&amp;r=2\">a</a> <a href=\"/rel\">b</a> <a href=\"#top\">c</a> <a href=\"mailto:me@example.com\">mailto:me@example.com</a></p>\n"],
+        ["event handlers", "<img src=x onerror=alert(1)> <b onmouseover=\"alert(1)\">b</b>", "<p><img src=\"x\"> <b>b</b></p>\n"],
+        ["style attributes", "<div style=\"background:url(javascript:alert(1))\">x</div>", "<div>x</div>\n"],
+        ["script and style", "<script>alert(1)</script><style>*{color:red}</style>", "\n"],
+        ["svg script", "<svg><script>alert(1)</script></svg>", "<p></p>\n"],
+        ["svg link", "<svg><a xlink:href=\"javascript:alert(1)\"><text y=20>x</text></a></svg>", "<p></p>\n"],
+        ["math mXSS", "<math><mtext><table><mglyph><style><img src=x onerror=alert(1)>", "<p></p>"],
+        ["math in a form", "<form><math><mtext></form><form><mglyph><style></math><img src onerror=alert(1)>", ""],
+        ["noscript breakout", "<noscript><p title=\"</noscript><img src=x onerror=alert(1)>\">", "<p><img src=\"x\">\"&gt;</p>\n"],
+        ["template", "<template><script>alert(1)</script><img src=x onerror=alert(1)></template>", "<p></p>\n"],
+        ["textarea breakout", "<textarea><img title=\"</textarea><img src=x onerror=alert(1)>\">", "<img src=\"x\">\"&gt;\n"],
+        ["title breakout", "<title><img title=\"</title><img src=x onerror=alert(1)>\">", "<img src=\"x\">\"&gt;\n"],
+        ["an unclosed comment swallows Markdown", "<!-- open\n\n[a](javascript:alert(1)) *md*\n", ""],
+        ["an attribute across paragraphs", "<b title=\"\n\n<img src=x onerror=alert(1)>\n\n\">b</b>", "<p>&lt;b title=\"</p>\n<img src=\"x\">\n<p>\"&gt;b</p>\n"],
+        ["a raw tag left open", "a <i>b\n\n<b>c</b> d", "<p>a <i>b</i></p><i>\n<p><b>c</b> d</p>\n</i>"],
+        ["foster parenting", "<table><tr><td>x</td></tr><img src=x onerror=alert(1)></table>", "<img src=\"x\"><table><tbody><tr><td>x</td></tr></tbody></table>\n"],
+        ["base href", "<base href=\"javascript:alert(1)//\">\n\n[a](/x)", "\n<p><a href=\"/x\">a</a></p>\n"],
+        ["meta refresh", "<meta http-equiv=\"refresh\" content=\"0;url=javascript:alert(1)\">", "\n"],
+        ["srcset", "<img srcset=\"a.png 1x, javascript:alert(1) 2x\"> <img srcset=\"a.png 1x, b.png 2x\" alt=ok>", "<p><img> <img srcset=\"a.png 1x, b.png 2x\" alt=\"ok\"></p>\n"],
+        ["form action", "<form action=\"javascript:alert(1)\"><button formaction=\"javascript:alert(1)\">go</button></form>", "go\n"],
+        ["iframe, object, and embed", "<iframe src=\"javascript:alert(1)\"></iframe><object data=\"javascript:alert(1)\"></object><embed src=x>", "\n"],
+        ["processing instructions", "<?php echo 1; ?> <?xml-stylesheet href=x?>", " \n"],
+        ["a p the browser closes", "<p><button><div>x</div></button></p>", "<p></p><div>x</div><p></p>\n"],
+        ["plaintext swallows the rest", "a <plaintext>\n\n# h\n", "<p>a </p>"],
+      ]
+    }
+
+    test("the #safe gallery") {
+      let gallery = safeGallery();
+      let body = new FragmentContext("body");
+      let failures = new ListBuilder<String>();
+      for (var i = 0; i < gallery.length; i += 1) {
+        let item = gallery[i];
+        let html = renderSafe(parseMarkdownWithHtml(item[1])).html;
+        if (html != item[2]) { failures.add("${item[0]}: ${html}"); }
+        let reparsed = parseHtmlFragment(html, body);
+        if (reparsed.html != html || reparsed.sanitize().html != html) { failures.add("${item[0]}: reparses otherwise"); }
+      }
+      assert(failures.isEmpty) { failures.toList().join("\n") { (s: String): String => s } };
+    }
+
+A policy of one's own: fewer elements, other schemes, and a
+`UrlCheck` of one's own, as Hrefine will be. A check that rewrites
+URLs must give back what it gives when given its own output, since
+the sanitizer checks its output again.
+
+    class OnlyExampleLinks extends UrlCheck {
+      // Writes no field, as kelpto-html's `SchemeUrlCheck` doesn't:
+      // Temper's C++ backend then makes `UrlCheck.checkUrl` `const`,
+      // and an override writing a field isn't, so doesn't override
+      // (notes/temper-fixes.md).
+      public constructor() {}
+      public checkUrl(url: String, element: String, attribute: String): String? {
+        let www = "https://www.example.com/";
+        let bare = "https://example.com/";
+        if (url.split(www).length > 1) {
+          url
+        } else if (url.split(bare).length > 1) {
+          url.split(bare).join(www) { (s: String): String => s }
+        } else {
+          null
+        }
+      }
+    }
+
+    test("renderSafe with a policy of one's own") {
+      let doc = parseMarkdownWithHtml("[a](https://example.com/a) [b](https://other.example/) ![c](https://example.com/c.png) <u>u</u> ~~s~~\n");
+      let strict = SanitizerPolicy.standard.withoutElements(["img", "u"]).withUrlCheck(new OnlyExampleLinks());
+      let html = renderSafe(doc, strict).html;
+      assert(html == "<p><a href=\"https://www.example.com/a\">a</a> <a>b</a>  u ~~s~~</p>\n") { html };
+      let tel = renderSafe(parseMarkdownWithHtml("<a href=\"tel:123\" target=_blank>t</a> <video src=v.mp4 controls>v</video>"),
+        SanitizerPolicy.standard.withSchemes(["tel"]).withElements(["video"]).withAttributes("video", ["src", "controls"]).withAttributes("a", ["target"])).html;
+      assert(tel == "<p><a href=\"tel:123\" target=\"_blank\">t</a> <video src=\"v.mp4\" controls=\"\">v</video></p>\n") { tel };
+      let textOnly = renderSafe(parseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy.textOnly).html;
+      assert(textOnly == "a b\n") { textOnly };
     }
 
 HTML blocks get HTML subtrees too, unless container prefixes split
@@ -320,7 +391,7 @@ their lines.
       assert(blocks[1].htmlNode == null) { "split by `>`, so opaque" };
       assert(htmlOf(blocks[1]).startTags[0].name == "p") { "tokenized on demand" };
       let html = renderSafe(doc).html;
-      assert(html == "\n<b>hi</b>\n\n<blockquote>\n\nquoted\n</blockquote>\n") { html };
+      assert(html == "<div class=\"x\">\n<b>hi</b>\n</div>\n<blockquote>\n<p>\nquoted\n</p></blockquote>\n") { html };
     }
 
 ### The tree a browser builds

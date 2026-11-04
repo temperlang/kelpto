@@ -167,6 +167,15 @@ The nodes serialized, as `HtmlFragment.html`.
         serializeChildren(builder.tree, builder.tree.fragmentRoot, out);
         out.toString()
       }
+
+The nodes sanitized by `policy` for the context (see `sanitizeHtml`).
+The tree judged is the one built, so pieces that only do harm
+together (a `<b title="` in one, `">` in the next) are judged as the
+browser joins them.
+
+      public sanitize(policy: SanitizerPolicy = SanitizerPolicy.standard): SafeHtml {
+        sanitizeTree(builder.tree, builder.tree.fragmentRoot, context, policy)
+      }
     }
 
     let noTokens: HtmlTokens = tokenizeHtml("");

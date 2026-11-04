@@ -197,7 +197,10 @@ way in `tests/gfm/`.
    CommonMark and GFM example builds the tree its HTML parses to.
    Next: tree construction's parse errors.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface
-   filled in.
+   filled in. The interface is filled in, and safe rendering done
+   (2026-11-04): a sanitizer on the built tree, with links checked by
+   scheme ("Sanitizing" in [design.md](design.md)). Next: Hrefine as
+   its `UrlCheck`, once it comes in as a submodule.
 6. **Tours and the site,** as in the other libraries.
 
 ## Open questions

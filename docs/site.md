@@ -36,10 +36,20 @@ a section has content.
 1. **HTML (`#html`):** kelpto-html's WHATWG tokenizer and tree, with
    html5lib's tests counted at build time, as the conformance line
    counts Markdown's. The demo's raw HTML can then show as a tree.
-2. **Safe rendering (`#safe`):** the sanitizer, with links checked by
-   Hrefine. A gallery of hostile inputs (`javascript:` links, tricky
-   hosts, event handlers), each with what Kelpto renders. The demo's
-   "Trust raw HTML" box grows a third choice: sanitized.
+2. **Safe rendering (`#safe`):** the sanitizer (built; links checked
+   by scheme, by Hrefine later). A gallery of hostile inputs, each
+   with what Kelpto renders: the `safeGallery()` cases in
+   `kelpto/kelpto.temper.md`, whose tests check each output and that
+   it parses back to itself (`javascript:` spelled with tabs,
+   references, and case, `data:` and `vbscript:`, event handlers,
+   `<svg><script>`, MathML mutation XSS, `<noscript>`, `<template>`,
+   `<textarea>` and `<title>` breakouts, an unclosed comment
+   swallowing Markdown, foster parenting, `<base href>`, `srcset`,
+   and `<form action>`); tricky hosts join when Hrefine does. The
+   build can run them in Node, as the conformance line's examples
+   are, so the page shows what this build gives. The demo's "Trust
+   raw HTML" box grows a third choice: sanitized, through
+   `renderSafe`.
 3. **Speed (`#speed`):** benchmarks against other parsers, recorded
    ahead of time, with each version and machine named.
 4. **Compare (`#compare`):** a conformance table against other

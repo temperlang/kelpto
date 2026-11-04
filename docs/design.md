@@ -52,11 +52,13 @@ it in use, and the top README shows them alone and together.
   `Attribute.withValue`; and tree construction's first part,
   `parseHtml`, building the tree browsers build beside the tokens,
   with `Element` and the other built nodes pointing back at them (see
-  "kelpto-html's tree construction", below).
+  "kelpto-html's tree construction", below); and `sanitizeHtml`, a
+  sanitizer on the built tree (see "Sanitizing").
 - **kelpto:** `ParsedRawHtml`, `parseMarkdownWithHtml`, `htmlOf`,
   `buildHtml` (Markdown and raw HTML as the one tree a browser builds,
   see "Raw HTML in Markdown, as one tree"), `markdownNodeOf`,
-  `fragmentOf`, and a `renderSafe` sketch giving `SafeHtml`.
+  `fragmentOf`, and `renderSafe`, sanitizing the built tree (see
+  "Sanitizing", below).
 
 **How they coordinate:** kelpto-md defines two interfaces and never
 imports kelpto-html.
@@ -70,7 +72,7 @@ imports kelpto-html.
   block quote, say) stays opaque text between them for now.
 - **`RawHtmlRenderer`** renders each `RawHtmlContent` (inline or a
   block): escaped by default, as written with `withRawHtmlTrusted()`,
-  or kelpto's allowlist for `renderSafe`.
+  or as written for `buildHtml`, whose tree `renderSafe` sanitizes.
 - **Shared red nodes:** kelpto-html's views wrap any red node of its
   kinds, so `htmlOf(rawHtml)` views the subtree in place, and an HTML
   edit there gives a new root that `new MarkdownDocument(top.node)`
@@ -268,7 +270,7 @@ errors. Checked against WPT's tree construction tests (in
   formatting elements share their original's), a comment, DOCTYPE, or
   processing instruction at its token. The tokens stay the lossless
   tree, so `asWritten` and token edits work as before; the built tree
-  is what browsers see, for reading, sanitizing (step 5), and
+  is what browsers see, for reading, sanitizing (see "Sanitizing"), and
   serializing (`html`, the standard's serialization, normalized).
 - **An arena, not node objects:** parallel lists of each node's kind,
   name, namespace, parent, first and last child, siblings, token,
@@ -381,6 +383,86 @@ into the tree a browser builds from its rendering, still lossless:
   carried text points at its piece, not a token.
 - **Edits:** changing a raw piece's tokens or a Markdown node rewrites
   only that text, as now; the built tree is reparsed, not patched.
+
+### Sanitizing (built 2026-11-04)
+
+kelpto-html's sanitizer (`sanitize.temper.md`), and kelpto's
+`renderSafe` over it.
+
+- **The built tree, never the text:** `sanitizeHtml(text, policy,
+  context)`, and `sanitize(policy)` on `HtmlFragment`, `HtmlDocument`
+  (its body), `FragmentStream`, and kelpto's `BuiltHtml`, walk the
+  arena of the tree a browser builds. `renderSafe(doc, policy,
+  context)` is `buildHtml(doc, context).sanitize(policy)`: raw HTML
+  trusted into the one tree, then judged there with the Markdown, so
+  pieces that only do harm together (an attribute or a comment open
+  across paragraphs, a `<plaintext>` or `<textarea>` swallowing what
+  follows, foster parenting) are judged as the browser joins them.
+- **An allowlist, as a value:** `SanitizerPolicy.standard` keeps what
+  Markdown and GFM render (footnotes' ids, classes, and `data-`
+  attributes, task list checkboxes, table alignment, and `ol start`)
+  and common formatting (`abbr`, `details`, `kbd`, `picture`, `sub`,
+  `sup`, and so on), with `id`, `class`, `title`, `lang`, and `dir` on
+  any of them; `textOnly` keeps text. `withElements`,
+  `withoutElements`, `withAttributes(element, names)` (`"*"` for
+  any), `withoutAttributes`, `withSchemes`, and `withUrlCheck` give a
+  new one. Not allowed: an element is dropped with its contents if
+  those aren't plain HTML or it would change the page (`script`,
+  `style`, `template`, `iframe`, `object`, `embed`, `noscript`,
+  `textarea`, `title`, `base`, `meta`, `link`, frames, plug-ins), or
+  else replaced by its children. Comments, DOCTYPEs, and processing
+  instructions go (as "Secure defaults" asks); `input` stays only as
+  a checkbox; `srcdoc`, SVG's `script`, and its animation elements
+  are never kept. SVG and MathML are dropped unless allowed by
+  namespaced names (`svg:circle`), since they're parsed otherwise than
+  HTML: namespace confusion and mutation XSS attacks on sanitizers use
+  exactly that.
+- **Links:** every URL attribute kept (`href`, `src`, each `srcset`
+  candidate, `cite`, `action`, `formaction`, `poster`, `xlink:href`,
+  `ping`, and the obsolete ones) goes through the policy's `UrlCheck`,
+  which gives the URL to write or null to drop the attribute. The
+  default, `SchemeUrlCheck`, allows `http`, `https`, `mailto`, and
+  relative URLs, reading the scheme as the URL standard does
+  (`urlScheme`: C0 controls and spaces trimmed, tabs and newlines
+  ignored anywhere, case folded), on attribute values the tree has
+  already decoded, so `java&#x09;script:` and `&#106;avascript&colon;`
+  are `javascript`. URLs stay strings (decided above).
+- **Where Hrefine plugs in:** as a `UrlCheck`, from the `kelpto`
+  library (or a policy passed in), so kelpto-html needs no Hrefine
+  unless a caller brings it. Hrefine would parse each URL as browsers
+  do, check host and scheme (tricky hosts, IDN spoofing), and could
+  give back a normalized URL. Until a `srcset` rewriter exists, a
+  check changing a URL inside `srcset` drops the attribute.
+- **Reparse check, at run time:** the output is parsed again as a
+  fragment in the same context, scripting on, and sanitized again; it's
+  returned only when that changes nothing and serializes the same, or
+  else goes round again (4 times at most) before falling back to the
+  text alone. So the output always parses to exactly the tree it was
+  serialized from, all allowed, whatever the sanitizer's own unwrapping
+  does (`<p><button><div>` unwrapped gives `<p><div>`, which the
+  browser reads as two `p`s) or the input tries. It costs one more
+  fragment parse of the output: in Python, on the CommonMark spec
+  (best of 3, one noisy machine), `renderSafe` took 2.1 s, of which
+  building the tree 0.7 s, the reparse 1.1 s (an HTML parse of the
+  224 KB output, dearer than the Markdown parse), and the two walks
+  the rest; `buildHtml` alone 0.7 s. Kept on anyway, since it's the
+  only check that doesn't depend on the sanitizer getting every
+  parsing rule right too. If it matters, a later fast path could skip
+  it when the first walk only dropped attributes, once that's shown
+  to round-trip for the standard policy.
+- **Iterative:** one loop with a stack, so deep nesting can't overflow
+  the call stack.
+- **Tests:** a gallery of hostile Markdown (kelpto's `safeGallery`,
+  for the site's `#safe`), hostile HTML in kelpto-html, each output
+  checked to reparse to itself, and every CommonMark and GFM example
+  without raw HTML or a link outside the allowed schemes rendering the
+  same tree safely as trusted. Public sanitizer suites didn't fit:
+  html5lib-python's sanitizer tests check its own allowlists and
+  escaping (disallowed tags shown as text), and DOMPurify's need
+  asking first.
+- **Not yet:** an id prefix against DOM clobbering, CSS (the `style`
+  attribute and element are all or nothing, and unchecked if allowed),
+  `rel` on links, and a `srcset` rewriter.
 
 ### Generated tables
 
@@ -542,7 +624,8 @@ it. An emit-only builder for these users is an open question in
    fragments (2026-11-04), and Markdown's raw HTML as one tree (see
    "Raw HTML in Markdown, as one tree", 2026-11-04).
 3. A real sanitizer on the built tree (`buildHtml`'s), with links
-   checked, replacing the `renderSafe` sketch.
+   checked, replacing the `renderSafe` sketch. Done (2026-11-04; see
+   "Sanitizing"), with links checked by scheme until Hrefine comes in.
 4. Chunked children, once documents are big enough to measure;
    interning is done (see "Less memory", below); deep nesting (thousands of emphasis levels, and views and
    rendering of deep blocks) without deep recursion. Parsing and
@@ -783,11 +866,11 @@ without churning it, and sanitize untrusted HTML.
 - **Serialize:** the standard's fragment serializer (normalized), and
   lossless printing of the as-written tokens.
 - **Sanitize:** a sanitizer working on the built tree, the only safe
-  place to judge HTML: an allowlist of elements and attributes,
-  Hrefine checking every URL-valued attribute, and safe defaults
-  (no scripts, event handlers, `style` unless asked, or `srcdoc`).
-  Its output is `SafeHtml`: HTML the library understands and has
-  checked, as structure, not just a string.
+  place to judge HTML: an allowlist of elements and attributes, every
+  URL-valued attribute checked (by scheme now, by Hrefine later), and
+  safe defaults (no scripts, event handlers, `style` unless asked, or
+  `srcdoc`). Its output is `SafeHtml`, checked to parse back to the
+  tree it came from. Built; see "Sanitizing".
 
 ## Together (kelpto)
 
@@ -813,10 +896,10 @@ What the pair adds that neither can alone:
 - Name the dangerous choices plainly (`Trusted`, `WithCredentials`),
   never with "safe" or "secure".
 - Never log or echo raw input in errors.
-- The sanitizer (step 5) drops processing instructions by default.
+- The sanitizer drops processing instructions, as it does comments.
   The standard parses them now, and the WICG Sanitizer API has an
-  open issue on how to configure them; until that settles, keeping one
-  is an explicit choice.
+  open issue on how to configure them; until that settles, there's no
+  option to keep them.
 
 ## Open questions
 

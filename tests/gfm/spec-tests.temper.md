@@ -15,9 +15,9 @@ linked without extended autolinks. As CommonMark, they're checked in
 `tests/commonmark/`, at 0.31.2.
 
     let { MarkdownDocument, MarkdownParser, MarkdownRenderer } = import("../../kelpto-md");
-    let { buildHtml, ParsedRawHtml } = import("../../kelpto");
+    let { buildHtml, ParsedRawHtml, renderSafe } = import("../../kelpto");
     let {
-      BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, parseHtmlFragment,
+      BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, SanitizerPolicy, parseHtmlFragment,
     } = import("../../kelpto-html");
 
     let parserFor(example: GfmExample): MarkdownParser {
@@ -271,5 +271,52 @@ counts.
       console.log("Same tree: ${same.toString()}/${examples.length.toString()} examples");
       assert(failures.isEmpty) {
         "examples building another tree: ${failures.toList().join(", ") { (s: String): String => s }}"
+      };
+    }
+
+Whether any link or image in the tree has a URL the standard policy
+drops, which a safe rendering leaves out.
+
+    let hasUnsafeUrl(nodes: List<BuiltNode>): Boolean {
+      let check = SanitizerPolicy.standard.urlCheck;
+      for (var i = 0; i < nodes.length; i += 1) {
+        let node = nodes[i];
+        if (node is Element) {
+          let attributes = node.attributes;
+          for (var j = 0; j < attributes.length; j += 1) {
+            let a = attributes[j];
+            if ((a.name == "href" || a.name == "src") && check.checkUrl(a.value, node.name, a.name) == null) { return true; }
+          }
+          if (hasUnsafeUrl(node.children)) { return true; }
+        }
+      }
+      false
+    }
+
+Rendered safely (`renderSafe`), every example without raw HTML or a
+link the standard policy drops gives the HTML the trusted rendering
+parses to, as serialized. Logs the counts.
+
+    test("GFM spec: examples render safely as trusted, but for raw HTML and unsafe links") {
+      let examples = gfmExamples();
+      let body = new FragmentContext("body");
+      let failures = new ListBuilder<String>();
+      var same = 0;
+      var skipped = 0;
+      for (var i = 0; i < examples.length; i += 1) {
+        let example = examples[i];
+        let doc = parserFor(example).withRawHtmlHandler(new ParsedRawHtml()).parse(example.markdown);
+        let expected = parseHtmlFragment(rendererFor(example).render(doc), body);
+        if (!doc.rawHtml.isEmpty || !doc.htmlBlocks.isEmpty || hasUnsafeUrl(expected.children)) {
+          skipped += 1;
+        } else if (renderSafe(doc).html == expected.html) {
+          same += 1;
+        } else {
+          failures.add(label(example));
+        }
+      }
+      console.log("Safe as trusted: ${same.toString()}/${examples.length.toString()} examples, ${skipped.toString()} with raw HTML or unsafe links");
+      assert(failures.isEmpty) {
+        "examples rendering otherwise: ${failures.toList().join(", ") { (s: String): String => s }}"
       };
     }

@@ -21,6 +21,8 @@ doc.html;                        // "<html><head></head><body><p>One</p><p>Two<t
 let cells = parseHtmlFragment("<td>1<td>2", new FragmentContext("tr"));
 cells.html;                      // "<td>1</td><td>2</td>", as innerHTML of a tr reads it
 parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).html; // "12"
+
+sanitizeHtml("<a href='java&#x09;script:x' onclick=y>Hi</a><script>z</script>").html; // "<a>Hi</a>"
 ```
 
 - **The WHATWG tokenizer, in full:** every state of the HTML
@@ -57,5 +59,13 @@ parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).html; // "12"
 - **Parse errors** by the standard's codes, with offsets, from
   `HtmlTokenizer.tokenize`.
 
-Not yet: tree construction's parse errors, and a
-sanitizer (which will drop processing instructions by default).
+- **A sanitizer** on the built tree, never the text: `sanitizeHtml`,
+  or `sanitize` on a parsed fragment, document, or `FragmentStream`,
+  keeps what a `SanitizerPolicy` allows (`standard` by default;
+  `withElements`, `withAttributes`, `withSchemes`, `withUrlCheck`,
+  and the others change it), drops scripts, styles, event handlers,
+  comments, processing instructions, and SVG and MathML unless
+  allowed, checks every URL attribute, and gives `SafeHtml`, checked
+  to parse back to the tree it was serialized from.
+
+Not yet: tree construction's parse errors.

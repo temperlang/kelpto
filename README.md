@@ -3,7 +3,7 @@
 Lossless Markdown and a WHATWG HTML parser, written once in Temper, for
 every language Temper supports. Parse a document, change one part, and
 write it back with everything else exactly as it was. Render it safely,
-with raw HTML parsed as browsers parse it and links checked by Hrefine.
+with raw HTML parsed as browsers parse it and every link checked.
 
 **Status** (2026-11-04): all of CommonMark parses losslessly and
 renders as every one of the spec's 652 examples expects, and so do
@@ -15,7 +15,8 @@ construction builds whole documents as browsers do, passing all but 4
 of web-platform-tests' 1,761 document tests, and fragments as
 `innerHTML` does, passing all 206 fragment tests. Markdown and its raw
 HTML parse into the one tree a browser builds from the rendering, as
-every CommonMark and GFM example checks.
+every CommonMark and GFM example checks, and a sanitizer judges that
+tree, so `renderSafe` is safe for Markdown from anyone.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 
@@ -63,7 +64,7 @@ a.name;                                     // "a"
 ```temper
 let doc = parseMarkdownWithHtml("Hi <b class=x>there</b><script>alert(1)</script>");
 htmlOf(doc.rawHtml[0]).startTags[0].name;   // "b": an HTML subtree in the Markdown tree
-renderSafe(doc).html;                       // "<p>Hi <b>there</b>alert(1)</p>\n"
+renderSafe(doc).html;                       // "<p>Hi <b class=\"x\">there</b></p>\n"
 ```
 
 The same in **Python**:
@@ -87,7 +88,7 @@ a = tokenize_html('<a href="/old" class=x>Go</a>').start_tags[0]
 a.attribute("href").with_value("/new").as_written
 
 both = parse_markdown_with_html("Hi <b class=x>there</b><script>alert(1)</script>")
-render_safe(both).html                             # "<p>Hi <b>there</b>alert(1)</p>\n"
+render_safe(both).html                             # '<p>Hi <b class="x">there</b></p>\n'
 ```
 
 And **JavaScript**:
@@ -109,8 +110,9 @@ htmlOf(both.rawHtml[0]).startTags[0].name;        // "b"
 renderSafe(both).html;
 ```
 
-`renderSafe` is a sketch, not a sanitizer yet; see
-[kelpto/README.md](kelpto/README.md).
+`renderSafe` sanitizes the tree a browser builds from the rendering,
+Markdown and raw HTML together, keeping an allowlist and checking
+every URL's scheme; see [kelpto/README.md](kelpto/README.md).
 
 ## Tests and licensing
 

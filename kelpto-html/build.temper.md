@@ -2492,6 +2492,17 @@ its absence) sets it.
         serializeChildren(tree, 0, out);
         out.toString()
       }
+
+The body's contents, sanitized by `policy` (see `sanitizeHtml`) for
+a `body` in this document's quirks mode. Empty for a frameset.
+
+      public sanitize(policy: SanitizerPolicy = SanitizerPolicy.standard): SafeHtml {
+        var root = tree.firsts[0];
+        while (root >= 0 && tree.kinds[root] != elementNode) { root = tree.nexts[root]; }
+        var body = if (root >= 0) { tree.firsts[root] } else { -1 };
+        while (body >= 0 && !tree.isHtml(body, "body")) { body = tree.nexts[body]; }
+        sanitizeTree(tree, body, new FragmentContext("body", "html", [], false, quirksMode), policy)
+      }
     }
 
 A fragment as parsed: the tokens as written, the nodes as built (what
@@ -2521,6 +2532,12 @@ The nodes serialized as the context element's contents (so text in a
         let out = new StringBuilder();
         serializeChildren(tree, tree.fragmentRoot, out);
         out.toString()
+      }
+
+The nodes sanitized by `policy` for the context (see `sanitizeHtml`).
+
+      public sanitize(policy: SanitizerPolicy = SanitizerPolicy.standard): SafeHtml {
+        sanitizeTree(tree, tree.fragmentRoot, context, policy)
       }
     }
 
