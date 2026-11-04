@@ -66,6 +66,7 @@ sanitizeHtml("<a href='java&#x09;script:x' onclick=y>Hi</a><script>z</script>").
   and the others change it), drops scripts, styles, event handlers,
   comments, processing instructions, and SVG and MathML unless
   allowed, checks every URL attribute, and gives `SafeHtml`, checked
-  to parse back to the tree it was serialized from.
+  to parse back to the tree it was serialized from, with `removals`:
+  each element, attribute, URL, or comment removed, with its origin.
 
 Not yet: tree construction's parse errors.

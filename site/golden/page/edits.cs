@@ -5,21 +5,25 @@ var text = @"Release notes
 =============
 
 Kelpto keeps   *every* byte, ~~mostly~~ always.
-Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save.
+Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save, <span style=""color: crimson"" onmouseover=""alert('hi')"">often</span>.
 
 | Library     | Status |   Since |
 |:------------|:------:|--------:|
 | kelpto-md   | ready  |     0.1 |
-| kelpto-html | early  |         |
+| kelpto-html | ready  |     0.1 |
+| Hrefine     | early  |         |
 
 * [x] CommonMark
-* [ ] HTML trees
-    * [ ] html5lib's tests
+* [x] HTML trees
+    * [x] html5lib's and WPT's tests
+* [ ] Hrefine links
 
 ## Links
 
 Read [the docs][docs], or the [FAQ](https://example.com/faq ""FAQ"").
 Footnotes work too.[^why]
+
+[Back to top](javascript:scrollTo(0,0))
 
 [docs]:   https://example.com/old
 [^why]: GitHub has them.
@@ -31,5 +35,6 @@ doc = doc.Tables[0].Rows[1].Cells[2].WithText("0.2");
 doc = doc.TaskListItems[2].WithChecked(true);
 doc = doc.LinkReferenceDefinitions[0].WithDestination(new LinkTarget("https://example.com/new?q=é"));
 doc = doc.Links[1].WithDestination(new LinkTarget("https://example.com/faq#ünï"));
+doc = doc.Links[2].WithDestination(new LinkTarget("#top"));
 doc = doc.Headings[1].WithText("Links 🔗");
 Console.WriteLine(doc.AsWritten);

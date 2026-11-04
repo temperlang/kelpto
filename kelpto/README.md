@@ -16,7 +16,8 @@ kelpto-md and kelpto-html together, so neither imports the other:
   anyone: the tree `buildHtml` builds, sanitized by kelpto-html's
   `SanitizerPolicy` (by default, what Markdown and GFM render and
   common formatting, with `http`, `https`, `mailto`, and relative
-  URLs), as `SafeHtml`.
+  URLs), as `SafeHtml`, whose `removals` say what went and point back
+  at the raw start tag or Markdown node it came from.
 
 ```temper
 let doc = parseMarkdownWithHtml("Hi <b class=x>there</b><script>alert(1)</script>");
@@ -24,6 +25,7 @@ doc.asWritten;                             // the input, byte for byte
 htmlOf(doc.rawHtml[0]).startTags[0].name;  // "b"
 renderSafe(doc).html;                      // "<p>Hi <b class=\"x\">there</b></p>\n"
 renderSafe(parseMarkdownWithHtml("[x](JavaScript:alert(1))")).html; // "<p><a>x</a></p>\n"
+renderSafe(doc).removals[0].kind;          // "element": the script
 
 let open = buildHtml(parseMarkdownWithHtml("a <b>bold\n\nstill bold</b>"));
 open.html;                                 // "<p>a <b>bold</b></p><b>\n</b><p><b>still bold</b></p>\n"

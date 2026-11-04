@@ -450,6 +450,14 @@ kelpto-html's sanitizer (`sanitize.temper.md`), and kelpto's
   parsing rule right too. If it matters, a later fast path could skip
   it when the first walk only dropped attributes, once that's shown
   to round-trip for the standard policy.
+- **What was removed:** `SafeHtml.removals` lists each element (dropped
+  or unwrapped), attribute, refused URL, and comment, DOCTYPE, or
+  processing instruction, in document order, with its name, element,
+  value, and origin (the start tag or Markdown node, as
+  `BuiltNode.origin`). Always on, since it costs one object per
+  removal and nothing when nothing goes; the output is unchanged.
+  Origins are null for implied elements, for `sanitizeHtml` (no tokens
+  kept), and for the rare removals of the reparse rounds.
 - **Iterative:** one loop with a stack, so deep nesting can't overflow
   the call stack.
 - **Tests:** a gallery of hostile Markdown (kelpto's `safeGallery`,

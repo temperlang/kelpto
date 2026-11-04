@@ -19,13 +19,13 @@ renderSafe(doc).html;                     // "<p>Hi <b class=\"x\">there</b></p>
 
     let { GreenElement, RedNode } = import("../kelpto-core");
     let {
-      Emphasis, HtmlBlock, MarkdownDocument, MarkdownNode, MarkdownParser, MarkdownRenderer, Paragraph,
+      Emphasis, HtmlBlock, Link, MarkdownDocument, MarkdownNode, MarkdownParser, MarkdownRenderer, Paragraph,
       RawHtml, RawHtmlContent, RawHtmlHandler, RenderSink,
       parseMarkdown, viewOf,
     } = import("../kelpto-md");
     let {
       Attribute, BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, FragmentStream, HtmlFragment,
-      HtmlTokens, SafeHtml, SanitizerPolicy, StartTag, UrlCheck, htmlTokensKind, parseHtmlFragment, tokenizeHtml, tokenizeHtmlGreen,
+      HtmlTokens, Removal, SafeHtml, SanitizerPolicy, StartTag, UrlCheck, htmlTokensKind, parseHtmlFragment, tokenizeHtml, tokenizeHtmlGreen,
     } = import("../kelpto-html");
 
 ## Parsing
@@ -78,7 +78,7 @@ an element written as raw HTML at its start tag in the Markdown tree
 nothing more when nobody asks.
 
 ```temper inert
-let doc = parseMarkdownWithHtml("<div class=note>\n\n*Hi* <b>there\n\n</div>\n");
+let doc = parseMarkdownWithHtml("<div class=note>\n\n*Hi* <b>there</b>\n\n</div>\n");
 let built = buildHtml(doc);
 built.html;   // "<div class=\"note\">\n<p><em>Hi</em> <b>there</b></p>\n</div>\n"
 let div = built.children[0] as Element;
@@ -277,6 +277,21 @@ An edit through kelpto-html's views, inside a Markdown document.
       // The script swallows the rest, `</p>` included, so the `p` ends with the fragment.
       let fromPlain = renderSafe(parseMarkdown("<i>x</i><script>")).html;
       assert(fromPlain == "<p><i>x</i></p>") { fromPlain };
+    }
+
+What `renderSafe` removed points back at the document: a raw tag's
+attributes at its start tag, and a Markdown link's `href` at the link.
+
+    test("renderSafe lists what it removed") {
+      let doc = parseMarkdownWithHtml("Save <span style=\"color: red\" onmouseover=\"alert('hi')\">often</span>.\n\n[Top](javascript:scrollTo(0,0))\n");
+      let safe = renderSafe(doc);
+      assert(safe.html == "<p>Save <span>often</span>.</p>\n<p><a>Top</a></p>\n") { safe.html };
+      let removed = safe.removals.join(" | ") { (r: Removal): String =>
+        "${r.kind} ${r.name} ${r.origin?.kind?.name ?? "-"} ${r.origin?.span?.toString() ?? "-"}"
+      };
+      assert(removed == "attribute style HtmlStartTag 5+51 | attribute onmouseover HtmlStartTag 5+51 | url href Link 71+31") { removed };
+      let link = safe.removals[2].origin as RedNode orelse panic();
+      assert(viewOf(link) is Link && safe.removals[2].value == "javascript:scrollTo(0,0)") { "the link" };
     }
 
 ### The `#safe` gallery
@@ -478,7 +493,14 @@ Pieces that interact, each checked against parsing its HTML.
       assert(escaped.isEmpty) { escaped };
     }
 
+The example under "The tree a browser builds", above, with a table
+for an implied element, and `<b>` left open, as the parser reopens it.
+
     test("built nodes point back at raw tokens and Markdown nodes") {
+      let example = buildHtml(parseMarkdownWithHtml("<div class=note>\n\n*Hi* <b>there</b>\n\n</div>\n")).html;
+      assert(example == "<div class=\"note\">\n<p><em>Hi</em> <b>there</b></p>\n</div>\n") { example };
+      let open = buildHtml(parseMarkdownWithHtml("<div class=note>\n\n*Hi* <b>there\n\n</div>\n")).html;
+      assert(open == "<div class=\"note\">\n<p><em>Hi</em> <b>there</b></p><b>\n</b></div><b>\n</b>") { open };
       let doc = parseMarkdownWithHtml("<div class=note>\n\n*Hi* <b>there</b>\n\n</div>\n\n<table><td>x</table>\n");
       let built = buildHtml(doc);
       let html = built.html;

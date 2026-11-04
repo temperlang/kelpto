@@ -1,6 +1,6 @@
 {
   "page": {
-    "input": "Release notes\n=============\n\nKelpto keeps   *every* byte, ~~mostly~~ always.\nPress <kbd>Ctrl</kbd>+<kbd>S</kbd> to save.\n\n| Library     | Status |   Since |\n|:------------|:------:|--------:|\n| kelpto-md   | ready  |     0.1 |\n| kelpto-html | early  |         |\n\n* [x] CommonMark\n* [ ] HTML trees\n    * [ ] html5lib's tests\n\n## Links\n\nRead [the docs][docs], or the [FAQ](https://example.com/faq \"FAQ\").\nFootnotes work too.[^why]\n\n[docs]:   https://example.com/old\n[^why]: GitHub has them.\n",
+    "input": "Release notes\n=============\n\nKelpto keeps   *every* byte, ~~mostly~~ always.\nPress <kbd>Ctrl</kbd>+<kbd>S</kbd> to save, <span style=\"color: crimson\" onmouseover=\"alert('hi')\">often</span>.\n\n| Library     | Status |   Since |\n|:------------|:------:|--------:|\n| kelpto-md   | ready  |     0.1 |\n| kelpto-html | ready  |     0.1 |\n| Hrefine     | early  |         |\n\n* [x] CommonMark\n* [x] HTML trees\n    * [x] html5lib's and WPT's tests\n* [ ] Hrefine links\n\n## Links\n\nRead [the docs][docs], or the [FAQ](https://example.com/faq \"FAQ\").\nFootnotes work too.[^why]\n\n[Back to top](javascript:scrollTo(0,0))\n\n[docs]:   https://example.com/old\n[^why]: GitHub has them.\n",
     "gfm": true,
     "steps": [
       {
@@ -77,6 +77,16 @@
           ]
         ],
         "value": "https://example.com/faq#ünï"
+      },
+      {
+        "kind": "link",
+        "path": [
+          [
+            "links",
+            2
+          ]
+        ],
+        "value": "#top"
       },
       {
         "kind": "heading",

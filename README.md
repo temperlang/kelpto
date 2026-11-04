@@ -112,7 +112,8 @@ renderSafe(both).html;
 
 `renderSafe` sanitizes the tree a browser builds from the rendering,
 Markdown and raw HTML together, keeping an allowlist and checking
-every URL's scheme; see [kelpto/README.md](kelpto/README.md).
+every URL's scheme, and lists what it removed, each pointing back at
+its source; see [kelpto/README.md](kelpto/README.md).
 
 ## Tests and licensing
 

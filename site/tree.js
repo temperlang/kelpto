@@ -35,8 +35,151 @@ function shortText(text) {
 
 /**
  * @typedef {{ from: number, to: number }} Span
- * @typedef {{ label: string, where: string, span: Span | null }} Row
+ * @typedef {{ label: string, where: string, span: Span | null, removed?: string }} Row
+ * @typedef {Map<string, any[]>} Removed
  */
+
+// What sanitizing removed (kelpto-html's `SafeHtml.removals`), matched to
+// the built nodes it came from by origin: the origin's kind and span, and
+// the element's name, since one Markdown node can make more than one
+// element. Elements the parser reopened share their start tag, and so
+// what was removed from it.
+
+/** @param {any} origin @param {string} element */
+const removalKey = (origin, element) => `${origin.green.kind.id}:${origin.span.start}+${origin.span.length}:${element}`;
+
+/** A built node's name as policies name it, or "" if not an element. @param {any} node @param {any} Element */
+const elementKey = (node, Element) =>
+  node instanceof Element ? (node.namespace === "html" ? node.name : `${node.namespace}:${node.name}`) : "";
+
+/**
+ * Removals by the node they came from; those without an origin are left
+ * out.
+ *
+ * @param {any[]} removals
+ * @returns {Removed}
+ */
+export function removedByNode(removals) {
+  /** @type {Removed} */
+  const by = new Map();
+  for (const r of removals) {
+    if (!r.origin) continue;
+    const key = removalKey(r.origin, r.element);
+    by.set(key, [...(by.get(key) ?? []), r]);
+  }
+  return by;
+}
+
+/** What was removed from a node. @param {Removed | null} removed @param {any} node @param {any} Element */
+const removedFrom = (removed, node, Element) =>
+  removed && node.origin ? removed.get(removalKey(node.origin, elementKey(node, Element))) ?? [] : [];
+
+/** A removal's group, for the summary, in the order they're listed. */
+const GROUPS = ["element", "tag", "attribute", "style", "link", "URL", "comment", "DOCTYPE", "processing instruction"];
+
+/** @param {any} r */
+function groupOf(r) {
+  if (r.kind === "attribute") return r.name === "style" ? "style" : "attribute";
+  if (r.kind === "url") return r.name === "href" || r.name === "xlink:href" ? "link" : "URL";
+  if (r.kind === "doctype") return "DOCTYPE";
+  return r.kind;
+}
+
+/** Why a removal went, in a line, for its tooltip and the Tree view's note. @param {any} r */
+function reason(r) {
+  if (r.kind === "element") return `Removed: <${r.name}> isn't allowed, nor what's in it.`;
+  if (r.kind === "tag") return `Removed: <${r.name}> isn't allowed; what's in it stays.`;
+  if (r.kind === "url") {
+    return /^\s*javascript:/i.test(r.value)
+      ? `Removed: a javascript: ${r.name} runs code when followed. Trust keeps it; the preview can't run it, but your page would.`
+      : `Removed: ${r.name}'s URL isn't an allowed one (http, https, mailto, or relative).`;
+  }
+  if (r.name === "style") return "Removed: style is dropped, since CSS can overlay or disguise the page, and Kelpto doesn't check CSS yet.";
+  if (/^on/i.test(r.name)) {
+    return `Removed: ${r.name} is a script. Trust keeps it; the preview is sandboxed so it can't run here, but on your page it would.`;
+  }
+  if (r.kind === "attribute") return `Removed: ${r.name} isn't allowed on <${r.element}>.`;
+  return `Removed: no ${groupOf(r)}s are kept.`;
+}
+
+/**
+ * What was removed, in words: "1 attribute, 1 style, and 1 link".
+ *
+ * @param {any[]} removals
+ */
+export function removalSummary(removals) {
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const r of removals) counts.set(groupOf(r), (counts.get(groupOf(r)) ?? 0) + 1);
+  const parts = GROUPS.filter((g) => counts.has(g)).map((g) => {
+    const n = /** @type {number} */ (counts.get(g));
+    return `${n.toLocaleString("en")} ${n === 1 ? g : `${g}s`}`;
+  });
+  if (parts.length < 3) return parts.join(" and ");
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+const VOIDS = new Set("area base basefont bgsound br col embed frame hr img input keygen link meta param source track wbr".split(" "));
+const RAW_TEXT = new Set("style script xmp iframe noembed noframes plaintext noscript".split(" "));
+
+/** @param {string} s @param {boolean} attribute */
+const serialized = (s, attribute) =>
+  s.replace(attribute ? /[&\u00A0"]/g : /[&\u00A0<>]/g, (c) => ({ "&": "&amp;", "\u00A0": "&nbsp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c] ?? c);
+
+/**
+ * The built nodes serialized as the standard writes them, with what
+ * sanitizing removed struck through: as HTML to show, and the text left
+ * once what's struck goes, which is the sanitized output when nothing
+ * else changed (the caller checks).
+ *
+ * @param {any[]} nodes
+ * @param {{ html: any }} side
+ * @param {Removed} removed
+ */
+export function markedHtml(nodes, side, removed) {
+  const { Element, BuiltText } = side.html;
+  let shown = "";
+  let kept = "";
+  const both = (/** @type {string} */ s) => {
+    shown += escapeHtml(s);
+    kept += s;
+  };
+  const gone = (/** @type {string} */ s, /** @type {string} */ why) => {
+    shown += `<del class="removed" title="${escapeHtml(why)}">${escapeHtml(s)}</del>`;
+  };
+  /** @param {any[]} list @param {boolean} raw */
+  function walk(list, raw) {
+    for (const node of list) {
+      const from = removedFrom(removed, node, Element);
+      if (node instanceof BuiltText) {
+        both(raw ? node.text : serialized(node.text, false));
+      } else if (!(node instanceof Element)) {
+        gone(node.html, from[0] ? reason(from[0]) : "Removed.");
+      } else if (from.some((r) => r.kind === "element")) {
+        gone(node.html, reason(/** @type {any} */ (from.find((r) => r.kind === "element"))));
+      } else {
+        const tag = from.find((r) => r.kind === "tag");
+        const write = tag ? (/** @type {string} */ s) => gone(s, reason(tag)) : both;
+        write(`<${node.name}`);
+        for (const a of node.attributes) {
+          const name = a.prefix ? `${a.prefix}:${a.name}` : a.name;
+          const qualified = a.prefix === "xmlns" && a.name === "xmlns" ? "xmlns" : name;
+          const text = ` ${qualified}="${serialized(a.value, true)}"`;
+          const r = from.find((r) => (r.kind === "attribute" || r.kind === "url") && r.name === name);
+          if (r || tag) gone(text, reason(r ?? tag));
+          else both(text);
+        }
+        write(">");
+        if (node.namespace === "html" && VOIDS.has(node.name)) continue;
+        const contents = node.templateContents;
+        walk(contents.length ? contents : node.children, node.namespace === "html" && RAW_TEXT.has(node.name));
+        write(`</${node.name}>`);
+      }
+    }
+  }
+  walk(nodes, false);
+  return { html: shown, kept };
+}
 
 /**
  * The built nodes as rows of HTML, and what each row came from. With
@@ -46,9 +189,10 @@ function shortText(text) {
  * @param {any[]} nodes
  * @param {{ html: any, kelpto: any }} side
  * @param {boolean} markdown
+ * @param {Removed | null} [removed] what sanitizing removed, struck through
  * @returns {{ html: string, rows: Row[], more: number }}
  */
-export function treeHtml(nodes, side, markdown) {
+export function treeHtml(nodes, side, markdown, removed = null) {
   const { Element, BuiltText, BuiltComment, BuiltDoctype, BuiltProcessingInstruction } = side.html;
   /** @type {Row[]} */
   const rows = [];
@@ -75,13 +219,17 @@ export function treeHtml(nodes, side, markdown) {
     return { badge: `Markdown ${name}`, cls: "md", where: `From Markdown's ${name}:`, span };
   }
 
-  /** @param {any} node */
-  function label(node) {
+  /** @param {any} node @param {any[]} from what was removed from it */
+  function label(node, from) {
     if (node instanceof Element) {
       const space = node.namespace === "html" ? "" : `${node.namespace} `;
       const attributes = node.attributes
-        .map((/** @type {any} */ a) => ` <span class="t-attr">${escapeHtml(a.prefix ? `${a.prefix}:${a.name}` : a.name)}</span>` +
-          `=<span class="t-value">"${escapeHtml(shortText(a.value))}"</span>`)
+        .map((/** @type {any} */ a) => {
+          const name = a.prefix ? `${a.prefix}:${a.name}` : a.name;
+          const text = `<span class="t-attr">${escapeHtml(name)}</span>=<span class="t-value">"${escapeHtml(shortText(a.value))}"</span>`;
+          const r = from.find((r) => (r.kind === "attribute" || r.kind === "url") && r.name === name);
+          return r ? ` <del class="removed" title="${escapeHtml(reason(r))}">${text}</del>` : ` ${text}`;
+        })
         .join("");
       return `<span class="t-tag">&lt;${escapeHtml(space + node.name)}</span>${attributes}<span class="t-tag">&gt;</span>`;
     }
@@ -105,18 +253,31 @@ export function treeHtml(nodes, side, markdown) {
       }
       const origin = originOf(node);
       const index = rows.length;
-      const text = label(node);
-      rows.push({ label: text, where: origin.where, span: origin.span });
+      const from = removedFrom(removed, node, Element);
+      const text = label(node, from);
+      // What sanitizing removed here: the whole node, its tags, or attributes.
+      const whole = from.find((r) => r.kind !== "tag" && r.kind !== "attribute" && r.kind !== "url");
+      const tag = from.find((r) => r.kind === "tag");
+      const names = from.filter((r) => r.kind === "attribute" || r.kind === "url").map((r) => r.name);
+      const gone = whole ?? tag;
+      const shown = gone ? `<del class="removed" title="${escapeHtml(reason(gone))}">${text}</del>` : text;
+      const why = gone
+        ? reason(gone)
+        : from.filter((r) => r.kind === "attribute" || r.kind === "url").map(reason).join(" ");
+      rows.push({ label: text, where: origin.where, span: origin.span, removed: why });
       // Text and comments name their origin only on hover, to keep the tree quiet.
       const badged = origin.badge && (node instanceof Element || origin.cls === "implied");
-      const badge = badged ? ` <span class="badge ${origin.cls}">${escapeHtml(origin.badge)}</span>` : "";
+      let badge = badged ? ` <span class="badge ${origin.cls}">${escapeHtml(origin.badge)}</span>` : "";
+      if (whole) badge += ' <span class="badge removed">removed</span>';
+      else if (tag) badge += ' <span class="badge removed">tag removed</span>';
+      else if (names.length) badge += ` <span class="badge removed">removed: ${escapeHtml(names.join(", "))}</span>`;
       let inner = "";
       if (node instanceof Element) {
         const contents = node.templateContents;
         if (contents.length) inner += `<li class="t-content">content</li>${walk(contents)}`;
         inner += walk(node.children);
       }
-      out += `<li><span class="row" data-row="${index}" tabindex="${index === 0 ? 0 : -1}">${text}${badge}</span>` +
+      out += `<li${whole ? ' class="gone"' : ""}><span class="row" data-row="${index}" tabindex="${index === 0 ? 0 : -1}">${shown}${badge}</span>` +
         (inner ? `<ul>${inner}</ul>` : "") + "</li>";
     }
     return out;
@@ -214,8 +375,9 @@ export function treeView(container, note, onSpan, excerpt) {
       return;
     }
     row.classList.add("on");
-    const { where, span } = rows[Number(row.dataset.row)];
-    note.innerHTML = span ? `${escapeHtml(where)} <code>${escapeHtml(excerpt(span))}</code>` : escapeHtml(where);
+    const { where, span, removed } = rows[Number(row.dataset.row)];
+    note.innerHTML = (span ? `${escapeHtml(where)} <code>${escapeHtml(excerpt(span))}</code>` : escapeHtml(where)) +
+      (removed ? ` <span class="removed-note">${escapeHtml(removed)}</span>` : "");
     onSpan(span, reveal);
   };
   container.addEventListener("mouseover", (event) => point(/** @type {Element} */ (event.target), false));

@@ -12,13 +12,13 @@ import {
   Strikethrough, Strong, Table, normalizeLabel,
 } from "kelpto-md";
 import { applyStep, parserFor } from "./editcode.js";
-import { highlighter, loadHtmlSide, treeHtml, treeView } from "./tree.js";
+import { highlighter, loadHtmlSide, markedHtml, removalSummary, removedByNode, treeHtml, treeView } from "./tree.js";
 
 const SAMPLE = `Release notes
 =============
 
 Kelpto keeps   *every* byte, ~~mostly~~ always.
-Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save.
+Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save, <span style="color: crimson" onmouseover="alert('hi')">often</span>.
 
 | Library     | Status |   Since |
 |:------------|:------:|--------:|
@@ -35,6 +35,8 @@ Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save.
 
 Read [the docs][docs], or the [FAQ](https://example.com/faq "FAQ").
 Footnotes work too.[^why]
+
+[Back to top](javascript:scrollTo(0,0))
 
 [docs]:   https://example.com/old
 [^why]: GitHub has them.
@@ -323,17 +325,19 @@ const outsideFootnotes = (d, selector) =>
 /** What each choice for raw HTML says about the output. */
 const RAW_NOTES = {
   escape: "Raw HTML is escaped, as it is by default.",
-  trust: "Raw HTML is trusted here, so it renders; the preview is sandboxed, so scripts don't run.",
+  trust:
+    "Raw HTML is trusted here, so it renders. The preview is sandboxed, so its handlers and javascript: links " +
+    "can't run here, but on your page they would.",
   sanitize:
     "Sanitized through renderSafe: the tree a browser builds from Markdown and raw HTML together, " +
-    "keeping only what the policy allows, with every URL checked.",
+    "keeping only what the policy allows, with every URL checked. The HTML view strikes through what it removed.",
 };
 
 /** The same, for the Tree view. */
 const TREE_NOTES = {
   escape: "With raw HTML escaped, it's text here. Choose Trust or Sanitize to see it as elements.",
   trust: "The tree a browser builds from the rendering, Markdown and raw HTML together (buildHtml).",
-  sanitize: "The tree renderSafe judges, before sanitizing; the preview shows what it keeps.",
+  sanitize: "The tree renderSafe judges, with what it removes struck through; the preview shows what it keeps.",
 };
 
 /**
@@ -390,12 +394,32 @@ export function initDemo(onProgram = () => {}) {
     });
     return false;
   };
+  /**
+   * The tree a browser builds from the document as it is now, raw HTML
+   * trusted (kelpto's `buildHtml`), and that tree sanitized, as
+   * `renderSafe` does, with what it removed, once the HTML side is loaded.
+   * Parsed again with raw HTML parsed too, so its elements point at their
+   * start tags, not just at the raw HTML around them.
+   *
+   * @type {{ of: any, gfm: boolean, built: any, safe: any, removed: import("./tree.js").Removed } | null}
+   */
+  let judged = null;
+  const judge = () => {
+    if (!side) return null;
+    if (judged?.of === current && judged.gfm === gfmOption.checked) return judged;
+    const { html, kelpto } = side;
+    const doc = parser().withRawHtmlHandler(new kelpto.ParsedRawHtml()).parse(current.asWritten);
+    const built = kelpto.buildHtml(doc, new html.FragmentContext("body"), new MarkdownRenderer().withRawHtmlTrusted());
+    const safe = built.sanitize();
+    judged = { of: current, gfm: gfmOption.checked, built, safe, removed: removedByNode(safe.removals) };
+    return judged;
+  };
   /** The rendering, by the raw HTML choice, or null until the HTML side loads. */
   const rendering = () => {
     const mode = rawMode();
     if (mode === "escape") return new MarkdownRenderer().render(current);
     if (mode === "trust") return new MarkdownRenderer().withRawHtmlTrusted().render(current);
-    return withSide(show) && side ? side.kelpto.renderSafe(current).html : null;
+    return withSide(show) ? judge()?.safe.html ?? null : null;
   };
 
   function parseInput() {
@@ -413,7 +437,7 @@ export function initDemo(onProgram = () => {}) {
   function show() {
     parts = partsOf(current);
     const html = rendering() ?? "";
-    $("html-out").textContent = html;
+    showRemovals(html);
     showTree();
     preview.srcdoc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${previewCss()}</style></head><body>${html}</body></html>`;
     const diff = diffView(input.value, current.asWritten);
@@ -652,13 +676,53 @@ export function initDemo(onProgram = () => {}) {
       $("tree-out").textContent = "Loading the HTML parser…";
       return;
     }
+    const mode = rawMode();
+    const empty = "Nothing to build: the document is empty.";
+    if (mode !== "escape") {
+      const { built, removed } = /** @type {NonNullable<typeof judged>} */ (judge());
+      tree.show(treeHtml(built.children, side, true, mode === "sanitize" ? removed : null), empty);
+      return;
+    }
     const { html, kelpto } = side;
-    // Parsed again with raw HTML parsed too, so its elements point at their
-    // start tags, not just at the raw HTML around them.
     const doc = parser().withRawHtmlHandler(new kelpto.ParsedRawHtml()).parse(current.asWritten);
-    const renderer = rawMode() === "escape" ? new MarkdownRenderer() : new MarkdownRenderer().withRawHtmlTrusted();
-    const built = kelpto.buildHtml(doc, new html.FragmentContext("body"), renderer);
-    tree.show(treeHtml(built.children, side, true), "Nothing to build: the document is empty.");
+    const built = kelpto.buildHtml(doc, new html.FragmentContext("body"), new MarkdownRenderer());
+    tree.show(treeHtml(built.children, side, true), empty);
+  }
+
+  /**
+   * The HTML view, and in Sanitize mode, what sanitizing removed: struck
+   * through in the tree as built, serialized, when what's left is exactly
+   * the output, and counted in a line under the views.
+   *
+   * @param {string} html the rendering
+   */
+  function showRemovals(html) {
+    const out = $("html-out");
+    const summary = $("removed-summary");
+    const sanitized = rawMode() === "sanitize" ? judge() : null;
+    const pre = /** @type {HTMLElement} */ (out.parentElement);
+    pre.classList.remove("wraps");
+    if (!sanitized || !side) {
+      out.textContent = html;
+      summary.hidden = true;
+      return;
+    }
+    const removals = sanitized.safe.removals;
+    const marked = markedHtml(sanitized.built.children, side, sanitized.removed);
+    // Shown marked only when striking out what's marked leaves exactly the
+    // output; otherwise (a URL check that rewrites, or the output parsed
+    // again differently), as it is.
+    const exact = marked.kept === html;
+    if (exact) out.innerHTML = marked.html;
+    else out.textContent = html;
+    // Wrapped, so what's struck through isn't off to the right.
+    if (exact && removals.length) pre.classList.add("wraps");
+    summary.hidden = false;
+    summary.innerHTML = removals.length
+      ? `<span class="removed-count">${removalSummary(removals)} removed</span>` +
+        (exact ? ", struck through in the HTML and Tree views" : ", struck through in the Tree view") +
+        "; hover over or tap one to see why."
+      : `<span class="ok" aria-hidden="true">✓</span> Nothing removed: the policy allows all of it.`;
   }
 
   const note = () => {

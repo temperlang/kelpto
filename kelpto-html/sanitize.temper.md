@@ -5,7 +5,8 @@ browser builds (an `HtmlFragment`'s, an `HtmlDocument`'s body, or a
 `FragmentStream`'s), never the text as written, so nothing written to
 confuse a parser gets past it: what's kept is what a browser would
 see. It keeps only what a `SanitizerPolicy` allows, checks every URL
-it keeps, and gives `SafeHtml`, serialized from what it kept.
+it keeps, and gives `SafeHtml`, serialized from what it kept, with
+a list of what it removed.
 
 ```temper inert
 let safe = sanitizeHtml("<a href='java&#x09;script:alert(1)' onclick=x>Hi</a><script>alert(2)</script>");
@@ -13,6 +14,8 @@ safe.html;                                  // "<a>Hi</a>"
 let strict = SanitizerPolicy.standard.withoutElements(["img"]).withSchemes(["https"]);
 parseHtmlFragment("<img src=x.png><a href=http://a.example>a</a>", new FragmentContext("div"))
   .sanitize(strict).html;                   // "<a>a</a>"
+let removed = parseHtmlFragment("<b style=x onclick=y>b</b>", new FragmentContext("div")).sanitize().removals;
+removed[0].name;                            // "style", its origin the <b> start tag
 ```
 
 ## What it guarantees
@@ -84,12 +87,53 @@ list of image candidates, and `ping` and `archive` space-separated URLs.
 
 HTML this library sanitized: a type of its own, so code can ask for it
 by type rather than trusting any string. Only the sanitizer makes one.
+`removals` lists what it removed, in document order (see `Removal`).
 
     export class SafeHtml {
       public html: String;
-      private constructor(html: String) { this.html = html; }
+      public removals: List<Removal>;
+      private constructor(html: String, removals: List<Removal>) {
+        this.html = html;
+        this.removals = removals;
+      }
       public toString(): String { html }
     }
+
+## What was removed
+
+One thing the sanitizer removed, for showing people what happened to
+their HTML. Cheap: made only when something is removed, so a document
+with nothing to remove costs nothing more. `kind` is one of:
+
+- `"element"`: an element dropped with everything in it (nothing in it
+  is listed apart).
+- `"tag"`: an element replaced by its children, which are judged in
+  turn.
+- `"attribute"`: an attribute the policy doesn't allow.
+- `"url"`: a URL attribute the policy's `UrlCheck` refused, so dropped.
+- `"comment"`, `"doctype"`, or `"processing instruction"`: a node of
+  that kind, dropped.
+
+`name` is the element's name as policies name it (`img`, `svg:circle`)
+or the attribute's (`onclick`, `xlink:href`), or `""`; `element` is
+the element's name (the same as `name` for an element or tag), or `""`
+for other nodes; and `value` is the attribute's value, or `""`.
+`origin` is the element's or node's, as `BuiltNode.origin` gives it
+(the start tag, or in kelpto the Markdown node, that made it). It's
+null for an element the standard implies, for `sanitizeHtml`, which
+keeps no tokens (parse with `parseHtmlFragment` and `sanitize` to
+have them), and for anything removed only when the output was parsed
+again (see "What it guarantees"; in that rare case, the last such
+parse may remove every tag, and each is listed). A context that isn't
+allowed gives nothing, with nothing listed.
+
+    export class Removal(
+      public kind: String,
+      public name: String,
+      public element: String,
+      public value: String,
+      public origin: RedNode?,
+    ) {}
 
 ## Checking URLs
 
@@ -337,17 +381,36 @@ One pass over the built tree in document order, writing what's kept as
 the standard's serialization writes it, with a stack rather than
 recursion, so deep nesting can't overflow the call stack. `changes`
 counts what it dropped or changed, so the reparse check can tell an
-output that's already settled.
+output that's already settled; each removal goes in `removals`, with
+its origin from `tokens` (null for a tree without them).
 
     class Sanitizer {
       private tree: BuiltTree;
+      private tokens: HtmlTokens?;
       private policy: SanitizerPolicy;
+      private removals: ListBuilder<Removal>;
       public out: StringBuilder = new StringBuilder();
       public var changes: Int = 0;
 
-      public constructor(tree: BuiltTree, policy: SanitizerPolicy) {
+      public constructor(tree: BuiltTree, tokens: HtmlTokens?, policy: SanitizerPolicy, removals: ListBuilder<Removal>) {
         this.tree = tree;
+        this.tokens = tokens;
         this.policy = policy;
+        this.removals = removals;
+      }
+
+      private removed(kind: String, name: String, element: String, value: String, id: Int): Void {
+        changes += 1;
+        removals.add(new Removal(kind, name, element, value, originAt(id)));
+      }
+
+      private originAt(id: Int): RedNode? {
+        let index = tree.tokenIndexes[id];
+        if (index < 0) { return null; }
+        if (tree.joined) { return tree.origins[index]; }
+        let known = tokens;
+        if (known != null) { return originOf(tree, known, id); }
+        null
       }
 
 The children of `root`, in a context whose text is raw (not escaped)
@@ -383,7 +446,8 @@ if `rawContext`.
               }
               raw = tree.spaces[node] == htmlNs && rawTextParents.has(name);
             } else {
-              changes += 1;
+              let key = elementKeyOf(node);
+              removed(if (decision == dropIt) { "element" } else { "tag" }, key, key, "", node);
               if (decision == dropIt) {
                 node = tree.nexts[node];
                 continue;
@@ -399,9 +463,21 @@ if `rawContext`.
           if (kind == textNode) {
             out.append(if (raw) { tree.datas[node] } else { escapeText(tree.datas[node], false) });
           } else {
-            changes += 1;
+            let what = if (kind == commentNode) { "comment" } else if (kind == doctypeNode) { "doctype" } else { "processing instruction" };
+            removed(what, "", "", "", node);
           }
           node = tree.nexts[node];
+        }
+      }
+
+      private elementKeyOf(id: Int): String {
+        let space = tree.spaces[id];
+        if (space == svgNs) {
+          "svg:${tree.names[id]}"
+        } else if (space == mathNs) {
+          "math:${tree.names[id]}"
+        } else {
+          tree.names[id]
         }
       }
 
@@ -409,7 +485,7 @@ if `rawContext`.
         let name = tree.names[id];
         let space = tree.spaces[id];
         if (space != htmlNs) {
-          let key = "${if (space == svgNs) { "svg" } else { "math" }}:${name}";
+          let key = elementKeyOf(id);
           return if (policy.allowsElement(key) && !svgNever.has(key)) { keepIt } else { dropIt };
         }
         if (policy.allowsElement(name)) {
@@ -428,14 +504,7 @@ if `rawContext`.
       }
 
       private writeAttributes(id: Int): Void {
-        let space = tree.spaces[id];
-        let element = if (space == svgNs) {
-          "svg:${tree.names[id]}"
-        } else if (space == mathNs) {
-          "math:${tree.names[id]}"
-        } else {
-          tree.names[id]
-        };
+        let element = elementKeyOf(id);
         let triples = tree.attributeLists[id];
         for (var i = 0; i + 2 < triples.length; i += 3) {
           let prefix = triples[i];
@@ -443,12 +512,12 @@ if `rawContext`.
           let value = triples[i + 2];
           let key = if (prefix.isEmpty) { name } else { "${prefix}:${name}" };
           if (attributesNever.has(key) || !policy.allowsAttribute(element, key)) {
-            changes += 1;
+            removed("attribute", key, element, value, id);
             continue;
           }
           let checked = if (urlAttributes.has(key)) { checkUrls(value, element, key) } else { value };
           if (checked == null) {
-            changes += 1;
+            removed("url", key, element, value, id);
           } else {
             if (checked != value) { changes += 1; }
             let qualified = if (prefix == "xmlns" && name == "xmlns") { "xmlns" } else { key };
@@ -478,9 +547,10 @@ if `rawContext`.
 ## Sanitizing a tree
 
 The children of `root` in `tree`, sanitized for `context`, checked by
-parsing the output again (see "What it guarantees", above).
+parsing the output again (see "What it guarantees", above), with
+origins from `tokens` (null if the tree has none, or is joined).
 
-    let sanitizeTree(tree: BuiltTree, root: Int, context: FragmentContext, policy: SanitizerPolicy): SafeHtml {
+    let sanitizeTree(tree: BuiltTree, tokens: HtmlTokens?, root: Int, context: FragmentContext, policy: SanitizerPolicy): SafeHtml {
       let space = context.namespace;
       let name = if (space == "html") { asciiLowercase(context.name) } else { "${space}:${context.name}" };
       let allowed = if (space == "html") {
@@ -488,23 +558,24 @@ parsing the output again (see "What it guarantees", above).
       } else {
         policy.allowsElement(name) && !svgNever.has(name)
       };
-      if (root < 0 || !allowed) { return new SafeHtml(""); }
+      if (root < 0 || !allowed) { return new SafeHtml("", []); }
       let raw = space == "html" && rawTextParents.has(name);
-      let first = new Sanitizer(tree, policy);
+      let removals = new ListBuilder<Removal>();
+      let first = new Sanitizer(tree, tokens, policy, removals);
       first.run(root, raw);
       var html = first.out.toString();
       for (var round = 0; round < 4; round += 1) {
         let reparsed = fragmentTree(html, context);
-        let again = new Sanitizer(reparsed, policy);
+        let again = new Sanitizer(reparsed, null, policy, removals);
         again.run(reparsed.fragmentRoot, raw);
         let next = again.out.toString();
-        if (again.changes == 0 && next == html) { return new SafeHtml(html); }
+        if (again.changes == 0 && next == html) { return new SafeHtml(html, removals.toList()); }
         html = next;
       }
       let last = fragmentTree(html, context);
-      let text = new Sanitizer(last, SanitizerPolicy.textOnly);
+      let text = new Sanitizer(last, null, SanitizerPolicy.textOnly, removals);
       text.run(last.fragmentRoot, raw);
-      new SafeHtml(text.out.toString())
+      new SafeHtml(text.out.toString(), removals.toList())
     }
 
 The built tree of `text` parsed as a fragment in `context`, with
@@ -527,7 +598,7 @@ Parses `text` as a fragment in `context` (`body` by default), as
       context: FragmentContext = new FragmentContext("body"),
     ): SafeHtml {
       let tree = fragmentTree(text, context);
-      sanitizeTree(tree, tree.fragmentRoot, context, policy)
+      sanitizeTree(tree, null, tree.fragmentRoot, context, policy)
     }
 
 ## Tests
@@ -591,6 +662,37 @@ output checked to parse back to itself.
       assert(https == "<a>a</a><a href=\"https://b.example\">b</a><a href=\"/c\">c</a>") { https };
       let strictRelative = sanitizeHtml("<a href=/c>c</a>", SanitizerPolicy.standard.withUrlCheck(new SchemeUrlCheck(["https"], false))).html;
       assert(strictRelative == "<a>c</a>") { strictRelative };
+    }
+
+What was removed, each as kind, element, name, value, and origin,
+with the output unchanged.
+
+    let removalsOf(safe: SafeHtml): String {
+      safe.removals.join(" | ") { (r: Removal): String =>
+        "${r.kind} ${r.element} ${r.name}=${r.value} @${r.origin?.span?.toString() ?? "-"}"
+      }
+    }
+
+    test("what sanitizing removed") {
+      let body = new FragmentContext("body");
+      let text = "<p onclick=x>Hi <span style=\"color: red\">there</span><script>a()</script><!--c--> <a href=javascript:x title=t>a</a><u-x>u</u-x><svg><circle/></svg>";
+      let safe = parseHtmlFragment(text, body).sanitize();
+      assert(safe.html == sanitizeHtml(text).html) { safe.html };
+      assert(safe.html == "<p>Hi <span>there</span> <a title=\"t\">a</a>u</p>") { safe.html };
+      let removed = removalsOf(safe);
+      assert(removed == "attribute p onclick=x @0+13 | attribute span style=color: red @16+25 | element script script= @53+8 | comment  = @73+8 | url a href=javascript:x @82+29 | tag u-x u-x= @116+5 | element svg:svg svg:svg= @128+5") { removed };
+      let plain = removalsOf(sanitizeHtml(text));
+      assert(plain.split(" @-").length == 8) { "no origins from text: ${plain}" };
+      assert(sanitizeHtml("<p title=t>ok</p>").removals.isEmpty) { "nothing removed" };
+      let doc = parseHtml("<!DOCTYPE html><p><button><div>x</div></button></p><?pi?>");
+      let page = removalsOf(doc.sanitize());
+      assert(page == "tag button button= @18+8 | processing instruction  = @51+6") { page };
+      let stream = new FragmentStream(body);
+      stream.write("<b title=\"", parseHtmlFragment("a", body).tokens.node);
+      stream.write("\"onclick=x>b</b>", parseHtmlFragment("bc", body).tokens.node);
+      stream.end();
+      let joined = removalsOf(stream.sanitize());
+      assert(joined == "attribute b onclick=x @0+1") { joined };
     }
 
 Deep nesting doesn't overflow the stack, since the walk doesn't

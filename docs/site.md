@@ -15,7 +15,18 @@ on: kelpto-md first, then kelpto-html and kelpto once the page is up
   frame. Clicking a heading, table cell, task box, or link edits it
   through the API, and the output shows as a diff against the input:
   the lossless point. Raw HTML is escaped, trusted, or sanitized
-  (`renderSafe`). A Tree view shows the tree a browser builds from it
+  (`renderSafe`); the sample has a `<span>` with a `style` and an
+  `onmouseover`, and a `javascript:` link, so Sanitize visibly differs
+  from Trust (the preview frame is sandboxed without scripts, so
+  neither runs in Trust). Sanitized, the HTML and Tree views strike
+  through what `SafeHtml.removals` lists, matched to built nodes by
+  origin, with a count under the views ("1 attribute, 1 style, and 1
+  link removed"). Each mark's tooltip, and the Tree view's note, says
+  why in a line: a handler or `javascript:` link would run on a real
+  page though not in the preview, and `style` goes since CSS isn't
+  checked yet. The HTML view falls back to the plain output if
+  striking out what's marked wouldn't leave exactly it. A Tree view
+  shows the tree a browser builds from it
   all (`buildHtml`), each element badged by where it came from
   (Markdown, raw HTML, implied, or reopened by the parser); hovering or
   focusing a node highlights its source in the input.

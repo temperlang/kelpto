@@ -674,6 +674,50 @@ pre.html-out {
   border-style: dashed;
 }
 
+/* What sanitizing removed, struck through (tree.js). */
+
+pre.html-out.wraps {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+del.removed {
+  text-decoration: line-through;
+  text-decoration-color: var(--del);
+  text-decoration-thickness: 2px;
+  background: color-mix(in srgb, var(--del-bg) 70%, transparent);
+  border-radius: 0.2rem;
+}
+
+del.removed,
+del.removed * {
+  color: var(--del);
+}
+
+.tree li.gone .row {
+  text-decoration: line-through;
+  text-decoration-color: var(--del);
+  color: var(--del);
+}
+
+.tree li.gone .row * {
+  color: inherit;
+}
+
+.badge.removed {
+  color: var(--del);
+  background: var(--del-bg);
+}
+
+.removed-count,
+.removed-note {
+  color: var(--del);
+}
+
+.removed-count {
+  font-weight: 600;
+}
+
 .tree-note {
   min-height: 2.6em;
   margin: 0.4rem 0 0;
