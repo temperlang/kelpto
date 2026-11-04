@@ -50,6 +50,10 @@ parseHtmlFragment("<td>1<td>2", new FragmentContext("div")).html; // "12"
   `Element.fragmentContext` for an element already parsed), giving an
   `HtmlFragment` with the same tokens, nodes, and `html` as a
   document.
+- **In pieces:** `FragmentStream` parses a fragment fed a piece at a
+  time, synthetic tokens and HTML text, carrying the tokenizer's state
+  across pieces, with each node's `origin` the red node it came from;
+  the `kelpto` library builds Markdown's tree with it.
 - **Parse errors** by the standard's codes, with offsets, from
   `HtmlTokenizer.tokenize`.
 

@@ -101,6 +101,35 @@ then whitespace, `>`, or `/>`.
       false
     }
 
+## Rendering to something else
+
+What the renderer writes, as parts, for building something other than
+a string from it, such as the `kelpto` library's tree of the HTML a
+browser builds: each start tag, end tag, run of text, and piece of raw
+HTML, in order, each with the node it renders. Rendering to a string
+writes the same parts, joined.
+
+    export interface RenderSink {
+
+A start tag: its name, and the whole tag as the renderer writes it,
+attributes and all, such as `<a href="/x">` or `<br />`.
+
+      public startTag(name: String, written: String, node: MarkdownNode): Void;
+      public endTag(name: String, node: MarkdownNode): Void;
+
+Text, not escaped: written escaped as HTML (`&lt;` for `<`), it's the
+text in the HTML. Line breaks between blocks are text too.
+
+      // Not `text`: a method of that name makes Temper's C++ backend
+      // treat views' `text` getters as non-const (notes/temper-fixes.md).
+      public characters(text: String, node: MarkdownNode): Void;
+
+Raw HTML, inline or a block, and what the `RawHtmlRenderer` gave for
+it, which goes into the HTML as is.
+
+      public rawHtml(content: RawHtmlContent, rendered: String, node: MarkdownNode): Void;
+    }
+
 ## The renderer
 
 CommonMark's HTML, as its reference implementation lays it out: each
@@ -148,12 +177,19 @@ tag, so trust the Markdown as for `withRawHtmlTrusted()`, or use the
         new MarkdownRenderer(new FilteredRawHtml(rawHtmlRenderer))
       }
 
-      public render(doc: MarkdownDocument): String {
+      public render(doc: MarkdownDocument): String { renderWith(doc, null).toString() }
+
+Renders `doc` as `render` does, handing `sink` each part instead of
+writing a string.
+
+      public renderTo(doc: MarkdownDocument, sink: RenderSink): Void { renderWith(doc, sink); }
+
+      private renderWith(doc: MarkdownDocument, sink: RenderSink?): HtmlOut {
         let footnotes = if (hasFootnotes(doc.node)) { new FootnoteIndex(doc.node) } else { null };
-        let out = new HtmlOut(definitionsOf(doc), isGfmDocument(doc.node), footnotes);
+        let out = new HtmlOut(definitionsOf(doc), isGfmDocument(doc.node), footnotes, sink);
         renderBlocks(doc.children, false, out);
-        if (footnotes != null) { renderFootnotes(footnotes, out); }
-        out.toString()
+        if (footnotes != null) { renderFootnotes(doc, footnotes, out); }
+        out
       }
 
 GFM's footnotes, as cmark-gfm writes them: after the document, a
@@ -162,15 +198,18 @@ wherever it was written. Its backlinks, one for each reference, go at
 the end of its last paragraph, after a space, or else on a line of
 their own. Nested definitions aren't in their parents.
 
-      private renderFootnotes(footnotes: FootnoteIndex, out: HtmlOut): Void {
+      private renderFootnotes(doc: MarkdownDocument, footnotes: FootnoteIndex, out: HtmlOut): Void {
         let used = footnotes.used;
         if (used.isEmpty) { return; }
-        out.append("<section class=\"footnotes\" data-footnotes>\n<ol>\n");
+        out.startTag("section", "<section class=\"footnotes\" data-footnotes>", doc);
+        out.newline(doc);
+        out.startTag("ol", "<ol>", doc);
+        out.newline(doc);
         for (var n = 0; n < used.length; n += 1) {
           let definition = new FootnoteDefinition(used[n]);
           let id = escapeHref(definition.label);
-          let backlinks = footnoteBacklinks(id, n + 1, footnotes.counts[n]);
-          out.append("<li id=\"fn-${id}\">\n");
+          out.startTag("li", "<li id=\"fn-${id}\">", definition);
+          out.newline(definition);
           let kids = definition.children;
           var last = -1;
           for (var i = 0; i < kids.length; i += 1) {
@@ -181,19 +220,29 @@ their own. Nested definitions aren't in their parents.
           for (var i = 0; i < kids.length; i += 1) {
             let kid = kids[i];
             if (i == last && kid is Paragraph) {
-              out.line();
-              out.append("<p>");
+              out.line(kid);
+              out.startTag("p", "<p>", kid);
               renderInlines((kid as Paragraph orelse panic()).children, out);
-              out.append(" ${backlinks}</p>\n");
+              out.characters(" ", kid);
+              footnoteBacklinks(id, n + 1, footnotes.counts[n], definition, out);
+              out.endTag("p", kid);
+              out.newline(kid);
               written = true;
             } else {
               renderBlock(kid, false, out);
             }
           }
-          if (!written) { out.append("${backlinks}\n"); }
-          out.append("</li>\n");
+          if (!written) {
+            footnoteBacklinks(id, n + 1, footnotes.counts[n], definition, out);
+            out.newline(definition);
+          }
+          out.endTag("li", definition);
+          out.newline(definition);
         }
-        out.append("</ol>\n</section>\n");
+        out.endTag("ol", doc);
+        out.newline(doc);
+        out.endTag("section", doc);
+        out.newline(doc);
       }
 
 A reference: its definition's number, linking there, with an `id`
@@ -209,13 +258,15 @@ text as written.
             let place = footnotes.placeAt(at);
             let id = escapeHref(new FootnoteDefinition(footnotes.used[number - 1]).label);
             let suffix = if (place > 1) { "-${place.toString()}" } else { "" };
-            out.append(
-              "<sup class=\"footnote-ref\"><a href=\"#fn-${id}\" id=\"fnref-${id}${suffix}\" data-footnote-ref>${number.toString()}</a></sup>",
-            );
+            out.startTag("sup", "<sup class=\"footnote-ref\">", reference);
+            out.startTag("a", "<a href=\"#fn-${id}\" id=\"fnref-${id}${suffix}\" data-footnote-ref>", reference);
+            out.characters(number.toString(), reference);
+            out.endTag("a", reference);
+            out.endTag("sup", reference);
             return;
           }
         }
-        out.append(escapeHtml("[^${reference.label}]"));
+        out.characters("[^${reference.label}]", reference);
       }
 
       private renderBlocks(blocks: List<BlockChild>, tight: Boolean, out: HtmlOut): Void {
@@ -230,79 +281,97 @@ text as written.
         when (block) {
           is Heading -> do {
             let tag = "h${block.level.toString()}";
-            out.line();
-            out.append("<${tag}>");
+            out.line(block);
+            out.startTag(tag, "<${tag}>", block);
             renderInlines(block.children, out);
-            out.append("</${tag}>\n");
+            out.endTag(tag, block);
+            out.newline(block);
           };
           is Paragraph -> do {
             if (tight) {
               renderInlines(block.children, out);
             } else {
-              out.line();
-              out.append("<p>");
+              out.line(block);
+              out.startTag("p", "<p>", block);
               renderInlines(block.children, out);
-              out.append("</p>\n");
+              out.endTag("p", block);
+              out.newline(block);
             }
           };
           is CodeBlock -> do {
             let language = block.language;
-            out.line();
+            out.line(block);
+            out.startTag("pre", "<pre>", block);
             if (language.isEmpty) {
-              out.append("<pre><code>");
+              out.startTag("code", "<code>", block);
             } else {
-              out.append("<pre><code class=\"language-${escapeHtml(language)}\">");
+              out.startTag("code", "<code class=\"language-${escapeHtml(language)}\">", block);
             }
-            out.append(escapeHtml(block.code));
-            out.append("</code></pre>\n");
+            out.characters(block.code, block);
+            out.endTag("code", block);
+            out.endTag("pre", block);
+            out.newline(block);
           };
           is IndentedCode -> do {
-            out.line();
-            out.append("<pre><code>");
-            out.append(escapeHtml(block.code));
-            out.append("</code></pre>\n");
+            out.line(block);
+            out.startTag("pre", "<pre>", block);
+            out.startTag("code", "<code>", block);
+            out.characters(block.code, block);
+            out.endTag("code", block);
+            out.endTag("pre", block);
+            out.newline(block);
           };
           is ThematicBreak -> do {
-            out.line();
-            out.append("<hr />\n");
+            out.line(block);
+            out.startTag("hr", "<hr />", block);
+            out.newline(block);
           };
           is HtmlBlock -> do {
-            out.line();
-            out.append(rawHtmlRenderer.renderRawHtml(block));
-            out.line();
+            out.line(block);
+            out.rawHtml(block, rawHtmlRenderer.renderRawHtml(block), block);
+            out.line(block);
           };
           is BlockQuote -> do {
-            out.line();
-            out.append("<blockquote>\n");
+            out.line(block);
+            out.startTag("blockquote", "<blockquote>", block);
+            out.newline(block);
             renderBlocks(block.children, false, out);
-            out.line();
-            out.append("</blockquote>\n");
+            out.line(block);
+            out.endTag("blockquote", block);
+            out.newline(block);
           };
           is ListBlock -> do {
             let start = block.start;
             let tag = if (start == null) { "ul" } else { "ol" };
-            out.line();
-            out.append("<${tag}${startAttribute(start)}>\n");
+            out.line(block);
+            out.startTag(tag, "<${tag}${startAttribute(start)}>", block);
+            out.newline(block);
             let itemsTight = block.tight;
             let items = block.items;
             for (var i = 0; i < items.length; i += 1) {
-              out.line();
-              out.append("<li>");
-              let task = items[i].task;
+              let item = items[i];
+              out.line(item);
+              out.startTag("li", "<li>", item);
+              let task = item.task;
               if (task != null) {
-                out.append(
+                out.startTag(
+                  "input",
                   if (task.checked) {
-                    "<input type=\"checkbox\" checked=\"\" disabled=\"\" /> "
+                    "<input type=\"checkbox\" checked=\"\" disabled=\"\" />"
                   } else {
-                    "<input type=\"checkbox\" disabled=\"\" /> "
+                    "<input type=\"checkbox\" disabled=\"\" />"
                   },
+                  item,
                 );
+                out.characters(" ", item);
               }
-              renderBlocks(items[i].children, itemsTight, out);
-              out.append("</li>\n");
+              renderBlocks(item.children, itemsTight, out);
+              out.endTag("li", item);
+              out.newline(item);
             }
-            out.line();
-            out.append("</${tag}>\n");
+            out.line(block);
+            out.endTag(tag, block);
+            out.newline(block);
           };
           is Table -> renderTable(block, out);
           is FootnoteDefinition -> do {};
@@ -317,29 +386,42 @@ the header, filled in empty, and `align` on cells in aligned columns.
 
       private renderTable(table: Table, out: HtmlOut): Void {
         let alignments = table.alignments;
-        out.line();
-        out.append("<table>\n<thead>\n");
+        out.line(table);
+        out.startTag("table", "<table>", table);
+        out.newline(table);
+        out.startTag("thead", "<thead>", table);
+        out.newline(table);
         renderRow(table.header, "th", alignments, out);
-        out.append("</thead>\n");
+        out.endTag("thead", table);
+        out.newline(table);
         let rows = table.rows;
         if (!rows.isEmpty) {
-          out.append("<tbody>\n");
+          out.startTag("tbody", "<tbody>", table);
+          out.newline(table);
           for (var i = 0; i < rows.length; i += 1) { renderRow(rows[i], "td", alignments, out); }
-          out.append("</tbody>\n");
+          out.endTag("tbody", table);
+          out.newline(table);
         }
-        out.append("</table>\n");
+        out.endTag("table", table);
+        out.newline(table);
       }
+
+Cells the row doesn't have are filled in empty, from the row.
 
       private renderRow(row: TableRow, tag: String, alignments: List<String>, out: HtmlOut): Void {
         let cells = row.cells;
-        out.append("<tr>\n");
+        out.startTag("tr", "<tr>", row);
+        out.newline(row);
         for (var i = 0; i < alignments.length; i += 1) {
           let alignment = alignments[i];
-          out.append(if (alignment == "none") { "<${tag}>" } else { "<${tag} align=\"${alignment}\">" });
+          let cell: MarkdownNode = if (i < cells.length) { cells[i] } else { row };
+          out.startTag(tag, if (alignment == "none") { "<${tag}>" } else { "<${tag} align=\"${alignment}\">" }, cell);
           if (i < cells.length) { renderInlines(cells[i].children, out); }
-          out.append("</${tag}>\n");
+          out.endTag(tag, cell);
+          out.newline(cell);
         }
-        out.append("</tr>\n");
+        out.endTag("tr", row);
+        out.newline(row);
       }
 
       private renderInlines(inlines: List<ParagraphChild>, out: HtmlOut): Void {
@@ -350,53 +432,62 @@ the header, filled in empty, and `align` on cells in aligned columns.
 
       private renderInline(inline: MarkdownNode, out: HtmlOut): Void {
         when (inline) {
-          is Text -> out.append(escapeHtml(inline.text));
-          is CodeSpan -> out.append("<code>${escapeHtml(inline.code)}</code>");
-          is RawHtml -> out.append(rawHtmlRenderer.renderRawHtml(inline));
-          is CharacterReference -> out.append(escapeHtml(inline.value));
+          is Text -> out.characters(inline.text, inline);
+          is CodeSpan -> do {
+            out.startTag("code", "<code>", inline);
+            out.characters(inline.code, inline);
+            out.endTag("code", inline);
+          };
+          is RawHtml -> out.rawHtml(inline, rawHtmlRenderer.renderRawHtml(inline), inline);
+          is CharacterReference -> out.characters(inline.value, inline);
           is FootnoteReference -> renderFootnoteReference(inline, out);
-          is HardBreak -> out.append("<br />\n");
+          is HardBreak -> do {
+            out.startTag("br", "<br />", inline);
+            out.newline(inline);
+          };
           is Emphasis -> do {
-            out.append("<em>");
+            out.startTag("em", "<em>", inline);
             renderInlines(inline.children, out);
-            out.append("</em>");
+            out.endTag("em", inline);
           };
           is Strong -> do {
-            out.append("<strong>");
+            out.startTag("strong", "<strong>", inline);
             if (out.gfm) { renderInStrong(inline.children, out); } else { renderInlines(inline.children, out); }
-            out.append("</strong>");
+            out.endTag("strong", inline);
           };
           is Strikethrough -> do {
-            out.append("<del>");
+            out.startTag("del", "<del>", inline);
             renderInlines(inline.children, out);
-            out.append("</del>");
+            out.endTag("del", inline);
           };
-          is Autolink -> out.append(
-            "<a href=\"${escapeHref(inline.destination.url)}\">${escapeHtml(inline.text)}</a>",
-          );
+          is Autolink -> do {
+            out.startTag("a", "<a href=\"${escapeHref(inline.destination.url)}\">", inline);
+            out.characters(inline.text, inline);
+            out.endTag("a", inline);
+          };
           is Link -> do {
             let target = linkDestinationOf(inline.node, out.definitions);
             if (target == null) {
-              unresolved(inline.node, out);
+              unresolved(inline, out);
             } else {
-              out.append("<a href=\"${escapeHref(target.url)}\"");
-              appendTitle(linkTitleOf(inline.node, out.definitions), out);
-              out.append(">");
+              let title = titleAttribute(linkTitleOf(inline.node, out.definitions));
+              out.startTag("a", "<a href=\"${escapeHref(target.url)}\"${title}>", inline);
               let kids = inline.children;
               for (var i = 0; i < kids.length; i += 1) { renderInline(kids[i], out); }
-              out.append("</a>");
+              out.endTag("a", inline);
             }
           };
           is Image -> do {
             let target = linkDestinationOf(inline.node, out.definitions);
             if (target == null) {
-              unresolved(inline.node, out);
+              unresolved(inline, out);
             } else {
               let alt = new StringBuilder();
               addAltText(inline.children, alt, out.footnotes);
-              out.append("<img src=\"${escapeHref(target.url)}\" alt=\"${escapeHtml(alt.toString())}\"");
-              appendTitle(linkTitleOf(inline.node, out.definitions), out);
-              out.append(" />");
+              let title = titleAttribute(linkTitleOf(inline.node, out.definitions));
+              out.startTag(
+                "img", "<img src=\"${escapeHref(target.url)}\" alt=\"${escapeHtml(alt.toString())}\"${title} />", inline,
+              );
             }
           };
           else -> do {};
@@ -419,9 +510,10 @@ HTML differs, and it looks the same.
 A reference whose definition is gone, as after an edit: its brackets
 and label as text, around its text rendered.
 
-      private unresolved(node: RedNode, out: HtmlOut): Void {
+      private unresolved(view: MarkdownNode, out: HtmlOut): Void {
+        let node = view.node;
         let kids = node.green.children;
-        out.append(escapeHtml((kids[0] as GreenToken orelse panic()).text));
+        out.characters((kids[0] as GreenToken orelse panic()).text, view);
         renderInlines(paragraphChildrenOf(node), out);
         var after = false;
         for (var i = 1; i < kids.length; i += 1) {
@@ -429,7 +521,7 @@ and label as text, around its text rendered.
           if (after) {
             let rest = new StringBuilder();
             kids[i].writeTo(rest);
-            out.append(escapeHtml(rest.toString()));
+            out.characters(rest.toString(), view);
           }
         }
       }
@@ -438,19 +530,33 @@ and label as text, around its text rendered.
 The backlinks of footnote `number`, whose `id` is escaped already, to
 each of its `count` references.
 
-    let footnoteBacklinks(id: String, number: Int, count: Int): String {
+    let footnoteBacklinks(id: String, number: Int, count: Int, node: MarkdownNode, out: HtmlOut): Void {
       let n = number.toString();
-      let out = new StringBuilder();
-      out.append("<a href=\"#fnref-${id}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${n}\" aria-label=\"Back to reference ${n}\">↩</a>");
+      out.startTag(
+        "a",
+        "<a href=\"#fnref-${id}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${n}\" aria-label=\"Back to reference ${n}\">",
+        node,
+      );
+      out.characters("↩", node);
+      out.endTag("a", node);
       for (var k = 2; k <= count; k += 1) {
         let m = "${n}-${k.toString()}";
-        out.append(" <a href=\"#fnref-${id}-${k.toString()}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${m}\" aria-label=\"Back to reference ${m}\">↩<sup class=\"footnote-ref\">${k.toString()}</sup></a>");
+        out.characters(" ", node);
+        out.startTag(
+          "a",
+          "<a href=\"#fnref-${id}-${k.toString()}\" class=\"footnote-backref\" data-footnote-backref data-footnote-backref-idx=\"${m}\" aria-label=\"Back to reference ${m}\">",
+          node,
+        );
+        out.characters("↩", node);
+        out.startTag("sup", "<sup class=\"footnote-ref\">", node);
+        out.characters(k.toString(), node);
+        out.endTag("sup", node);
+        out.endTag("a", node);
       }
-      out.toString()
     }
 
-    let appendTitle(title: String?, out: HtmlOut): Void {
-      if (title != null) { out.append(" title=\"${escapeHtml(title)}\""); }
+    let titleAttribute(title: String?): String {
+      if (title != null) { " title=\"${escapeHtml(title)}\"" } else { "" }
     }
 
 An image's description as `alt` text: plain text, with line breaks as
@@ -578,11 +684,13 @@ A list's `start` attribute: for an ordered list not starting at 1.
     }
 
 Output that knows whether it's at the start of a line, for cmark's
-layout: each block starts on a new line.
+layout: each block starts on a new line. It writes a string, or hands
+a `RenderSink` each part.
 
     class HtmlOut {
       private out: StringBuilder = new StringBuilder();
       private var atLineStart: Boolean = true;
+      private sink: RenderSink?;
 
 The document's definitions, for reference links.
 
@@ -598,23 +706,58 @@ How the document's footnotes number, if it was parsed with them.
 
       public constructor(
         definitions: Map<String, LinkReferenceDefinition>, gfm: Boolean, footnotes: FootnoteIndex?,
+        sink: RenderSink?,
       ) {
         this.definitions = definitions;
         this.gfm = gfm;
         this.footnotes = footnotes;
+        this.sink = sink;
       }
 
-      public append(text: String): Void {
-        if (!text.isEmpty) {
-          out.append(text);
-          atLineStart = text[text.prev(text.end)] == char'\n';
+      public startTag(name: String, written: String, node: MarkdownNode): Void {
+        let s = sink;
+        if (s == null) { out.append(written); } else { s.startTag(name, written, node); }
+        atLineStart = false;
+      }
+
+      public endTag(name: String, node: MarkdownNode): Void {
+        let s = sink;
+        if (s == null) {
+          out.append("</");
+          out.append(name);
+          out.append(">");
+        } else {
+          s.endTag(name, node);
         }
+        atLineStart = false;
+      }
+
+Text, escaped as it's written.
+
+      public characters(text: String, node: MarkdownNode): Void {
+        if (text.isEmpty) { return; }
+        let s = sink;
+        if (s == null) { out.append(escapeHtml(text)); } else { s.characters(text, node); }
+        atLineStart = text[text.prev(text.end)] == char'\n';
+      }
+
+      public newline(node: MarkdownNode): Void {
+        let s = sink;
+        if (s == null) { out.append("\n"); } else { s.characters("\n", node); }
+        atLineStart = true;
+      }
+
+      public rawHtml(content: RawHtmlContent, rendered: String, node: MarkdownNode): Void {
+        if (rendered.isEmpty) { return; }
+        let s = sink;
+        if (s == null) { out.append(rendered); } else { s.rawHtml(content, rendered, node); }
+        atLineStart = rendered[rendered.prev(rendered.end)] == char'\n';
       }
 
 A line break, unless at the start of a line.
 
-      public line(): Void {
-        if (!atLineStart) { append("\n"); }
+      public line(node: MarkdownNode): Void {
+        if (!atLineStart) { newline(node); }
       }
 
       public toString(): String { out.toString() }
@@ -677,4 +820,35 @@ and emphasis inside emphasis is unchanged.
       assert(html == expectedGfm) { html };
       let tablesOnly = MarkdownParser.commonMark.withTables(true).parse(text).toHtml();
       assert(tablesOnly == expectedGfm) { tablesOnly };
+    }
+
+What `renderTo` hands a sink: each part, with its node.
+
+    class RecordingSink extends RenderSink {
+      public out: StringBuilder = new StringBuilder();
+      public constructor() {}
+      public startTag(name: String, written: String, node: MarkdownNode): Void {
+        out.append("S:${written}@${node.node.kind.name};");
+      }
+      public endTag(name: String, node: MarkdownNode): Void { out.append("E:${name}@${node.node.kind.name};"); }
+      public characters(text: String, node: MarkdownNode): Void { out.append("T:${text}@${node.node.kind.name};"); }
+      public rawHtml(content: RawHtmlContent, rendered: String, node: MarkdownNode): Void {
+        out.append("R:${rendered}@${node.node.kind.name};");
+      }
+    }
+
+    test("rendering to a sink, part by part") {
+      let doc = parseMarkdown("# A\n\nx <b>y</b> `<z>`\n");
+      let sink = new RecordingSink();
+      new MarkdownRenderer().withRawHtmlTrusted().renderTo(doc, sink);
+      let parts = sink.out.toString();
+      let expected = [
+        "S:<h1>@Heading;T:A@Text;E:h1@Heading;T:\n@Heading;",
+        "S:<p>@Paragraph;T:x @Text;R:<b>@RawHtml;T:y@Text;R:</b>@RawHtml;T: @Text;",
+        "S:<code>@CodeSpan;T:<z>@CodeSpan;E:code@CodeSpan;E:p@Paragraph;T:\n@Paragraph;",
+      ].join("") { (s: String): String => s };
+      assert(parts == expected) { parts };
+      let escaped = new RecordingSink();
+      new MarkdownRenderer().renderTo(doc, escaped);
+      assert(escaped.out.toString().split("R:&lt;b&gt;@RawHtml;").length == 2) { escaped.out.toString() };
     }

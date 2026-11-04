@@ -53,8 +53,10 @@ it in use, and the top README shows them alone and together.
   `parseHtml`, building the tree browsers build beside the tokens,
   with `Element` and the other built nodes pointing back at them (see
   "kelpto-html's tree construction", below).
-- **kelpto:** `ParsedRawHtml`, `parseMarkdownWithHtml`, `htmlOf`, and
-  a `renderSafe` sketch giving `SafeHtml`.
+- **kelpto:** `ParsedRawHtml`, `parseMarkdownWithHtml`, `htmlOf`,
+  `buildHtml` (Markdown and raw HTML as the one tree a browser builds,
+  see "Raw HTML in Markdown, as one tree"), `markdownNodeOf`,
+  `fragmentOf`, and a `renderSafe` sketch giving `SafeHtml`.
 
 **How they coordinate:** kelpto-md defines two interfaces and never
 imports kelpto-html.
@@ -322,48 +324,61 @@ errors. Checked against WPT's tree construction tests (in
 - **Tests:** all 1,761 of WPT's document tests (not scripted_*.dat)
   give the expected tree but those 4, and all 206 fragment tests.
 
-### Raw HTML in Markdown, as one tree (a plan, 2026-11-04)
+### Raw HTML in Markdown, as one tree (built 2026-11-04)
 
-Not built yet. How `kelpto` will parse a Markdown document's HTML
-blocks and inline HTML into the tree a browser builds from its
-rendering, still lossless.
+How `kelpto` parses a Markdown document's HTML blocks and inline HTML
+into the tree a browser builds from its rendering, still lossless:
+`buildHtml(doc, context, renderer)`, giving a `BuiltHtml`.
 
 - **Why one parse, not one per piece:** a browser reads the rendered
   page as one stream, so pieces interact: `<b>` in one paragraph and
   `</b>` in the next, `<div>` in one HTML block closed in another, a
   `<table>` foster parenting the Markdown text after it, or a
   `<script>` or `<textarea>` left open, reading the Markdown after it
-  as raw text. Parsing each piece as its own fragment (the context
-  being its Markdown parent: `p` for inline HTML, `body` for blocks)
-  gets the common case right and is cheap, so it stays as a view for
-  tools looking at one piece; but sanitizing has to judge the tree
-  the browser builds, so `renderSafe` needs the joined one.
-- **One fragment parse over two kinds of token:** the renderer walks
-  the Markdown tree as it renders, and instead of writing text it
-  hands tree construction tokens: synthetic ones for what Markdown
-  renders (`<p>`, `<em>`, text, a code block's `<pre><code>`), each
-  pointing at its Markdown node, and, for each raw HTML piece, its
-  kelpto-html tokens, already in the Markdown green tree (as
-  `tokenizeHtmlGreen` puts them there now). One `TreeBuilder`, started
-  as a fragment in a context the caller picks (`body` by default, or
-  the element the page puts it in), takes them all, so the built tree
-  is exactly what parsing the rendered HTML gives.
-- **The tokenizer's state carries over:** raw pieces are tokenized in
-  order, each starting in the state the last left, with the last start
-  tag, so `<script>` in one block and `</script>` in a later one read
-  as browsers read them. Where a piece leaves the tokenizer in raw
-  text, RCDATA, PLAINTEXT, or an open comment, the Markdown rendered
-  after it is read as that text would be, not as tokens: the joined
-  parse tokenizes that rendered HTML as text, pointing back at its
-  Markdown nodes. Rare in real documents, but exactly the case a
-  sanitizer must not miss.
-- **Pointing back:** the arena's token index becomes an index into a
-  table of origins the parse gathers, each a red node (a kelpto-html
-  token inside the Markdown tree, or a Markdown node for synthetic
-  tokens), so `Element.startTag` still finds a raw start tag and a new
-  `Element.markdownNode`-like view finds where Markdown made it.
-  The lossless tree stays the Markdown tree, with the HTML tokens
-  inside it; the built tree is beside it, as for HTML alone.
+  as raw text. Parsing each piece as its own fragment (`fragmentOf`:
+  context `p` for inline HTML, `body` for blocks) gets the common case
+  right and is cheap, so it stays as a view for tools looking at one
+  piece; but sanitizing has to judge the tree the browser builds, so
+  `renderSafe` needs the joined one.
+- **The renderer hands over parts:** `MarkdownRenderer.renderTo(doc,
+  sink)` gives a kelpto-md `RenderSink` each start tag (its name and
+  the whole tag as written), end tag, run of text (unescaped), and
+  raw HTML piece (with what the `RawHtmlRenderer` gave), each with its
+  Markdown view; `render` writes the same parts into a string, so the
+  two can't drift apart, and plain rendering costs one null check per
+  part more.
+- **One fragment parse over two kinds of token:** kelpto-html's
+  `FragmentStream` (one `TreeBuilder`, started as a fragment in the
+  caller's context, `body` by default) takes synthetic tokens for
+  what Markdown renders (`<p>`, `<em>`, text, a code block's
+  `<pre><code>`), each pointing at its Markdown node, and, for each
+  raw HTML piece and each tag with attributes, its text, tokenized
+  where the last piece left off. So the built tree is exactly what
+  parsing the rendered HTML gives: the spec tests check every
+  CommonMark and GFM example that way.
+- **The tokenizer's state carries over:** each piece starts in the
+  data state with the last start tag; a piece's last token waits
+  until the piece ends. Where a piece leaves the tokenizer in raw
+  text, RCDATA, script data, PLAINTEXT, a comment, a CDATA section, or
+  a tag cut off (or ends in `<` or `</`), that token isn't taken, and
+  from its start on the stream keeps the HTML text of everything it's
+  given, synthetic tokens written as the renderer writes them, and
+  tokenizes it all at the end, each token pointing at the origin of
+  the part it starts in. Rare in real documents, but exactly the case
+  a sanitizer must not miss.
+- **Pointing back:** in a joined parse the arena's token index is into
+  a table of origins (`BuiltTree.origins`), each a red node: a
+  kelpto-html token inside the Markdown tree (the raw piece's tokens
+  as `ParsedRawHtml` put them there, while the joined parse reads them
+  the same, as it does unless foreign content or carried state reads
+  them otherwise), or a Markdown node. `BuiltNode.origin` gives it for
+  any built node, `Element.startTag` still finds a raw start tag, and
+  kelpto's `markdownNodeOf` gives the Markdown view (the `RawHtml` or
+  `HtmlBlock` around a raw token). The lossless tree stays the
+  Markdown tree, with the HTML tokens inside it; the built tree is
+  beside it, built only when asked.
+- **Not kept:** parse errors of a joined parse; and a raw token in
+  carried text points at its piece, not a token.
 - **Edits:** changing a raw piece's tokens or a Markdown node rewrites
   only that text, as now; the built tree is reparsed, not patched.
 
@@ -524,10 +539,10 @@ it. An emit-only builder for these users is an open question in
    for headings, paragraphs, and cells (2026-11-03).
 2. The WHATWG tree construction, against WPT's `.dat` files, driving
    the tokenizer's state. Done for documents (2026-11-03) and
-   fragments (2026-11-04); next, Markdown's raw HTML as one tree (see
-   "Raw HTML in Markdown, as one tree").
-3. A real sanitizer on the built tree, with links checked, replacing
-   the `renderSafe` sketch.
+   fragments (2026-11-04), and Markdown's raw HTML as one tree (see
+   "Raw HTML in Markdown, as one tree", 2026-11-04).
+3. A real sanitizer on the built tree (`buildHtml`'s), with links
+   checked, replacing the `renderSafe` sketch.
 4. Chunked children, once documents are big enough to measure;
    interning is done (see "Less memory", below); deep nesting (thousands of emphasis levels, and views and
    rendering of deep blocks) without deep recursion. Parsing and

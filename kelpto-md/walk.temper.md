@@ -161,6 +161,51 @@ The view of a node that holds views, below the root.
       blockChildOf(node)
     }
 
+The view of `node`, any red node in a Markdown tree: the view it is,
+or else the nearest view holding it, such as the `RawHtml` around an
+HTML token, or the paragraph around its inline content; a document at
+the root.
+
+    export let viewOf(node: RedNode): MarkdownNode {
+      var red = node;
+      var view: MarkdownNode? = null;
+      while (view == null) {
+        let up = red.parent;
+        let id = red.green.kind.id;
+        if (up == null) {
+          view = new MarkdownDocument(red);
+        } else if (isBlockKind(id)) {
+          view = blockChildOf(red);
+        } else if (isInlineKind(id)) {
+          view = inlineOf(red);
+        } else if (
+          id == listItemKind.id || id == tableHeaderRowKind.id || id == tableRowKind.id ||
+          id == tableCellKind.id
+        ) {
+          view = holderViewOf(red);
+        } else {
+          red = up;
+        }
+      }
+      view as MarkdownNode orelse panic()
+    }
+
+    let isBlockKind(id: Int): Boolean {
+      id == headingKind.id || id == setextHeadingKind.id || id == paragraphKind.id ||
+        id == codeBlockKind.id || id == indentedCodeKind.id || id == thematicBreakKind.id ||
+        id == htmlBlockKind.id || id == linkReferenceDefinitionKind.id ||
+        id == blockQuoteKind.id || id == listKind.id || id == tableKind.id ||
+        id == footnoteDefinitionKind.id || id == blankLineKind.id
+    }
+
+    let isInlineKind(id: Int): Boolean {
+      id == textKind.id || id == codeSpanKind.id || id == rawHtmlKind.id || id == emphasisKind.id ||
+        id == strongKind.id || id == linkKind.id || id == imageKind.id ||
+        id == strikethroughKind.id || id == autolinkKind.id || id == urlAutolinkKind.id ||
+        id == wwwAutolinkKind.id || id == emailAutolinkKind.id || id == hardBreakKind.id ||
+        id == characterReferenceKind.id || id == footnoteReferenceKind.id
+    }
+
 ## Editing many nodes at once
 
 Each `with…` edit on a view gives a new document at once, so a second

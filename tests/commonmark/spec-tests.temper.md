@@ -3,7 +3,11 @@
 Each example renders with raw HTML trusted, since the spec expects raw
 HTML passed through as written; kelpto-md's default escapes it.
 
-    let { MarkdownRenderer, parseMarkdown } = import("../../kelpto-md");
+    let { MarkdownDocument, MarkdownRenderer, parseMarkdown } = import("../../kelpto-md");
+    let { buildHtml, parseMarkdownWithHtml } = import("../../kelpto");
+    let {
+      BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, parseHtmlFragment,
+    } = import("../../kelpto-html");
 
 An example passes when its HTML is exactly the spec's.
 
@@ -139,5 +143,85 @@ or list item, or tabs for leading spaces.
       }
       assert(failures.isEmpty && rendered > 0) {
         "changed examples not roundtripping: ${failures.toList().join(", ") { (s: String): String => s }}"
+      };
+    }
+
+## One tree, Markdown and raw HTML together
+
+A dump of built nodes, with namespaces and attributes, for comparing
+trees.
+
+    let treeOf(nodes: List<BuiltNode>): String {
+      let out = new StringBuilder();
+      addTree(nodes, out);
+      out.toString()
+    }
+
+    let addTree(nodes: List<BuiltNode>, out: StringBuilder): Void {
+      for (var i = 0; i < nodes.length; i += 1) {
+        let node = nodes[i];
+        when (node) {
+          is Element -> do {
+            out.append("<${node.namespace}:${node.name}");
+            let attributes = node.attributes;
+            for (var j = 0; j < attributes.length; j += 1) {
+              let a = attributes[j];
+              out.append(" ${a.prefix}:${a.name}=\"${a.value}\"");
+            }
+            out.append(">");
+            addTree(node.templateContents, out);
+            out.append("|");
+            addTree(node.children, out);
+            out.append("</>");
+          }
+          is BuiltText -> out.append("\"${node.text}\"");
+          is BuiltComment -> out.append("<!--${node.text}-->");
+          else -> out.append(node.html);
+        }
+      }
+    }
+
+Whether kelpto's `buildHtml` gives the tree kelpto-html gives parsing
+the rendered HTML, as a fragment in `body`, as one string.
+
+    let sameTree(doc: MarkdownDocument, renderer: MarkdownRenderer): Boolean {
+      let body = new FragmentContext("body");
+      let built = treeOf(buildHtml(doc, body, renderer).children);
+      built == treeOf(parseHtmlFragment(renderer.render(doc), body).children)
+    }
+
+Every example, with raw HTML parsed by kelpto, builds the tree its
+HTML parses to, and so does each changed example (as above). Logs the
+counts.
+
+    test("CommonMark spec: every example builds the tree its HTML parses to") {
+      let examples = specExamples();
+      let trusted = new MarkdownRenderer().withRawHtmlTrusted();
+      let failures = new ListBuilder<String>();
+      var same = 0;
+      var changedSame = 0;
+      var changedTotal = 0;
+      for (var i = 0; i < examples.length; i += 1) {
+        let example = examples[i];
+        if (sameTree(parseMarkdownWithHtml(example.markdown), trusted)) {
+          same += 1;
+        } else {
+          failures.add(example.number.toString());
+        }
+        let changed = variants(example.markdown);
+        for (var j = 0; j < changed.length; j += 1) {
+          changedTotal += 1;
+          if (sameTree(parseMarkdownWithHtml(changed[j]), trusted)) {
+            changedSame += 1;
+          } else {
+            failures.add("${example.number.toString()}/${j.toString()}");
+          }
+        }
+      }
+      console.log(
+        "Same tree: ${same.toString()}/${examples.length.toString()} examples, ${changedSame.toString()}/${changedTotal.toString()} changed",
+      );
+      assert(failures.isEmpty) {
+        "examples building another tree: ${failures.toList().join(", ") { (s: String): String => s }}"
       };
     }

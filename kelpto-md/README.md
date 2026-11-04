@@ -98,6 +98,10 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   rules and handed to a `RawHtmlHandler` (opaque text by default), and
   rendered by a `RawHtmlRenderer` (escaped by default). The `kelpto`
   library fills both in with kelpto-html; kelpto-md never imports it.
+- **Rendering in parts:** `renderTo(doc, sink)` hands a `RenderSink`
+  each tag, run of text, and raw HTML piece `render` writes, with the
+  view it renders, for building something other than a string, as
+  `kelpto`'s `buildHtml` builds the tree a browser builds.
 - **Destinations stay as written** in the tree, as a `LinkTarget`
   (escapes and character references resolved, nothing else); the
   renderer percent-encodes them only as it writes `href` and `src`.

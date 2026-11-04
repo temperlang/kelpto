@@ -14,7 +14,11 @@ but for those in CommonMark's Autolinks section, which show what isn't
 linked without extended autolinks. As CommonMark, they're checked in
 `tests/commonmark/`, at 0.31.2.
 
-    let { MarkdownParser, MarkdownRenderer } = import("../../kelpto-md");
+    let { MarkdownDocument, MarkdownParser, MarkdownRenderer } = import("../../kelpto-md");
+    let { buildHtml, ParsedRawHtml } = import("../../kelpto");
+    let {
+      BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, parseHtmlFragment,
+    } = import("../../kelpto-html");
 
     let parserFor(example: GfmExample): MarkdownParser {
       let extension = example.extension;
@@ -200,5 +204,72 @@ with tabs for leading spaces.
       }
       assert(failures.isEmpty && rendered > 0) {
         "not roundtripping: ${failures.toList().join(", ") { (s: String): String => s }}"
+      };
+    }
+
+## One tree, Markdown and raw HTML together
+
+A dump of built nodes, with namespaces and attributes, for comparing
+trees.
+
+    let treeOf(nodes: List<BuiltNode>): String {
+      let out = new StringBuilder();
+      addTree(nodes, out);
+      out.toString()
+    }
+
+    let addTree(nodes: List<BuiltNode>, out: StringBuilder): Void {
+      for (var i = 0; i < nodes.length; i += 1) {
+        let node = nodes[i];
+        when (node) {
+          is Element -> do {
+            out.append("<${node.namespace}:${node.name}");
+            let attributes = node.attributes;
+            for (var j = 0; j < attributes.length; j += 1) {
+              let a = attributes[j];
+              out.append(" ${a.prefix}:${a.name}=\"${a.value}\"");
+            }
+            out.append(">");
+            addTree(node.templateContents, out);
+            out.append("|");
+            addTree(node.children, out);
+            out.append("</>");
+          }
+          is BuiltText -> out.append("\"${node.text}\"");
+          is BuiltComment -> out.append("<!--${node.text}-->");
+          else -> out.append(node.html);
+        }
+      }
+    }
+
+Whether kelpto's `buildHtml` gives the tree kelpto-html gives parsing
+the rendered HTML, as a fragment in `body`, as one string.
+
+    let sameTree(doc: MarkdownDocument, renderer: MarkdownRenderer): Boolean {
+      let body = new FragmentContext("body");
+      let built = treeOf(buildHtml(doc, body, renderer).children);
+      built == treeOf(parseHtmlFragment(renderer.render(doc), body).children)
+    }
+
+Every example, with raw HTML parsed by kelpto, builds the tree its
+HTML parses to, rendered as cmark-gfm's tools render it. Logs the
+counts.
+
+    test("GFM spec: every example builds the tree its HTML parses to") {
+      let examples = gfmExamples();
+      let failures = new ListBuilder<String>();
+      var same = 0;
+      for (var i = 0; i < examples.length; i += 1) {
+        let example = examples[i];
+        let doc = parserFor(example).withRawHtmlHandler(new ParsedRawHtml()).parse(example.markdown);
+        if (sameTree(doc, rendererFor(example))) {
+          same += 1;
+        } else {
+          failures.add(label(example));
+        }
+      }
+      console.log("Same tree: ${same.toString()}/${examples.length.toString()} examples");
+      assert(failures.isEmpty) {
+        "examples building another tree: ${failures.toList().join(", ") { (s: String): String => s }}"
       };
     }

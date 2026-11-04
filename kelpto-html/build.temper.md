@@ -90,6 +90,14 @@ the context is inside a form.
       public var fragmentContext: Int = -1;
       public var contextInsideForm: Boolean = false;
 
+For a parse fed in pieces (a `FragmentStream`), `joined` is set and
+each node's token index is into `origins`: the red node it came from,
+a token in any tree, or a node of another tree, such as the Markdown
+node a synthetic token stands for. Empty otherwise.
+
+      public var joined: Boolean = false;
+      public origins: ListBuilder<RedNode> = new ListBuilder<RedNode>();
+
       public constructor() {}
 
       public add(kind: Int, name: String, space: Int, data: String, tokenIndex: Int, tokenOffset: Int, attributes: List<String>): Int {
@@ -415,6 +423,44 @@ carries over, which matters only for `<table>` closing a `<p>`.
         }
         process(t);
         nextState
+      }
+
+Synthetic tokens, for a parse fed in pieces: a start tag without
+attributes, giving the state the tokenizer goes on in, an end tag,
+and text as decoded, each with its index among the stream's origins.
+
+      public takeStart(name: String, selfClosing: Boolean, index: Int): Int {
+        let t = token;
+        t.kind = startToken;
+        t.name = name;
+        t.selfClosing = selfClosing;
+        t.tokenAttributes = noStrings;
+        t.index = index;
+        t.offset = 0;
+        nextState = 0;
+        process(t);
+        nextState
+      }
+
+      public takeEnd(name: String, index: Int): Void {
+        let t = token;
+        t.kind = endToken;
+        t.name = name;
+        t.selfClosing = false;
+        t.tokenAttributes = noStrings;
+        t.index = index;
+        t.offset = 0;
+        process(t);
+      }
+
+      public takeText(text: String, index: Int): Void {
+        if (text.isEmpty) { return; }
+        let t = token;
+        t.kind = charToken;
+        t.text = text;
+        t.index = index;
+        t.offset = 0;
+        process(t);
       }
 
       public cdataAllowed(): Boolean {
@@ -2365,6 +2411,20 @@ serialization: normalized, not as written (see `asWritten` on the
 tokens for that).
 
       public get html(): String;
+
+The red node this came from: its token (for an element, its start
+tag), or, in a parse fed in pieces, whatever the stream was given for
+it, such as a Markdown node. Null for an element the standard implies.
+
+      public get origin(): RedNode?;
+    }
+
+    let originOf(tree: BuiltTree, tokens: HtmlTokens, id: Int): RedNode? {
+      let index = tree.tokenIndexes[id];
+      if (index < 0) { return null; }
+      if (tree.joined) { return tree.origins[index]; }
+      let green = tokens.node.green.children[index] as GreenNode orelse panic();
+      new RedNode(green, tokens.node, tree.tokenOffsets[id], index)
     }
 
     let childrenOf(tree: BuiltTree, tokens: HtmlTokens, parent: Int): List<BuiltNode> {
@@ -2555,11 +2615,14 @@ A `template`'s contents, which aren't its children.
       }
 
       public get startTag(): StartTag? {
-        let index = tree.tokenIndexes[id];
-        if (index < 0) { return null; }
-        let green = tokens.node.green.children[index] as GreenNode orelse panic();
-        new StartTag(new RedNode(green, tokens.node, tree.tokenOffsets[id], index))
+        let origin = originOf(tree, tokens, id);
+        if (origin != null) {
+          if (origin.hasKind(startTagKind)) { return new StartTag(origin); }
+        }
+        null
       }
+
+      public get origin(): RedNode? { originOf(tree, tokens, id) }
 
       public get html(): String {
         let out = new StringBuilder();
@@ -2572,11 +2635,14 @@ Text, joined as the standard joins adjacent text.
 
     export class BuiltText extends BuiltNode {
       private tree: BuiltTree;
+      private tokens: HtmlTokens;
       private id: Int;
       public constructor(tree: BuiltTree, tokens: HtmlTokens, id: Int) {
         this.tree = tree;
+        this.tokens = tokens;
         this.id = id;
       }
+      public get origin(): RedNode? { originOf(tree, tokens, id) }
       public get text(): String { tree.datas[id] }
       public get children(): List<BuiltNode> { [] }
       public get html(): String {
@@ -2588,11 +2654,14 @@ Text, joined as the standard joins adjacent text.
 
     export class BuiltComment extends BuiltNode {
       private tree: BuiltTree;
+      private tokens: HtmlTokens;
       private id: Int;
       public constructor(tree: BuiltTree, tokens: HtmlTokens, id: Int) {
         this.tree = tree;
+        this.tokens = tokens;
         this.id = id;
       }
+      public get origin(): RedNode? { originOf(tree, tokens, id) }
       public get text(): String { tree.datas[id] }
       public get children(): List<BuiltNode> { [] }
       public get html(): String { "<!--${tree.datas[id]}-->" }
@@ -2600,11 +2669,14 @@ Text, joined as the standard joins adjacent text.
 
     export class BuiltDoctype extends BuiltNode {
       private tree: BuiltTree;
+      private tokens: HtmlTokens;
       private id: Int;
       public constructor(tree: BuiltTree, tokens: HtmlTokens, id: Int) {
         this.tree = tree;
+        this.tokens = tokens;
         this.id = id;
       }
+      public get origin(): RedNode? { originOf(tree, tokens, id) }
       public get name(): String { tree.names[id] }
       public get publicId(): String { tree.attributeLists[id][0] }
       public get systemId(): String { tree.attributeLists[id][1] }
@@ -2617,11 +2689,14 @@ XML both read.
 
     export class BuiltProcessingInstruction extends BuiltNode {
       private tree: BuiltTree;
+      private tokens: HtmlTokens;
       private id: Int;
       public constructor(tree: BuiltTree, tokens: HtmlTokens, id: Int) {
         this.tree = tree;
+        this.tokens = tokens;
         this.id = id;
       }
+      public get origin(): RedNode? { originOf(tree, tokens, id) }
       public get target(): String { tree.names[id] }
       public get data(): String { tree.datas[id] }
       public get children(): List<BuiltNode> { [] }

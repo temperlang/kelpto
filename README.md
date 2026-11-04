@@ -13,8 +13,9 @@ as GFM's examples expect. On the HTML side, the WHATWG tokenizer is
 done, lossless, passing html5lib-tests' tokenizer tests, and tree
 construction builds whole documents as browsers do, passing all but 4
 of web-platform-tests' 1,761 document tests, and fragments as
-`innerHTML` does, passing all 206 fragment tests; parsing Markdown's
-raw HTML into one tree with them is next.
+`innerHTML` does, passing all 206 fragment tests. Markdown and its raw
+HTML parse into the one tree a browser builds from the rendering, as
+every CommonMark and GFM example checks.
 The design is in [docs/design.md](docs/design.md) and the plan in
 [docs/plan.md](docs/plan.md).
 

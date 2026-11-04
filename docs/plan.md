@@ -192,9 +192,10 @@ way in `tests/gfm/`.
    mode and foreign content, against WPT's `.dat` files in
    `tests/wpt-tree-construction/` (see "kelpto-html's tree
    construction"). Fragments done (2026-11-04): all 206 of the `.dat`
-   files' fragment tests. Next: Markdown's raw HTML parsed into one
-   tree (planned in "Raw HTML in Markdown, as one tree"), and tree
-   construction's parse errors.
+   files' fragment tests. Markdown's raw HTML parsed into one tree
+   done (2026-11-04; "Raw HTML in Markdown, as one tree"): every
+   CommonMark and GFM example builds the tree its HTML parses to.
+   Next: tree construction's parse errors.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface
    filled in.
 6. **Tours and the site,** as in the other libraries.
