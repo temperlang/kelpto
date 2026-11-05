@@ -11,8 +11,8 @@ GitHub Flavored Markdown's extensions (tables, task list items,
 strikethrough, extended autolinks, and the disallowed raw HTML filter),
 as GFM's examples expect. On the HTML side, the WHATWG tokenizer is
 done, lossless, passing html5lib-tests' tokenizer tests, and tree
-construction builds whole documents as browsers do, passing all but 4
-of web-platform-tests' 1,761 document tests, and fragments as
+construction builds whole documents as browsers do, passing all
+1,761 of web-platform-tests' document tests, and fragments as
 `innerHTML` does, passing all 206 fragment tests. Markdown and its raw
 HTML parse into the one tree a browser builds from the rendering, as
 every CommonMark and GFM example checks, and a sanitizer judges that

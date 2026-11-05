@@ -222,6 +222,11 @@ state the tokenizer goes on in (a `ContentState`'s id), and before
 
 For the tokenizer on its own.
 
+    // Called from outside the class: in Temper's main since #625, a
+    // `sink.end()` in a class with a property `end` reads that property
+    // (notes/temper-fixes.md, "Kelpto doesn't build on main 24b86157").
+    let endSink(sink: TokenSink): Void { sink.end(); }
+
     class NoTokenSink extends TokenSink {
       public constructor() {}
       public take(green: GreenNode, offset: Int, index: Int): Int { 0 }
@@ -1677,7 +1682,7 @@ error that says so, as html5lib-tests has it.
           }
         }
         deliver();
-        if (hasSink) { sink.end(); }
+        if (hasSink) { endSink(sink); }
         builder.finishNode();
       }
 

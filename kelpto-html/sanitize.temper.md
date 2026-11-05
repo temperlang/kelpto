@@ -65,10 +65,13 @@ The HTML elements dropped with what's in them, unless the policy
 allows them: those whose contents aren't plain HTML text and elements
 (scripts, styles, raw text, templates, plug-ins, frames), or that
 would show something other than the text (a `title`, a `textarea`'s
-value), or change the page around them (`base`, `meta`, `link`).
+value), or change the page around them (`base`, `meta`, `link`); and
+`selectedcontent`, whose contents are copies of the selected `option`'s
+(see "Customizable select" in build.temper.md), so they'd show twice
+once the `option` is replaced by its children, as forms are.
 
     let dropsContents = nameSet(
-      "script style template iframe object embed applet noscript noembed noframes xmp plaintext textarea title frameset frame param base basefont bgsound link meta head"
+      "script style template iframe object embed applet noscript noembed noframes xmp plaintext textarea title frameset frame param base basefont bgsound link meta head selectedcontent"
     );
 
 Attributes never kept, even if allowed: `srcdoc` is a whole HTML
@@ -602,6 +605,29 @@ Parses `text` as a fragment in `context` (`body` by default), as
     }
 
 ## Tests
+
+Copies `selectedcontent` made are built nodes like any other, so
+they're judged as the original is, and listed apart in `removals`
+with the original's origin. `select`, `option`, `button`, and
+`selectedcontent` aren't in `standard` (no forms), so by default the
+options' text stays and the copies go.
+
+    test("selectedcontent copies are sanitized as their original") {
+      let text = "<select><button><selectedcontent></selectedcontent></button><option><img src=a.png onerror=x()><script>y()</script>A</option></select>";
+      let body = new FragmentContext("body");
+      let byDefault = parseHtmlFragment(text, body).sanitize();
+      assert(byDefault.html == "<img src=\"a.png\">A") { byDefault.html };
+      let removed = removalsOf(byDefault);
+      assert(removed == "tag select select= @0+8 | tag button button= @8+8 | element selectedcontent selectedcontent= @16+17 | tag option option= @60+8 | attribute img onerror=x() @68+27 | element script script= @95+8") { removed };
+      let forms = SanitizerPolicy.standard.withElements(["select", "option", "button", "selectedcontent"]);
+      let allowed = parseHtmlFragment(text, body).sanitize(forms);
+      let both = "<img src=\"a.png\">A";
+      assert(allowed.html == "<select><button><selectedcontent>${both}</selectedcontent></button><option>${both}</option></select>") { allowed.html };
+      let twice = removalsOf(allowed);
+      assert(twice == "attribute img onerror=x() @68+27 | element script script= @95+8 | attribute img onerror=x() @68+27 | element script script= @95+8") { twice };
+      let reparsed = parseHtmlFragment(allowed.html, body);
+      assert(reparsed.html == allowed.html && reparsed.sanitize(forms).html == allowed.html) { "reparses to itself" };
+    }
 
     test("schemes, read as browsers read them") {
       let cases = [

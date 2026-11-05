@@ -11,11 +11,10 @@ html5lib-tests used to hold), at commit 4aa56d3beafc.
   written in the files' dump format, and that every input roundtrips,
   with counts by file.
 
-All but 4 of the 1,761 document tests pass; those 4 (webkit02.dat)
-expect `<selectedcontent>` to copy the selected `<option>`, which
-kelpto-html doesn't do yet. All 206 fragment tests
-(`#document-fragment`, parsed in their context element) pass. The
-runner checks that at least 1,757 documents and 206 fragments pass. In C++, one more fails (`<?something ?\t   ?>`), since the
+All 1,761 document tests pass, `<selectedcontent>` copying the
+selected `<option>` (webkit02.dat) included, and all 206 fragment
+tests (`#document-fragment`, parsed in their context element). The
+runner checks that they all pass. In C++, one fails (`<?something ?\t   ?>`), since the
 `temper` C++ backend writes `??>` into a string literal, which C++14
 reads as a trigraph (`}`).
 

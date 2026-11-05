@@ -611,12 +611,24 @@ pre.html-out {
   border-left: 0;
 }
 
+/* Long rows wrap rather than scroll: attributes go on following lines,
+   indented under the tag, and badges stay in view. */
 .tree .row {
   display: inline-block;
-  padding: 0 0.3rem;
+  max-width: 100%;
+  padding: 0 0.3rem 0 1.5rem;
+  text-indent: -1.2rem;
   border-radius: 0.25rem;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   cursor: default;
+}
+
+/* An attribute moves to the next line whole, and wraps only if it's
+   longer than a line. */
+.tree .t-a {
+  display: inline-block;
+  max-width: 100%;
+  text-indent: 0;
 }
 
 .tree .row.on {
@@ -669,7 +681,8 @@ pre.html-out {
 }
 
 .badge.implied,
-.badge.reopened {
+.badge.reopened,
+.badge.copied {
   color: var(--muted);
   border-style: dashed;
 }

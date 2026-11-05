@@ -21,9 +21,8 @@ aren't copied, as they're CC-BY-SA 4.0.
 Runs html5lib-tests' tokenizer tests and web-platform-tests' tree
 construction tests the same way (`html-conformance-node.mjs`), from
 their test libraries' JS builds, and fails unless every tokenizer test
-passes and at least as many tree tests as their runner checks for, with
-none failing but the known `<selectedcontent>` ones; the counts go in
-the page.
+passes and at least as many tree tests as their runner checks for (all
+of them, now); the counts go in the page.
 
 Renders the #safe gallery, `safeGallery()` in `kelpto/kelpto.temper.md`,
 in Node (`safe-node.mjs`), failing unless each case gives what the
@@ -190,7 +189,7 @@ def html_conformance():
     """The tokenizer's and tree construction's passed and total, run in
     Node on the built library, and the line the page says them in. Fails
     unless every tokenizer test passes, and the tree tests pass at least as
-    their runner checks, with none failing but the known ones."""
+    their runner checks (all of them)."""
     scores = json.loads(node("html-conformance-node.mjs", str(TOKENIZER_TESTS), str(TREE_TESTS)))
     tokenizer = scores["tokenizer"]
     if tokenizer["passed"] != tokenizer["total"]:
@@ -201,11 +200,6 @@ def html_conformance():
         score = scores[kind]
         if score["passed"] < least:
             raise SystemExit(f"tree {kind}: {score['passed']} pass, fewer than {least}; failing: {score['failing'][:20]}")
-        # The only known failures: <selectedcontent> copying the selected
-        # <option>, which kelpto-html doesn't do yet.
-        unknown = [f for f in score["failing"] if "<selectedcontent>" not in f]
-        if unknown:
-            raise SystemExit(f"tree {kind}: newly failing: {unknown[:20]}")
     documents, fragments = scores["documents"], scores["fragments"]
     total = documents["total"] + fragments["total"]
     left = total - documents["passed"] - fragments["passed"]
@@ -216,10 +210,7 @@ def html_conformance():
     if left == 0:
         line = f"all <strong>{total:,}</strong> of web-platform-tests' tree construction tests: {parts}."
     else:
-        line = (
-            f"all but {left} of web-platform-tests' <strong>{total:,}</strong> tree construction tests: {parts}. "
-            f"The {left} left expect <code>&lt;selectedcontent&gt;</code>, not in yet."
-        )
+        line = f"all but {left} of web-platform-tests' <strong>{total:,}</strong> tree construction tests: {parts}."
     return scores, line
 
 

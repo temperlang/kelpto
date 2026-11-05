@@ -640,6 +640,12 @@ Keep the content apart from the marker and any closing sequence, so
 
 A paragraph.
 
+    // Called from outside the class: in Temper's main since #625,
+    // `Inlines.empty.text(text)` in a class with a `text` getter reads
+    // that getter (notes/temper-fixes.md, "Kelpto doesn't build on main
+    // 24b86157").
+    let plainInlines(text: String): Inlines { Inlines.empty.text(text) }
+
     export class Paragraph extends BlockChild {
       public node: RedNode;
       public constructor(node: RedNode) { this.node = node; }
@@ -656,7 +662,7 @@ empty text, since a paragraph can't be empty (remove it with an
 editor instead).
 
       public withText(text: String): MarkdownDocument throws Bubble {
-        applied(paragraphContentEdit(node, Inlines.empty.text(text)))
+        applied(paragraphContentEdit(node, plainInlines(text)))
       }
 
 As `withText`, with rich content, written as

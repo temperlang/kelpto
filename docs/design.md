@@ -316,15 +316,31 @@ errors. Checked against WPT's tree construction tests (in
   contents" for a `template` context) are each a check of the context.
   `html` serializes the nodes as the context's contents, so text in a
   `script` context stays raw.
+- **Customizable select (2026-11-04):** a `<selectedcontent>` in a
+  `select`'s `button` holds a copy of the selected `option`'s
+  contents. The standard runs this in the DOM (the selectedness
+  setting algorithm as each option is inserted, a copy as a
+  `selectedcontent` is inserted, and again as the selected option is
+  popped off the stack); the builder runs the same steps as it goes,
+  from the tree so far, paying one check per element until a `select`
+  appears (see "Customizable select" in `build.temper.md`). The copies
+  are synthetic built nodes: the tokens, the lossless tree, have only
+  the original, and each copy has its original's origin (so
+  `Element.startTag` gives the original's start tag, as remade
+  formatting elements do) and `BuiltNode.clonedFrom`, the parsed node
+  it copies (null for the rest). The sanitizer judges copies as any
+  node, so a copy of disallowed content goes as the original does,
+  and each is listed in `removals` with the original's origin. Not
+  done: updates the standard queues as script moves or removes
+  options, which a parse doesn't do short of the adoption agency
+  algorithm moving a block with options in it.
 - **Not yet:** tree construction's parse errors (only the tokenizer's
   are kept),
   `<template shadowrootmode>` (declarative shadow roots) and
   `<template for>` patching, which the WPT `.dat` tests don't check,
-  an end tag's link to the element it closed, and `<selectedcontent>`
-  taking a copy of the selected `<option>` (DOM behavior the standard
-  runs as options are inserted; the 4 `.dat` tests that fail).
+  and an end tag's link to the element it closed.
 - **Tests:** all 1,761 of WPT's document tests (not scripted_*.dat)
-  give the expected tree but those 4, and all 206 fragment tests.
+  give the expected tree, and all 206 fragment tests.
 
 ### Raw HTML in Markdown, as one tree (built 2026-11-04)
 
@@ -410,7 +426,9 @@ kelpto-html's sanitizer (`sanitize.temper.md`), and kelpto's
   those aren't plain HTML or it would change the page (`script`,
   `style`, `template`, `iframe`, `object`, `embed`, `noscript`,
   `textarea`, `title`, `base`, `meta`, `link`, frames, plug-ins), or
-  else replaced by its children. Comments, DOCTYPEs, and processing
+  are copies (`selectedcontent`, whose copied `option` stays), or
+  else replaced by its children. Forms (`select`, `option`, `button`)
+  aren't in `standard`, so a `select` leaves its options' text. Comments, DOCTYPEs, and processing
   instructions go (as "Secure defaults" asks); `input` stays only as
   a checkbox; `srcdoc`, SVG's `script`, and its animation elements
   are never kept. SVG and MathML are dropped unless allowed by

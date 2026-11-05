@@ -195,18 +195,17 @@ fragments passed.
 
 ## Tests
 
-Not every test passes yet, so this checks that none that passed
-stops passing: at least `documentFloor()` documents and
-`fragmentFloor()` fragments pass (functions, since Rust can't see
-test-only module values). Logs the counts for every file, and the
-first failures.
+Every test passes: at least `documentFloor()` documents and
+`fragmentFloor()` fragments, which are all of them (functions, since
+Rust can't see test-only module values). Logs the counts for every
+file, and the first failures.
 
-    // C++ passes 1,756: Temper's C++ backend compiles with -std=c++14,
+    // C++ passes 1,760: Temper's C++ backend compiles with -std=c++14,
     // where `??>` in the generated string literal for
     // processing-instructions.dat's `<?something ?\t   ??>` is a
     // trigraph for `}`, so the test's input itself differs. Kelpto
     // reads the real input right (notes/temper-fixes.md).
-    let documentFloor(): Int { 1757 }
+    let documentFloor(): Int { 1761 }
     let fragmentFloor(): Int { 206 }
 
     test("WPT tree construction tests") {

@@ -203,6 +203,12 @@ export function treeHtml(nodes, side, markdown, removed = null) {
   /** @param {any} node @returns {{ badge: string, cls: string, where: string, span: Span | null }} */
   function originOf(node) {
     const origin = node.origin;
+    // A copy a <selectedcontent> made of the selected <option>'s contents:
+    // in the built tree only, with the origin of what it copies.
+    if (node.clonedFrom && origin) {
+      const span = { from: origin.span.start, to: origin.span.start + origin.span.length };
+      return { badge: "copied", cls: "copied", where: "Copied into <selectedcontent> from the selected option, from:", span };
+    }
     if (!origin) return { badge: "implied", cls: "implied", where: "Implied by the HTML standard: nothing in the source.", span: null };
     const span = { from: origin.span.start, to: origin.span.start + origin.span.length };
     const id = origin.green.kind.id;
@@ -228,7 +234,8 @@ export function treeHtml(nodes, side, markdown, removed = null) {
           const name = a.prefix ? `${a.prefix}:${a.name}` : a.name;
           const text = `<span class="t-attr">${escapeHtml(name)}</span>=<span class="t-value">"${escapeHtml(shortText(a.value))}"</span>`;
           const r = from.find((r) => (r.kind === "attribute" || r.kind === "url") && r.name === name);
-          return r ? ` <del class="removed" title="${escapeHtml(reason(r))}">${text}</del>` : ` ${text}`;
+          // Each attribute its own span, so long rows wrap between them.
+          return r ? ` <del class="removed t-a" title="${escapeHtml(reason(r))}">${text}</del>` : ` <span class="t-a">${text}</span>`;
         })
         .join("");
       return `<span class="t-tag">&lt;${escapeHtml(space + node.name)}</span>${attributes}<span class="t-tag">&gt;</span>`;
@@ -258,12 +265,13 @@ export function treeHtml(nodes, side, markdown, removed = null) {
       // What sanitizing removed here: the whole node, its tags, or attributes.
       const whole = from.find((r) => r.kind !== "tag" && r.kind !== "attribute" && r.kind !== "url");
       const tag = from.find((r) => r.kind === "tag");
-      const names = from.filter((r) => r.kind === "attribute" || r.kind === "url").map((r) => r.name);
+      // A copy and its original share an origin, so their removals too.
+      const names = [...new Set(from.filter((r) => r.kind === "attribute" || r.kind === "url").map((r) => r.name))];
       const gone = whole ?? tag;
       const shown = gone ? `<del class="removed" title="${escapeHtml(reason(gone))}">${text}</del>` : text;
       const why = gone
         ? reason(gone)
-        : from.filter((r) => r.kind === "attribute" || r.kind === "url").map(reason).join(" ");
+        : [...new Set(from.filter((r) => r.kind === "attribute" || r.kind === "url").map(reason))].join(" ");
       rows.push({ label: text, where: origin.where, span: origin.span, removed: why });
       // Text and comments name their origin only on hover, to keep the tree quiet.
       const badged = origin.badge && (node instanceof Element || origin.cls === "implied");

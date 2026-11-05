@@ -46,6 +46,9 @@ sanitizeHtml("<a href='java&#x09;script:x' onclick=y>Hi</a><script>z</script>").
   `BuiltProcessingInstruction` nodes, each pointing back at its token
   (`Element.startTag`), and `html`, the standard's serialization. WPT's
   tree construction tests check it (see `tests/wpt-tree-construction`).
+  A `<selectedcontent>` gets a copy of the selected `<option>`'s
+  contents, as customizable select has it: built nodes only, each with
+  its original's origin and `clonedFrom`, the node it copies.
 - **Fragments,** as `innerHTML` parses them: `parseHtmlFragment` reads
   text as if inside a context element (a `FragmentContext`: name,
   namespace, attributes, whether it's in a `form`, and quirks mode, or

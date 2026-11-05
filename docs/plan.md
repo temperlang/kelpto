@@ -195,7 +195,8 @@ way in `tests/gfm/`.
    files' fragment tests. Markdown's raw HTML parsed into one tree
    done (2026-11-04; "Raw HTML in Markdown, as one tree"): every
    CommonMark and GFM example builds the tree its HTML parses to.
-   Next: tree construction's parse errors.
+   Customizable select's `<selectedcontent>` done (2026-11-04), so all
+   1,761 document tests pass. Next: tree construction's parse errors.
 5. **Bridge:** safe rendering with Hrefine, and the raw HTML interface
    filled in. The interface is filled in, and safe rendering done
    (2026-11-04): a sanitizer on the built tree, with links checked by

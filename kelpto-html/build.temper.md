@@ -98,6 +98,12 @@ node a synthetic token stands for. Empty otherwise.
       public var joined: Boolean = false;
       public origins: ListBuilder<RedNode> = new ListBuilder<RedNode>();
 
+Nodes copied into a `selectedcontent` from the selected `option` (see
+"Customizable select"), each to the parsed node it copies. They share
+its token, so its origin; few documents have any, hence a map.
+
+      public clones: MapBuilder<Int, Int> = new MapBuilder<Int, Int>();
+
       public constructor() {}
 
       public add(kind: Int, name: String, space: Int, data: String, tokenIndex: Int, tokenOffset: Int, attributes: List<String>): Int {
@@ -313,6 +319,19 @@ The context element when parsing a fragment, or -1.
 
       private var contextNode: Int = -1;
 
+For customizable select: whether any `select`, and any `selectedcontent`
+a `select` updates, has been inserted (so documents without them pay
+one check per element); each `option`'s select and each select's
+selected option, and the `selectedcontent` elements of each select,
+as lists in `contentLists`, by index.
+
+      private var sawSelect: Boolean = false;
+      private var sawSelectedContent: Boolean = false;
+      private optionSelects: MapBuilder<Int, Int> = new MapBuilder<Int, Int>();
+      private selectedOptions: MapBuilder<Int, Int> = new MapBuilder<Int, Int>();
+      private contentListOf: MapBuilder<Int, Int> = new MapBuilder<Int, Int>();
+      private contentLists: ListBuilder<ListBuilder<Int>> = new ListBuilder<ListBuilder<Int>>();
+
       public constructor(scripting: Boolean) {
         this.scripting = scripting;
         tree.add(documentNode, "", htmlNs, "", -1, 0, noStrings);
@@ -472,7 +491,10 @@ and text as decoded, each with its index among the stream's origins.
         t.kind = eofToken;
         t.index = -1;
         process(t);
-        stack.clear();
+        while (!stack.isEmpty) {
+          let node = stack.removeLast();
+          if (sawSelectedContent) { optionClosed(node); }
+        }
         tree.quirksMode = quirks;
       }
 
@@ -652,21 +674,39 @@ the form element pointer's rules ask.
 
       private popUntil(name: String): Void {
         while (!stack.isEmpty) {
-          let node = stack.removeLast();
+          let node = pop();
           if (tree.isHtml(node, name)) { return; }
         }
       }
 
       private popUntilHeading(): Void {
         while (!stack.isEmpty) {
-          let node = stack.removeLast();
+          let node = pop();
           if (tree.spaces[node] == htmlNs && headingNames.has(tree.names[node])) { return; }
         }
       }
 
       private removeFromStack(node: Int): Void {
         let at = stackIndexOf(node);
-        if (at >= 0) { stack.splice(at, 1); }
+        if (at >= 0) { removeFromStackAt(at); }
+      }
+
+Every element leaves the stack through `pop` or `removeFromStackAt`,
+so an `option` leaving it can update `selectedcontent` (see
+"Customizable select", below). The standard says "popped"; the
+adoption agency algorithm's removals count too, as in browsers, which
+finish an element either way.
+
+      private pop(): Int {
+        let node = stack.removeLast();
+        if (sawSelectedContent) { optionClosed(node); }
+        node
+      }
+
+      private removeFromStackAt(at: Int): Void {
+        let node = stack[at];
+        stack.splice(at, 1);
+        if (sawSelectedContent) { optionClosed(node); }
       }
 
 Generates implied end tags, except for HTML elements named `except`.
@@ -676,7 +716,7 @@ Generates implied end tags, except for HTML elements named `except`.
           let node = current();
           let name = tree.names[node];
           if (tree.spaces[node] != htmlNs || name == except || !impliedEndNames.has(name)) { return; }
-          stack.removeLast();
+          pop();
         }
       }
 
@@ -684,7 +724,7 @@ Generates implied end tags, except for HTML elements named `except`.
         while (!stack.isEmpty) {
           let node = current();
           if (tree.spaces[node] != htmlNs || !thoroughEndNames.has(tree.names[node])) { return; }
-          stack.removeLast();
+          pop();
         }
       }
 
@@ -745,6 +785,17 @@ The appropriate place for inserting a node, with foster parenting.
         place(current());
         tree.insert(placeParent, id, placeBefore);
         stack.add(id);
+        if (space == htmlNs) {
+          if (name == "select") {
+            sawSelect = true;
+          } else if (sawSelect) {
+            if (name == "option") {
+              optionInserted(id);
+            } else if (name == "selectedcontent") {
+              selectedContentInserted(id);
+            }
+          }
+        }
         id
       }
 
@@ -765,7 +816,7 @@ An element the standard implies, from no token.
         if (space == svgNs) { name = svgTagNames.getOr(name, name); }
         adjustAttributes(t, space);
         insertElement(t, name, space);
-        if (t.selfClosing) { stack.removeLast(); }
+        if (t.selfClosing) { pop(); }
       }
 
 Adjusts MathML or SVG attribute names, and foreign ones.
@@ -925,7 +976,7 @@ to act as for any other end tag.
       private adoption(subject: String): Boolean {
         let top = current();
         if (tree.isHtml(top, subject) && formattingIndexOf(top) < 0) {
-          stack.removeLast();
+          pop();
           return true;
         }
         for (var outer = 0; outer < 8; outer += 1) {
@@ -954,7 +1005,7 @@ to act as for any other end tag.
             }
           }
           if (furthestAt < 0) {
-            while (stack.length > stackAt) { stack.removeLast(); }
+            while (stack.length > stackAt) { pop(); }
             formatting.splice(formattingAt, 1);
             return true;
           }
@@ -977,7 +1028,7 @@ to act as for any other end tag.
               nodeFormattingAt = -1;
             }
             if (nodeFormattingAt < 0) {
-              stack.splice(nodeAt, 1);
+              removeFromStackAt(nodeAt);
               continue;
             }
             let copy = cloneElement(node);
@@ -1006,6 +1057,195 @@ to act as for any other end tag.
           stack.add(copy, stackIndexOf(furthest) + 1);
         }
         true
+      }
+
+### Customizable select
+
+A `selectedcontent` in a `select`'s `button` shows a copy of the
+selected `option`'s contents. The standard does this in the DOM, as
+options are inserted and as the parser pops each one off the stack;
+here, as the parser goes, from what it has built so far, in the order
+the standard runs it:
+
+- **An `option` inserted** finds its select (the nearest `select`
+  ancestor, unless a `datalist`, `hr`, `option`, or a second
+  `optgroup` comes first) and runs the selectedness setting
+  algorithm: one with `selected` becomes the selected option (the last
+  such wins), and if none is yet, the first that isn't disabled, if
+  the select's display size is 1. If it's the selected one, the
+  select's `selectedcontent` elements copy it (empty, so far).
+- **A `selectedcontent` inserted** finds its select (none if inside an
+  `option`, another `selectedcontent`, or two `select`s) and copies the
+  selected option, if any.
+- **An `option` popped** that's its select's selected option is copied
+  again, now with its contents.
+
+Nothing is done for a `select` with `multiple`, as the standard says.
+Copies replace a `selectedcontent`'s children, and are new nodes in
+`BuiltTree.clones`. Not done: the standard's later updates as script
+moves or removes options (nothing in a parse does that but the
+adoption agency algorithm moving a block with options in it, so rare
+that it's left out), and options inside a copy, which take no part.
+
+      private optionInserted(option: Int): Void {
+        let select = nearestSelect(option);
+        if (select < 0) { return; }
+        optionSelects[option] = select;
+        if (hasAttribute(select, "multiple")) { return; }
+        if (hasAttribute(option, "selected")) {
+          selectedOptions[select] = option;
+        } else if (selectedOptions.getOr(select, -1) < 0 && displaySizeIsOne(select) && !optionDisabled(option)) {
+          selectedOptions[select] = option;
+        }
+        if (selectedOptions.getOr(select, -1) == option) { updateSelectedContents(select); }
+      }
+
+      private selectedContentInserted(content: Int): Void {
+        var select = -1;
+        var node = tree.parents[content];
+        while (node >= 0) {
+          if (tree.isHtml(node, "select")) {
+            if (select >= 0) { return; }
+            select = node;
+          } else if (tree.isHtml(node, "option") || tree.isHtml(node, "selectedcontent")) {
+            return;
+          }
+          node = tree.parents[node];
+        }
+        if (select < 0) { return; }
+        sawSelectedContent = true;
+        var at = contentListOf.getOr(select, -1);
+        if (at < 0) {
+          at = contentLists.length;
+          contentListOf[select] = at;
+          contentLists.add(new ListBuilder<Int>());
+        }
+        contentLists[at].add(content);
+        if (!hasAttribute(select, "multiple")) { copyOption(selectedOptions.getOr(select, -1), content); }
+      }
+
+      private optionClosed(node: Int): Void {
+        if (!tree.isHtml(node, "option")) { return; }
+        let select = optionSelects.getOr(node, -1);
+        if (select >= 0 && selectedOptions.getOr(select, -1) == node) { updateSelectedContents(select); }
+      }
+
+      private updateSelectedContents(select: Int): Void {
+        let at = contentListOf.getOr(select, -1);
+        if (at < 0) { return; }
+        let option = selectedOptions.getOr(select, -1);
+        let contents = contentLists[at];
+        for (var i = 0; i < contents.length; i += 1) { copyOption(option, contents[i]); }
+      }
+
+The standard's nearest ancestor `select` of an `option`, or -1.
+
+      private nearestSelect(option: Int): Int {
+        var optgroup = false;
+        var node = tree.parents[option];
+        while (node >= 0) {
+          if (tree.kinds[node] == elementNode && tree.spaces[node] == htmlNs) {
+            let name = tree.names[node];
+            if (name == "datalist" || name == "hr" || name == "option") { return -1; }
+            if (name == "optgroup") {
+              if (optgroup) { return -1; }
+              optgroup = true;
+            }
+            if (name == "select") { return node; }
+          }
+          node = tree.parents[node];
+        }
+        -1
+      }
+
+Whether an option is disabled: its own `disabled`, or that of the
+`optgroup` it's in.
+
+      private optionDisabled(option: Int): Boolean {
+        if (hasAttribute(option, "disabled")) { return true; }
+        var node = tree.parents[option];
+        while (node >= 0) {
+          if (tree.kinds[node] == elementNode && tree.spaces[node] == htmlNs) {
+            let name = tree.names[node];
+            if (name == "select" || name == "hr" || name == "datalist" || name == "option") { return false; }
+            if (name == "optgroup") { return hasAttribute(node, "disabled"); }
+          }
+          node = tree.parents[node];
+        }
+        false
+      }
+
+Whether a `select` without `multiple` shows one option: its `size`,
+by the rules for parsing non-negative integers, is 1, or isn't one.
+
+      private displaySizeIsOne(select: Int): Boolean {
+        // Absent reads as "", which isn't a number either.
+        let size = attributeValue(select, "size") ?? "";
+        var i = whitespaceEnd(size);
+        var negative = false;
+        if (size.hasIndex(i) && (size[i] == char'-' || size[i] == char'+')) {
+          negative = size[i] == char'-';
+          i = size.next(i);
+        }
+        var value = 0;
+        var digits = 0;
+        while (size.hasIndex(i) && size[i] >= char'0' && size[i] <= char'9') {
+          if (value < 10) { value = value * 10 + (size[i] - char'0'); }
+          digits += 1;
+          i = size.next(i);
+        }
+        digits == 0 || (negative && value != 0) || value == 1
+      }
+
+      private attributeValue(id: Int, name: String): String? {
+        let triples = tree.attributeLists[id];
+        for (var i = 0; i + 2 < triples.length; i += 3) {
+          if (triples[i].isEmpty && triples[i + 1] == name) { return triples[i + 2]; }
+        }
+        null
+      }
+
+      private hasAttribute(id: Int, name: String): Boolean { attributeValue(id, name) != null }
+
+Replaces `content`'s children with copies of `option`'s (none for -1).
+
+      private copyOption(option: Int, content: Int): Void {
+        while (tree.firsts[content] >= 0) { tree.detach(tree.firsts[content]); }
+        if (option >= 0) { copyChildren(option, content); }
+      }
+
+Copies `from`'s children, and theirs, into `to`, without recursing
+(but for a `template`'s contents).
+
+      private copyChildren(from: Int, to: Int): Void {
+        var source = tree.firsts[from];
+        if (source < 0) { return; }
+        var parent = to;
+        while (true) {
+          let copy = tree.add(
+            tree.kinds[source], tree.names[source], tree.spaces[source], tree.datas[source],
+            tree.tokenIndexes[source], tree.tokenOffsets[source], tree.attributeLists[source],
+          );
+          tree.clones[copy] = tree.clones.getOr(source, source);
+          tree.insert(parent, copy, -1);
+          let contents = tree.contents[source];
+          if (contents >= 0) {
+            let copied = tree.add(fragmentNode, "", htmlNs, "", -1, 0, noStrings);
+            tree.contents.set(copy, copied);
+            copyChildren(contents, copied);
+          }
+          if (tree.firsts[source] >= 0) {
+            parent = copy;
+            source = tree.firsts[source];
+            continue;
+          }
+          while (tree.nexts[source] < 0) {
+            source = tree.parents[source];
+            if (source == from) { return; }
+            parent = tree.parents[parent];
+          }
+          source = tree.nexts[source];
+        }
       }
 
 ### Resetting the insertion mode
@@ -1143,7 +1383,7 @@ giving whether any is left.
           if (name == "html") { return inBody(t); }
           if (name == "base" || name == "basefont" || name == "bgsound" || name == "link" || name == "meta") {
             insertHtml(t);
-            stack.removeLast();
+            pop();
             return false;
           }
           if (name == "title") {
@@ -1174,7 +1414,7 @@ giving whether any is left.
           if (name == "head") { return false; }
         } else if (kind == endToken) {
           if (name == "head") {
-            stack.removeLast();
+            pop();
             mode = afterHeadMode;
             return false;
           }
@@ -1189,7 +1429,7 @@ giving whether any is left.
           }
           if (!(name == "body" || name == "html" || name == "br")) { return false; }
         }
-        stack.removeLast();
+        pop();
         mode = afterHeadMode;
         true
       }
@@ -1200,7 +1440,7 @@ giving whether any is left.
         if (kind == doctypeToken) { return false; }
         if (kind == startToken && name == "html") { return inBody(t); }
         if (kind == endToken && name == "noscript") {
-          stack.removeLast();
+          pop();
           mode = inHeadMode;
           return false;
         }
@@ -1217,7 +1457,7 @@ giving whether any is left.
         } else if ((kind == startToken && (name == "head" || name == "noscript")) || (kind == endToken && name != "br")) {
           return false;
         }
-        stack.removeLast();
+        pop();
         mode = inHeadMode;
         true
       }
@@ -1349,7 +1589,7 @@ Text in body: NUL dropped, the rest inserted.
         if (name == "frameset") {
           if (stack.length == 1 || !tree.isHtml(stack[1], "body") || !framesetOk) { return false; }
           tree.detach(stack[1]);
-          while (stack.length > 1) { stack.removeLast(); }
+          while (stack.length > 1) { pop(); }
           insertHtml(t);
           mode = inFramesetMode;
           return false;
@@ -1362,7 +1602,7 @@ Text in body: NUL dropped, the rest inserted.
         if (headingNames.has(name)) {
           closePInButtonScope();
           let top = current();
-          if (tree.spaces[top] == htmlNs && headingNames.has(tree.names[top])) { stack.removeLast(); }
+          if (tree.spaces[top] == htmlNs && headingNames.has(tree.names[top])) { pop(); }
           insertHtml(t);
           return false;
         }
@@ -1465,7 +1705,7 @@ Text in body: NUL dropped, the rest inserted.
         if (name == "area" || name == "br" || name == "embed" || name == "img" || name == "keygen" || name == "wbr") {
           reconstruct();
           insertHtml(t);
-          stack.removeLast();
+          pop();
           framesetOk = false;
           return false;
         }
@@ -1474,21 +1714,21 @@ Text in body: NUL dropped, the rest inserted.
           if (inScope("select", 0)) { popUntil("select"); }
           reconstruct();
           insertHtml(t);
-          stack.removeLast();
+          pop();
           let inputType = t.attribute("type");
           if (inputType == null || asciiLowercase(inputType) != "hidden") { framesetOk = false; }
           return false;
         }
         if (name == "param" || name == "source" || name == "track") {
           insertHtml(t);
-          stack.removeLast();
+          pop();
           return false;
         }
         if (name == "hr") {
           closePInButtonScope();
           if (inScope("select", 0)) { impliedEnd(""); }
           insertHtml(t);
-          stack.removeLast();
+          pop();
           framesetOk = false;
           return false;
         }
@@ -1536,7 +1776,7 @@ Text in body: NUL dropped, the rest inserted.
           if (inScope("select", 0)) {
             impliedEnd("optgroup");
           } else if (currentIs("option")) {
-            stack.removeLast();
+            pop();
           }
           reconstruct();
           insertHtml(t);
@@ -1546,7 +1786,7 @@ Text in body: NUL dropped, the rest inserted.
           if (inScope("select", 0)) {
             impliedEnd("");
           } else if (currentIs("option")) {
-            stack.removeLast();
+            pop();
           }
           reconstruct();
           insertHtml(t);
@@ -1650,7 +1890,7 @@ Text in body: NUL dropped, the rest inserted.
           let node = stack[i];
           if (tree.isHtml(node, name)) {
             impliedEnd(name);
-            while (stack.length > i) { stack.removeLast(); }
+            while (stack.length > i) { pop(); }
             return;
           }
           if (isSpecial(node)) { return; }
@@ -1665,12 +1905,12 @@ Text in body: NUL dropped, the rest inserted.
           return false;
         }
         if (t.kind == eofToken) {
-          stack.removeLast();
+          pop();
           mode = originalMode;
           return true;
         }
         if (t.kind == endToken) {
-          stack.removeLast();
+          pop();
           mode = originalMode;
         }
         false
@@ -1688,7 +1928,7 @@ Text in body: NUL dropped, the rest inserted.
             if (names == "body" && tableSectionNames.has(n)) { return; }
             if (names == "row" && n == "tr") { return; }
           }
-          stack.removeLast();
+          pop();
         }
       }
 
@@ -1752,7 +1992,7 @@ Text in body: NUL dropped, the rest inserted.
             let inputType = t.attribute("type");
             if (inputType != null && asciiLowercase(inputType) == "hidden") {
               insertHtml(t);
-              stack.removeLast();
+              pop();
               return false;
             }
           }
@@ -1761,7 +2001,7 @@ Text in body: NUL dropped, the rest inserted.
             if (form >= 0 && !inTemplate) { return false; }
             let id = insertHtml(t);
             if (!inTemplate) { form = id; }
-            stack.removeLast();
+            pop();
             return false;
           }
         } else if (kind == endToken) {
@@ -1865,14 +2105,14 @@ Text in body: NUL dropped, the rest inserted.
           if (name == "html") { return inBody(t); }
           if (name == "col") {
             insertHtml(t);
-            stack.removeLast();
+            pop();
             return false;
           }
           if (name == "template") { return inHead(t); }
         } else if (kind == endToken) {
           if (name == "colgroup") {
             if (!currentIs("colgroup")) { return false; }
-            stack.removeLast();
+            pop();
             mode = inTableMode;
             return false;
           }
@@ -1882,7 +2122,7 @@ Text in body: NUL dropped, the rest inserted.
           return inBody(t);
         }
         if (!currentIs("colgroup")) { return false; }
-        stack.removeLast();
+        pop();
         mode = inTableMode;
         true
       }
@@ -1905,7 +2145,7 @@ Text in body: NUL dropped, the rest inserted.
         if (kind == endToken && tableSectionNames.has(name)) {
           if (!inScope(name, 3)) { return false; }
           clearToTableContext("body");
-          stack.removeLast();
+          pop();
           mode = inTableMode;
           return false;
         }
@@ -1915,7 +2155,7 @@ Text in body: NUL dropped, the rest inserted.
         ) {
           if (!(inScope("tbody", 3) || inScope("thead", 3) || inScope("tfoot", 3))) { return false; }
           clearToTableContext("body");
-          stack.removeLast();
+          pop();
           mode = inTableMode;
           return true;
         }
@@ -1941,7 +2181,7 @@ Text in body: NUL dropped, the rest inserted.
         if (kind == endToken && name == "tr") {
           if (!inScope("tr", 3)) { return false; }
           clearToTableContext("row");
-          stack.removeLast();
+          pop();
           mode = inTableBodyMode;
           return false;
         }
@@ -1951,7 +2191,7 @@ Text in body: NUL dropped, the rest inserted.
         ) {
           if (!inScope("tr", 3)) { return false; }
           clearToTableContext("row");
-          stack.removeLast();
+          pop();
           mode = inTableBodyMode;
           return true;
         }
@@ -1959,7 +2199,7 @@ Text in body: NUL dropped, the rest inserted.
           if (!inScope(name, 3)) { return false; }
           if (!inScope("tr", 3)) { return false; }
           clearToTableContext("row");
-          stack.removeLast();
+          pop();
           mode = inTableBodyMode;
           return true;
         }
@@ -1975,7 +2215,7 @@ Text in body: NUL dropped, the rest inserted.
       private closeCell(): Void {
         impliedEnd("");
         while (!stack.isEmpty) {
-          let node = stack.removeLast();
+          let node = pop();
           if (tree.isHtml(node, "td") || tree.isHtml(node, "th")) { break; }
         }
         clearFormattingToMarker();
@@ -2108,13 +2348,13 @@ Keeps only the whitespace of text, as the frameset modes do.
             insertHtml(t);
           } else if (name == "frame") {
             insertHtml(t);
-            stack.removeLast();
+            pop();
           } else if (name == "noframes") {
             return inHead(t);
           }
         } else if (kind == endToken && name == "frameset") {
           if (stack.length > 1) {
-            stack.removeLast();
+            pop();
             if (contextNode < 0 && !currentIs("frameset")) { mode = afterFramesetMode; }
           }
         }
@@ -2222,7 +2462,7 @@ Keeps only the whitespace of text, as the frameset modes do.
               tree.spaces[node] == htmlNs || isHtmlIntegrationPoint(node) ||
               (tree.spaces[node] == mathNs && isMathTextPoint(tree.names[node]))
             ) { break; }
-            stack.removeLast();
+            pop();
           }
           return byMode(t, mode);
         }
@@ -2235,7 +2475,7 @@ Keeps only the whitespace of text, as the frameset modes do.
           var node = stack[i];
           while (i > 0) {
             if (asciiLowercase(tree.names[node]) == name) {
-              while (stack.length > i) { stack.removeLast(); }
+              while (stack.length > i) { pop(); }
               return false;
             }
             i -= 1;
@@ -2415,8 +2655,21 @@ tokens for that).
 The red node this came from: its token (for an element, its start
 tag), or, in a parse fed in pieces, whatever the stream was given for
 it, such as a Markdown node. Null for an element the standard implies.
+A copy a `selectedcontent` made has the origin of the node it copies.
 
       public get origin(): RedNode?;
+
+For a node a `selectedcontent` copied from the selected `option` (see
+"Customizable select"), the parsed node it copies; null for the rest.
+The copy is in the built tree only: the tokens, the lossless tree,
+have the original alone.
+
+      public get clonedFrom(): BuiltNode?;
+    }
+
+    let clonedFromOf(tree: BuiltTree, tokens: HtmlTokens, id: Int): BuiltNode? {
+      let original = tree.clones.getOr(id, -1);
+      if (original < 0) { null } else { builtNodeOf(tree, tokens, original) }
     }
 
     let originOf(tree: BuiltTree, tokens: HtmlTokens, id: Int): RedNode? {
@@ -2550,7 +2803,8 @@ An element: its local name (lowercase in HTML; SVG's mixed case, such
 as `foreignObject`, restored), its namespace, its attributes, and its
 children. `startTag` is the token it came from, or null for one the
 standard implies, such as `<tbody>`; elements remade by the adoption
-agency algorithm share their original's start tag.
+agency algorithm, and copies a `selectedcontent` made, share their
+original's start tag.
 
     export class Element extends BuiltNode {
       private tree: BuiltTree;
@@ -2640,6 +2894,7 @@ A `template`'s contents, which aren't its children.
       }
 
       public get origin(): RedNode? { originOf(tree, tokens, id) }
+      public get clonedFrom(): BuiltNode? { clonedFromOf(tree, tokens, id) }
 
       public get html(): String {
         let out = new StringBuilder();
@@ -2660,6 +2915,7 @@ Text, joined as the standard joins adjacent text.
         this.id = id;
       }
       public get origin(): RedNode? { originOf(tree, tokens, id) }
+      public get clonedFrom(): BuiltNode? { clonedFromOf(tree, tokens, id) }
       public get text(): String { tree.datas[id] }
       public get children(): List<BuiltNode> { [] }
       public get html(): String {
@@ -2679,6 +2935,7 @@ Text, joined as the standard joins adjacent text.
         this.id = id;
       }
       public get origin(): RedNode? { originOf(tree, tokens, id) }
+      public get clonedFrom(): BuiltNode? { clonedFromOf(tree, tokens, id) }
       public get text(): String { tree.datas[id] }
       public get children(): List<BuiltNode> { [] }
       public get html(): String { "<!--${tree.datas[id]}-->" }
@@ -2694,6 +2951,7 @@ Text, joined as the standard joins adjacent text.
         this.id = id;
       }
       public get origin(): RedNode? { originOf(tree, tokens, id) }
+      public get clonedFrom(): BuiltNode? { clonedFromOf(tree, tokens, id) }
       public get name(): String { tree.names[id] }
       public get publicId(): String { tree.attributeLists[id][0] }
       public get systemId(): String { tree.attributeLists[id][1] }
@@ -2714,6 +2972,7 @@ XML both read.
         this.id = id;
       }
       public get origin(): RedNode? { originOf(tree, tokens, id) }
+      public get clonedFrom(): BuiltNode? { clonedFromOf(tree, tokens, id) }
       public get target(): String { tree.names[id] }
       public get data(): String { tree.datas[id] }
       public get children(): List<BuiltNode> { [] }
@@ -2866,4 +3125,64 @@ as the standard's serialization escapes them.
       let tr = (body.child("table") as Element orelse panic()).child("tbody")?.child("tr") as Element orelse panic();
       let row = parseHtmlFragment("<td>y", tr.fragmentContext).html;
       assert(row == "<td>y</td>") { row };
+    }
+
+The selected option, copied into `selectedcontent` (see "Customizable
+select"): the copies are built nodes with the origin of what they copy
+and `clonedFrom` pointing at it, while the tokens stay as written.
+
+    let selectedContentOf(text: String): Element {
+      let select = (parseHtml(text).body as Element orelse panic()).child("select") as Element orelse panic();
+      (select.child("button") as Element orelse panic()).child("selectedcontent") as Element orelse panic()
+    }
+
+    test("selectedcontent copies the selected option") {
+      let text = "<select><button><selectedcontent>old</selectedcontent></button><option>A<option selected>B<b class=c>b</b><!--n--></select>";
+      let doc = parseHtml(text);
+      assert(doc.asWritten == text) { "lossless" };
+      let select = (doc.body as Element orelse panic()).child("select") as Element orelse panic();
+      let content = (select.child("button") as Element orelse panic()).child("selectedcontent") as Element orelse panic();
+      assert(content.html == "<selectedcontent>B<b class=\"c\">b</b><!--n--></selectedcontent>") { content.html };
+      assert(content.clonedFrom == null) { "parsed, not copied" };
+      let options = select.children;
+      let chosen = options[options.length - 1] as Element orelse panic();
+      let copies = content.children;
+      let originals = chosen.children;
+      assert(copies.length == 3 && originals.length == 3) { "three copied" };
+      for (var i = 0; i < copies.length; i += 1) {
+        let copy = copies[i];
+        let original = originals[i];
+        assert(original.clonedFrom == null) { "an original" };
+        let from = copy.clonedFrom as BuiltNode orelse panic();
+        assert(from.html == original.html && from.origin?.span?.toString() == original.origin?.span?.toString()) { "clonedFrom ${i.toString()}" };
+        assert(copy.origin?.span?.toString() == original.origin?.span?.toString()) { "origin ${i.toString()}" };
+      }
+      let b = copies[1] as Element orelse panic();
+      assert((b.startTag as StartTag orelse panic()).asWritten == "<b class=c>") { "start tag shared" };
+      let inner = b.children[0];
+      assert(inner.clonedFrom?.html == "b") { "copies inside copies point back too" };
+    }
+
+    test("which option selectedcontent copies") {
+      let cases = [
+        ["<select><button><selectedcontent></button><option>X", "X"],
+        ["<select><button><selectedcontent></button><option disabled>X<option>Y", "Y"],
+        ["<select><button><selectedcontent></button><optgroup disabled><option>X</optgroup><option>Y", "Y"],
+        ["<select><button><selectedcontent></button><option>X<option selected>Y<option selected>Z<option>W", "Z"],
+        ["<select size=3><button><selectedcontent></button><option>X<option>Y", ""],
+        ["<select size=3><button><selectedcontent></button><option>X<option selected>Y", "Y"],
+        ["<select size=' +1x'><button><selectedcontent></button><option>X", "X"],
+        ["<select multiple><button><selectedcontent>kept</button><option selected>X", "kept"],
+        ["<select><option>X</option><button><selectedcontent></button>", "X"],
+        ["<select><button><selectedcontent></button><datalist><option>X</datalist><option>Y", "Y"],
+      ];
+      for (var i = 0; i < cases.length; i += 1) {
+        let got = selectedContentOf(cases[i][0]).html;
+        let want = "<selectedcontent>${cases[i][1]}</selectedcontent>";
+        assert(got == want) { "${i.toString()}: ${got}" };
+      }
+      let nested = parseHtml("<select><option><selectedcontent></selectedcontent>X</option></select>").html;
+      assert(nested == "<html><head></head><body><select><option><selectedcontent></selectedcontent>X</option></select></body></html>") { nested };
+      let plain = parseHtml("<button><selectedcontent></selectedcontent></button><option>X").html;
+      assert(plain == "<html><head></head><body><button><selectedcontent></selectedcontent></button><option>X</option></body></html>") { plain };
     }

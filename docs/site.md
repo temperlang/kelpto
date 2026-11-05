@@ -28,8 +28,10 @@ on: kelpto-md first, then kelpto-html and kelpto once the page is up
   striking out what's marked wouldn't leave exactly it. A Tree view
   shows the tree a browser builds from it
   all (`buildHtml`), each element badged by where it came from
-  (Markdown, raw HTML, implied, or reopened by the parser); hovering or
-  focusing a node highlights its source in the input.
+  (Markdown, raw HTML, implied, reopened by the parser, or copied into
+  a `<selectedcontent>`); hovering or focusing a node highlights its
+  source in the input. Long rows wrap, attributes on following lines,
+  indented, so neither view scrolls sideways.
 - **Your edits, as code:** under the diff, each edit as one line of code
   in all seven languages, with the same tabs as the tour, sharing the
   choice. `editcode.js` records each edit as a step (its kind, the index
@@ -46,11 +48,11 @@ on: kelpto-md first, then kelpto-html and kelpto once the page is up
   web-platform-tests' tree construction tests, run by the build in Node
   (`html-conformance-node.mjs`) from those test libraries' JS builds.
   The build fails unless every tokenizer test passes and the tree tests
-  pass at least as their runner's floors say, with no failures but the
-  known `<selectedcontent>` ones. Then a parser to try: HTML in, as a
-  document or as `innerHTML` of a chosen element, giving its tree (with
-  implied and reopened elements marked, and sources highlighted as in
-  the demo), its serialization, and the tokenizer's parse errors.
+  pass at least as their runner's floors say (all of them). Then a
+  parser to try: HTML in, as a document or as `innerHTML` of a chosen
+  element, giving its tree (with implied, reopened, and copied
+  elements marked, and sources highlighted as in the demo), its
+  serialization, and the tokenizer's parse errors.
 - **Safe rendering (`#safe`):** the `safeGallery()` cases in
   `kelpto/kelpto.temper.md`, rendered by the build in Node
   (`safe-node.mjs`), which fails unless each gives what the library's
