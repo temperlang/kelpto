@@ -44,6 +44,7 @@ doc.headings[0].text;                       // "Old title"
 doc.headings[0].withText("New title").asWritten; // "# New title\n\nSee <b>this</b>.\n…", the rest untouched
 doc.toHtml();                               // "…<p>See &lt;b&gt;this&lt;/b&gt;.</p>…", raw HTML escaped
 new MarkdownRenderer().withRawHtmlTrusted().render(doc); // "…<p>See <b>this</b>.</p>…"
+new MarkdownRenderer().withHeadingIds().withAlerts().render(doc); // "<h1 id=\"old-title\">Old title</h1>…", as on GitHub
 
 let gfm = MarkdownParser.gfm.parse("| a | b |\n|---|--:|\n| ~~x~~ | www.example.com |\n\n- [ ] todo\n");
 gfm.tables[0].rows[0].cells[1].alignment;   // "right"

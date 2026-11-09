@@ -15,6 +15,16 @@ Three tables, as CommonMark 0.31.2 defines them:
 - Unicode whitespace: Zs, plus tab, line feed, form feed, and carriage
   return.
 
+And two for GitHub's heading ids:
+
+- Lowercase: UnicodeData.txt's simple lowercase mappings, plus U+0130
+  to U+0069 U+0307 (SpecialCasing.txt's one mapping without a condition),
+  as Ruby's `downcase` lowercases.
+- Word characters, as Ruby's Word property and github-slugger keep them:
+  letters (L), marks (M), decimal digits (Nd), letter numbers (Nl),
+  connector punctuation (Pc), and the circled and squared letters (So)
+  that are Alphabetic.
+
 The tables are read where they are, with no decoding ahead. Punctuation
 and case folding are each split into chunks of CHUNK entries: a list of
 the code point each chunk starts at, and a string per chunk, read from its
@@ -22,9 +32,9 @@ start. Each string is numbers in base 32, most significant digit first:
 U+0060 to U+007F for each digit but the last, and U+0040 to U+005F for the
 last, as Hrefine's tables are, so only `\\` and U+007F need escapes.
 
-- Punctuation, per range: the gap since the last range's end (from the
+- Punctuation and word characters, per range: the gap since the last range's end (from the
   chunk's start for the first), and the length.
-- Case folding, per entry: the gap since the last entry's end, then a
+- Case folding and lowercase, per entry: the gap since the last entry's end, then a
   count. A count of 1 or more is a run of that many code points, every
   `stride` (1 or 2) apart, each folding to itself plus `delta`
   (zigzag-encoded: 0, -1, 1, -2, … as 0, 1, 2, 3, …): the numbers after
@@ -63,6 +73,26 @@ def categories(folder: Path) -> dict[int, str]:
         else:
             cats[code] = category
     return cats
+
+
+# So code points that are Alphabetic (Other_Alphabetic in PropList.txt).
+ALPHABETIC_SYMBOLS = [(0x24B6, 0x24E9), (0x1F130, 0x1F149), (0x1F150, 0x1F169), (0x1F170, 0x1F189)]
+
+
+def lowercases(folder: Path) -> dict[int, list[int]]:
+    """Simple lowercase mappings, and U+0130's special one."""
+    out: dict[int, list[int]] = {}
+    for line in (folder / "UnicodeData.txt").read_text(encoding="utf-8").splitlines():
+        fields = line.split(";")
+        if fields[13]:
+            out[int(fields[0], 16)] = [int(fields[13], 16)]
+    out[0x130] = [0x69, 0x307]
+    return out
+
+
+def word_characters(cats: dict[int, str]) -> list[int]:
+    symbols = {c for a, b in ALPHABETIC_SYMBOLS for c in range(a, b + 1)}
+    return sorted(c for c, g in cats.items() if g[0] in "LM" or g in ("Nd", "Nl", "Pc") or c in symbols)
 
 
 def folds(folder: Path) -> dict[int, list[int]]:
@@ -264,7 +294,7 @@ def hexes(values: list[int]) -> list[str]:
     return [f"0x{v:X}" for v in values]
 
 
-def write(p_starts, p_strings, f_starts, f_strings, whitespace) -> None:
+def write(p_starts, p_strings, f_starts, f_strings, whitespace, l_starts, l_strings, w_starts, w_strings) -> None:
     v = unicode_data.VERSION
     out = [
         "# Unicode tables",
@@ -302,6 +332,28 @@ def write(p_starts, p_strings, f_starts, f_strings, whitespace) -> None:
         "    let whitespaceRanges: List<Int> = [",
         *items(hexes([x for r in whitespace for x in r]), "     "),
         "    ];",
+        "",
+        "Lowercase, UnicodeData.txt's simple mappings and U+0130's special one,",
+        "encoded as case folding is: where each chunk starts, and its entries.",
+        "",
+        "    let lowerStarts: List<Int> = [",
+        *items(hexes(l_starts), "     "),
+        "    ];",
+        "",
+        "    let lowerRuns: List<String> = [",
+        *[f"      {literal(s)}," for s in l_strings],
+        "    ];",
+        "",
+        "Word characters, L, M, Nd, Nl, Pc, and alphabetic So, encoded as",
+        "punctuation is: where each chunk starts, and its ranges.",
+        "",
+        "    let wordStarts: List<Int> = [",
+        *items(hexes(w_starts), "     "),
+        "    ];",
+        "",
+        "    let wordRuns: List<String> = [",
+        *[f"      {literal(s)}," for s in w_strings],
+        "    ];",
     ]
     OUT.write_text("\n".join(out) + "\n", encoding="utf-8")
 
@@ -315,15 +367,25 @@ def main() -> None:
     p_starts, p_strings = punctuation_chunks(punct)
     entries = fold_entries(fold)
     f_starts, f_strings = fold_chunks(entries)
+    lower = lowercases(folder)
+    l_entries = fold_entries(lower)
+    l_starts, l_strings = fold_chunks(l_entries)
+    word_list = word_characters(cats)
+    words = set(word_list)
+    word = ranges(word_list)
+    w_starts, w_strings = punctuation_chunks(word)
     for c in range(N):
         want = cats.get(c, "Cn")[0] in "PS"
         assert is_punctuation(p_starts, p_strings, c) == want, hex(c)
         assert fold_of(f_starts, f_strings, c) == fold.get(c, [c]), hex(c)
-    write(p_starts, p_strings, f_starts, f_strings, space)
-    chars = sum(len(s) for s in p_strings + f_strings)
+        assert fold_of(l_starts, l_strings, c) == lower.get(c, [c]), hex(c)
+        assert is_punctuation(w_starts, w_strings, c) == (c in words), hex(c)
+    write(p_starts, p_strings, f_starts, f_strings, space, l_starts, l_strings, w_starts, w_strings)
+    chars = sum(len(s) for s in p_strings + f_strings + l_strings + w_strings)
     print(f"Wrote {OUT.relative_to(ROOT)}: {len(punct)} punctuation ranges, {len(entries)} "
-          f"case folding entries ({len(fold)} code points), {len(space)} whitespace ranges; "
-          f"{len(p_starts) + len(f_starts)} chunks, {chars} characters of strings, "
+          f"case folding entries ({len(fold)} code points), {len(space)} whitespace ranges, "
+          f"{len(l_entries)} lowercase entries ({len(lower)} code points), {len(word)} word ranges; "
+          f"{len(p_starts) + len(f_starts) + len(l_starts) + len(w_starts)} chunks, {chars} characters of strings, "
           f"{OUT.stat().st_size} bytes", file=sys.stderr)
 
 

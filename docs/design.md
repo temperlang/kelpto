@@ -193,6 +193,43 @@ and rendering defaults.
   Nested references stay linear: inner ones are dropped, not
   rescanned.
 
+### GitHub's extras in rendering (built 2026-11-08)
+
+What GitHub's pages add to GFM's HTML, on `MarkdownRenderer`, each
+off unless asked, so the HTML stays cmark-gfm's (and the spec tests'):
+
+- **Heading ids,** `withHeadingIds(prefix)`: the text a heading shows
+  (no tags, so no raw HTML tags or image `alt`; footnote references as
+  their numbers), trimmed, lowercased by Unicode's simple mappings
+  (Ruby's `downcase`, which GitHub uses), spaces as `-`, and only `-`
+  and word characters kept (letters, marks, decimal digits, letter
+  numbers, connector punctuation, and alphabetic symbols, as Ruby's
+  Word property and github-slugger have them), repeats numbered as
+  github-slugger numbers them (`a`, `a-1`, then `a-1-1` for a written
+  `A-1`), so ids are unique. Checked against GitHub's documented
+  examples, and the word characters against github-slugger's regular
+  expression for every code point (the same but for characters newer
+  than its Unicode version).
+- **Alerts,** `withAlerts()`: GitHub's rules (a top-level block quote,
+  a first line of only `[!NOTE]` or another of the five types, as
+  written, in any case, and something after it) and its markup
+  (`div.markdown-alert.markdown-alert-note`, a
+  `p.markdown-alert-title`), without its icons. Found when rendering,
+  not parsing, so the tree and its edits don't change.
+- **Highlighting,** `withCodeHighlighter(fn)`, a `@fun interface`
+  given a block's info string and code, giving `HighlightSpan`s (a
+  class and text) or null. Spans, not HTML: each is written escaped,
+  its class too, and only if the spans' text joins to the code, so a
+  highlighter can't inject markup or change the code. Through
+  `renderSafe`, the spans are judged by the sanitizer too.
+
+`renderSafe` takes a renderer for these. `SanitizerPolicy.github` is
+`standard` plus the presentational attributes GitHub keeps (`align`,
+`valign`, `width`, `border`, and the like) and `tt` and `strike`.
+Neither keeps `style`, comments, or unknown attributes, as GitHub
+doesn't; both keep `id` and `class`, which GitHub drops or prefixes,
+since Kelpto's own HTML needs them.
+
 ### kelpto-html's tokenizer
 
 Built 2026-11-03, against html5lib-tests' tokenizer tests (in
@@ -465,7 +502,14 @@ kelpto-html's sanitizer (`sanitize.temper.md`), and kelpto's
   224 KB output, dearer than the Markdown parse), and the two walks
   the rest; `buildHtml` alone 0.7 s. Kept on anyway, since it's the
   only check that doesn't depend on the sanitizer getting every
-  parsing rule right too. If it matters, a later fast path could skip
+  parsing rule right too. Since 2026-11-08 text is searched with
+  `indexOf` (native everywhere: `str.find` in Python) rather than read
+  a code point at a time: escaping, line endings, NUL, and, in parses
+  that keep no errors (`buildHtml`'s and the reparse), runs of text and
+  quoted attribute values; and tags and plain text go to tree
+  construction straight from the green tree, without views. On 66
+  pages of documentation (833 KB of Markdown), `renderSafe` in Python
+  went from 4.7 to 4.9 s to 2.8 to 3.1 s. If it matters, a later fast path could skip
   it when the first walk only dropped attributes, once that's shown
   to round-trip for the standard policy.
 - **What was removed:** `SafeHtml.removals` lists each element (dropped
@@ -499,8 +543,10 @@ checking every entry as the Temper code reads it:
   (P and S, 359 ranges) and full case folding (C and F, 313 entries
   for 1,606 code points) as base-32 strings in chunks of 16, found by
   binary search over a short list of chunk starts, then read in
-  place; whitespace as 9 ranges. 2,947 characters of strings, 4.8 KB
-  of source.
+  place; whitespace as 9 ranges. For GitHub's heading ids (2026-11-08),
+  lowercase (simple mappings and U+0130's, 195 entries for 1,508 code
+  points) and word characters (816 ranges), encoded the same way. 5,876
+  characters of strings, 9.4 KB of source (4.8 KB before the two).
 - **`entities.temper.md`** (`character_references.py`): the 2,125
   named references, sorted and front-coded, 14,263 characters, read
   into a map when the library loads.
@@ -618,8 +664,9 @@ user text never needs hand-escaping.
     external URLs, written as reference links with their definitions
     gathered at the page's end. CommonMark headings have no ids, so
     an anchor either predicts the slug a renderer gives (GitHub's,
-    with its `-1` suffixes; the context reserves slugs) or writes an
-    explicit HTML anchor; the context picks per target.
+    as `withHeadingIds` writes them, with its `-1` suffixes; the
+    context reserves slugs) or writes an explicit HTML anchor; the
+    context picks per target.
   - **A block-style builder:** nested content as trailing blocks
     (`b.blockQuote { q => ... }`) as well as sub-builders, close to a
     Kotlin DSL while translating to plain lambdas everywhere.

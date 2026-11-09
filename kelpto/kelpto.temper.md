@@ -25,7 +25,7 @@ renderSafe(doc).html;                     // "<p>Hi <b class=\"x\">there</b></p>
     } = import("../kelpto-md");
     let {
       Attribute, BuiltComment, BuiltNode, BuiltText, Element, FragmentContext, FragmentStream, HtmlFragment,
-      HtmlTokens, Removal, SafeHtml, SanitizerPolicy, StartTag, UrlCheck, htmlTokensKind, parseHtmlFragment, tokenizeHtml, tokenizeHtmlGreen,
+      HtmlTokens, Removal, SafeHtml, SanitizerPolicy, StartTag, UrlCheck, htmlTokensKind, parseHtmlFragment, sanitizeHtml, tokenizeHtml, tokenizeHtmlGreen,
     } = import("../kelpto-html");
 
 ## Parsing
@@ -203,7 +203,10 @@ Renders `doc` for a page, safe for Markdown from anyone: the tree a
 browser builds from the rendering (`buildHtml`, with raw HTML parsed
 as written), sanitized by `policy` (kelpto-html's
 `SanitizerPolicy.standard` by default: what Markdown and GFM render,
-and common formatting) for `context`. So raw HTML and Markdown are
+and common formatting) for `context`. `renderer` renders it, so
+GitHub's heading ids, alerts, and code highlighting can be had here
+too (see `MarkdownRenderer`); keep its raw HTML trusted, as by
+default, to have raw HTML parsed and judged, not shown as text. So raw HTML and Markdown are
 judged together, as the browser joins them, and Markdown's own links
 and images are checked like any other URL: `[x](javascript:alert(1))`
 keeps its text and loses its `href`. See kelpto-html's `sanitizeHtml`
@@ -212,14 +215,18 @@ for what's kept and what's guaranteed.
 ```temper inert
 let doc = parseMarkdownWithHtml("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>");
 renderSafe(doc).html;   // "<p><a>a</a> <b>b</b></p>\n"
+let github = new MarkdownRenderer().withRawHtmlTrusted().withHeadingIds().withAlerts();
+renderSafe(parseMarkdownWithHtml("# Hi <i>there</i>"), SanitizerPolicy.github, new FragmentContext("body"), github).html;
+  // "<h1 id=\"hi-there\">Hi <i>there</i></h1>\n"
 ```
 
     export let renderSafe(
       doc: MarkdownDocument,
       policy: SanitizerPolicy = SanitizerPolicy.standard,
       context: FragmentContext = new FragmentContext("body"),
+      renderer: MarkdownRenderer = new MarkdownRenderer().withRawHtmlTrusted(),
     ): SafeHtml {
-      buildHtml(doc, context).sanitize(policy)
+      buildHtml(doc, context, renderer).sanitize(policy)
     }
 
 ## Tests
@@ -391,6 +398,44 @@ the sanitizer checks its output again.
       assert(tel == "<p><a href=\"tel:123\" target=\"_blank\">t</a> <video src=\"v.mp4\" controls=\"\">v</video></p>\n") { tel };
       let textOnly = renderSafe(parseMarkdownWithHtml("# *a* [b](/c)\n"), SanitizerPolicy.textOnly).html;
       assert(textOnly == "a b\n") { textOnly };
+    }
+
+GitHub's extras through `renderSafe`: heading ids and alerts keep
+their `id` and `class` under `standard`, and a highlighter trying to
+inject markup gets only escaped text and a class, which the sanitizer
+judges like anything else.
+
+    test("renderSafe with heading ids, alerts, and highlighting") {
+      let doc = MarkdownParser.gfm.withRawHtmlHandler(new ParsedRawHtml()).parse(
+        "# Install <b>it</b>\n\n> [!WARNING]\n> Hot <script>alert(1)</script>\n\n```sh\nrm -rf /\n```\n",
+      );
+      let renderer = new MarkdownRenderer().withRawHtmlTrusted().withHeadingIds().withAlerts();
+      let safe = renderSafe(doc, SanitizerPolicy.standard, new FragmentContext("body"), renderer);
+      let expected = [
+        "<h1 id=\"install-it\">Install <b>it</b></h1>\n",
+        "<div class=\"markdown-alert markdown-alert-warning\">\n<p class=\"markdown-alert-title\">Warning</p>\n<p>Hot </p>\n</div>\n",
+        "<pre><code class=\"language-sh\">rm -rf /\n</code></pre>\n",
+      ].join("") { (s: String): String => s };
+      assert(safe.html == expected) { safe.html };
+      assert(safe.removals.length == 1 && safe.removals[0].name == "script") { "only the script" };
+      // What a renderer writes for a highlighter's span with markup in
+      // its class (see kelpto-md's tests): one span, its class text.
+      let highlighted = sanitizeHtml("<pre><code><span class=\"k&quot;&gt;&lt;img src=x onerror=alert(1)&gt;\">rm</span>\n</code></pre>").html;
+      assert(highlighted == "<pre><code><span class=\"k&quot;><img src=x onerror=alert(1)>\">rm</span>\n</code></pre>") { highlighted };
+      let escaped = renderSafe(doc, SanitizerPolicy.standard, new FragmentContext("body"), new MarkdownRenderer().withAlerts()).html;
+      assert(escaped.split("&lt;script&gt;").length == 2) { "raw HTML shown as text: ${escaped}" };
+    }
+
+The GitHub-like policy keeps GitHub's presentational attributes,
+such as a centered paragraph, as GitHub does, and still drops styles
+and comments.
+
+    test("SanitizerPolicy.github") {
+      let doc = parseMarkdownWithHtml("<p align=\"center\" style=\"color: red\"><img src=\"logo.png\" width=\"80\" align=\"left\"></p>\n\n<table border=\"0\"><tr valign=\"top\"><td nowrap>x</td></tr></table>\n\n<!-- note -->\n");
+      let html = renderSafe(doc, SanitizerPolicy.github).html;
+      assert(html == "<p align=\"center\"><img src=\"logo.png\" width=\"80\" align=\"left\"></p>\n<table border=\"0\"><tbody><tr valign=\"top\"><td nowrap=\"\">x</td></tr></tbody></table>\n\n") { html };
+      let standard = renderSafe(doc).html;
+      assert(standard == "<p><img src=\"logo.png\" width=\"80\"></p>\n<table><tbody><tr><td>x</td></tr></tbody></table>\n\n") { standard };
     }
 
 HTML blocks get HTML subtrees too, unless container prefixes split

@@ -264,6 +264,19 @@ time, splitting off what they treat differently.
       }
     }
 
+An attribute's name (`isName`) or value, as `Attribute` reads it.
+
+    let greenAttributePart(attribute: GreenNode, kind: Kind, isName: Boolean): String {
+      let kids = attribute.children;
+      for (var i = 0; i < kids.length; i += 1) {
+        if (kids[i].kind.id == kind.id) {
+          let text = (kids[i] as GreenToken orelse panic()).text;
+          return if (isName) { htmlName(text) } else { decodeAttributeValue(unquote(text)) };
+        }
+      }
+      if (isName) { htmlName("") } else { "" }
+    }
+
     let whitespaceEnd(text: String): StringIndex {
       var i = String.begin;
       while (text.hasIndex(i) && isAsciiWhitespace(text[i])) { i = text.next(i); }
@@ -396,9 +409,13 @@ carries over, which matters only for `<table>` closing a `<p>`.
         t.offset = offset;
         t.selfClosing = false;
         t.tokenAttributes = noStrings;
+        nextState = 0;
+        if (readGreen(green, t)) {
+          if (t.kind != charToken || !t.text.isEmpty) { process(t); }
+          return nextState;
+        }
         let red = new RedNode(green, null, offset, index);
         let view = htmlTokenOf(red);
-        nextState = 0;
         when (view) {
           is StartTag -> do {
             t.kind = startToken;
@@ -442,6 +459,46 @@ carries over, which matters only for `<table>` closing a `<p>`.
         }
         process(t);
         nextState
+      }
+
+Tags and plain text, the most of most documents, read from the green
+tree directly, as the views would read them, without making views:
+whether `green` was one of those.
+
+      private readGreen(green: GreenNode, t: TreeToken): Boolean {
+        let id = green.kind.id;
+        let kids = green.children;
+        if (id == htmlTextKind.id) {
+          if (kids.length != 1 || kids[0].kind.id != charsKind.id) { return false; }
+          t.kind = charToken;
+          t.text = normalizeText((kids[0] as GreenToken orelse panic()).text, false);
+          return true;
+        }
+        if (id != startTagKind.id && id != endTagKind.id) { return false; }
+        t.kind = if (id == startTagKind.id) { startToken } else { endToken };
+        var name = "";
+        var named = false;
+        let triples = new ListBuilder<String>();
+        for (var i = 0; i < kids.length; i += 1) {
+          let kid = kids[i];
+          let kidId = kid.kind.id;
+          if (kidId == tagNameKind.id && !named) {
+            name = htmlName((kid as GreenToken orelse panic()).text);
+            named = true;
+          } else if (kidId == selfClosingKind.id && id == startTagKind.id) {
+            // One condition: C# drops braces around a lone inner `if`,
+            // so a following `else` would go with it.
+            t.selfClosing = true;
+          } else if (kidId == attributeKind.id && id == startTagKind.id) {
+            let attribute = kid as GreenNode orelse panic();
+            triples.add("");
+            triples.add(greenAttributePart(attribute, attributeNameKind, true));
+            triples.add(greenAttributePart(attribute, attributeValueKind, false));
+          }
+        }
+        t.name = name;
+        if (!triples.isEmpty) { t.tokenAttributes = triples.toList(); }
+        true
       }
 
 Synthetic tokens, for a parse fed in pieces: a start tag without
@@ -1529,9 +1586,13 @@ giving whether any is left.
 Text in body: NUL dropped, the rest inserted.
 
       private bodyText(text: String): Void {
-        var start = String.begin;
-        var i = String.begin;
         let end = text.end;
+        var i = firstAt(text, "\u{0}", String.begin, end);
+        if (i == end) {
+          insertBodyRun(text);
+          return;
+        }
+        var start = String.begin;
         while (i < end) {
           let c = text[i];
           if (c == 0) {
@@ -2609,7 +2670,7 @@ off, which changes how `<noscript>` reads.
 
       public parse(text: String): HtmlDocument {
         let builder = new TreeBuilder(scripting);
-        let machine = new Tokenizer(text, "", true, builder);
+        let machine = new Tokenizer(text, "", true, builder, true);
         machine.run(0);
         let tokens = new HtmlTokens(redRoot(machine.green()));
         new HtmlDocument(tokens, builder.tree, builder.quirks, machine.parseErrors())
@@ -2623,7 +2684,7 @@ how the text reads (`<td>` alone is a cell in a `tr`, ignored in a
       public parseFragment(text: String, context: FragmentContext): HtmlFragment {
         let builder = new TreeBuilder(scripting);
         let state = builder.startFragment(context);
-        let machine = new Tokenizer(text, "", true, builder);
+        let machine = new Tokenizer(text, "", true, builder, true);
         machine.run(state);
         let tokens = new HtmlTokens(redRoot(machine.green()));
         new HtmlFragment(tokens, builder.tree, context, machine.parseErrors())
@@ -3039,35 +3100,43 @@ overflow it; fine for now.
 as the standard's serialization escapes them.
 
     let escapeText(text: String, inAttribute: Boolean): String {
+      let end = text.end;
+      var amp = firstAt(text, "&", String.begin, end);
+      var nbsp = firstAt(text, "\u{A0}", String.begin, end);
+      var quot = if (inAttribute) { firstAt(text, "\"", String.begin, end) } else { end };
+      var lt = if (inAttribute) { end } else { firstAt(text, "<", String.begin, end) };
+      var gt = if (inAttribute) { end } else { firstAt(text, ">", String.begin, end) };
+      var at = earlier(earlier(amp, nbsp), earlier(quot, earlier(lt, gt)));
+      if (at == end) { return text; }
       let out = new StringBuilder();
       var start = String.begin;
-      var i = String.begin;
-      while (text.hasIndex(i)) {
-        let c = text[i];
-        let replacement = if (c == char'&') {
-          "&amp;"
+      while (at < end) {
+        out.append(text.slice(start, at));
+        let c = text[at];
+        start = text.next(at);
+        if (c == char'&') {
+          out.append("&amp;");
+          amp = firstAt(text, "&", start, end);
         } else if (c == 0xA0) {
-          "&nbsp;"
-        } else if (inAttribute && c == char'"') {
-          "&quot;"
-        } else if (!inAttribute && c == char'<') {
-          "&lt;"
-        } else if (!inAttribute && c == char'>') {
-          "&gt;"
+          out.append("&nbsp;");
+          nbsp = firstAt(text, "\u{A0}", start, end);
+        } else if (c == char'"') {
+          out.append("&quot;");
+          quot = firstAt(text, "\"", start, end);
+        } else if (c == char'<') {
+          out.append("&lt;");
+          lt = firstAt(text, "<", start, end);
         } else {
-          ""
-        };
-        if (!replacement.isEmpty) {
-          out.append(text.slice(start, i));
-          out.append(replacement);
-          start = text.next(i);
+          out.append("&gt;");
+          gt = firstAt(text, ">", start, end);
         }
-        i = text.next(i);
+        at = earlier(earlier(amp, nbsp), earlier(quot, earlier(lt, gt)));
       }
-      if (start == String.begin) { return text; }
-      out.append(text.slice(start, text.end));
+      out.append(text.slice(start, end));
       out.toString()
     }
+
+    let earlier(a: StringIndex, b: StringIndex): StringIndex { if (b < a) { b } else { a } }
 
 ## Tests
 

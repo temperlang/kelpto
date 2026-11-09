@@ -272,6 +272,16 @@ only as a checkbox (GFM's task list items), so no form can be faked.
 clobbering, if the page's scripts read `window.someId`); a prefix for
 user ids, as GitHub's `user-content-`, isn't here yet.
 
+`github` is `standard` and the presentational attributes GitHub keeps
+in READMEs: `align`, `valign`, `width`, `height`, `border`,
+`cellpadding`, `cellspacing`, `nowrap`, `hspace`, `vspace`, `clear`,
+`noshade`, `colspan`, `rowspan`, `headers`, `scope`, `abbr`, and
+`axis` on any element, and `tt` and `strike`, for a centered logo or a
+table laid out as on GitHub. Like `standard`, and GitHub, it drops
+`style` (which can restyle the page), comments, and attributes GitHub
+doesn't know, such as Python-Markdown's `markdown`; unlike GitHub, it
+keeps `id` and `class`, which Kelpto's own HTML needs.
+
 `textOnly` keeps only text: build a policy up from nothing with it.
 
     export class SanitizerPolicy {
@@ -291,6 +301,11 @@ user ids, as GitHub's `user-content-`, isn't here yet.
       public static standard: SanitizerPolicy = SanitizerPolicy.named(
         "a abbr b bdi bdo blockquote br caption cite code col colgroup dd del details dfn div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p picture pre q rp rt ruby s samp section small source span strong sub summary sup table tbody td tfoot th thead time tr u ul var wbr",
         "*=id,class,title,lang,dir a=href,aria-label,data-footnote-ref,data-footnote-backref,data-footnote-backref-idx img=src,srcset,alt,width,height source=srcset,media,type,width,height ol=start,reversed,type li=value td=align,colspan,rowspan th=align,colspan,rowspan,scope col=span colgroup=span input=type,checked,disabled section=data-footnotes blockquote=cite q=cite del=cite,datetime ins=cite,datetime time=datetime details=open",
+      );
+
+      public static github: SanitizerPolicy = SanitizerPolicy.named(
+        "a abbr b bdi bdo blockquote br caption cite code col colgroup dd del details dfn div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p picture pre q rp rt ruby s samp section small source span strike strong sub summary sup table tbody td tfoot th thead time tr tt u ul var wbr",
+        "*=id,class,title,lang,dir,align,valign,width,height,border,cellpadding,cellspacing,nowrap,hspace,vspace,clear,noshade,colspan,rowspan,headers,scope,abbr,axis a=href,aria-label,data-footnote-ref,data-footnote-backref,data-footnote-backref-idx img=src,srcset,alt source=srcset,media,type ol=start,reversed,type li=value input=type,checked,disabled section=data-footnotes blockquote=cite q=cite del=cite,datetime ins=cite,datetime time=datetime details=open col=span colgroup=span",
       );
 
       public static textOnly: SanitizerPolicy = SanitizerPolicy.named("", "");
@@ -587,7 +602,7 @@ scripting on, as browsers parse `innerHTML`.
     let fragmentTree(text: String, context: FragmentContext): BuiltTree {
       let builder = new TreeBuilder(true);
       let state = builder.startFragment(context);
-      let machine = new Tokenizer(text, "", true, builder);
+      let machine = new Tokenizer(text, "", true, builder, false);
       machine.run(state);
       builder.tree
     }

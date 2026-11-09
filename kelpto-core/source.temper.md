@@ -27,6 +27,14 @@ renderer does, so it's safe in element content and quoted attribute
 values.
 
     export let escapeHtml(text: String): String {
+      // Found natively first (`str.find` in Python), as most text has
+      // nothing to escape.
+      if (
+        !(text.indexOf("&") is StringIndex) && !(text.indexOf("<") is StringIndex) &&
+        !(text.indexOf(">") is StringIndex) && !(text.indexOf("\"") is StringIndex)
+      ) {
+        return text;
+      }
       let out = new StringBuilder();
       var runStart = String.begin;
       var i = String.begin;

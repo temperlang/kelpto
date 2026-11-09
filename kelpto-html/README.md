@@ -65,7 +65,8 @@ sanitizeHtml("<a href='java&#x09;script:x' onclick=y>Hi</a><script>z</script>").
 - **A sanitizer** on the built tree, never the text: `sanitizeHtml`,
   or `sanitize` on a parsed fragment, document, or `FragmentStream`,
   keeps what a `SanitizerPolicy` allows (`standard` by default;
-  `withElements`, `withAttributes`, `withSchemes`, `withUrlCheck`,
+  `github` adds the presentational attributes GitHub keeps, such as
+  `align` and `width`; `withElements`, `withAttributes`, `withSchemes`, `withUrlCheck`,
   and the others change it), drops scripts, styles, event handlers,
   comments, processing instructions, and SVG and MathML unless
   allowed, checks every URL attribute, and gives `SafeHtml`, checked

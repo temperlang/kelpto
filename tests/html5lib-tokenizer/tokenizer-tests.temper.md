@@ -3,12 +3,14 @@
 Each test tokenizes its input from its initial state, with its last
 start tag and without the state switching tree construction does, and
 writes the tokens and errors in the canonical form the generator
-wrote the expected ones in (see `scripts/html5lib_tokenizer.py`).
+wrote the expected ones in (see `scripts/html5lib_tokenizer.py`), and
+checks the tokens are the same without errors kept.
 
     let {
       ContentState, Comment, Doctype, DroppedTag, EndTag, HtmlParseError, HtmlToken,
-      HtmlTokenizer, ProcessingInstruction, StartTag, Text,
+      HtmlTokenizer, HtmlTokens, ProcessingInstruction, StartTag, Text,
     } = import("../../kelpto-html");
+    let { redRoot } = import("../../kelpto-core");
 
     let stateFor(name: String): ContentState {
       if (name == "RCDATA state") {
@@ -33,11 +35,11 @@ wrote the expected ones in (see `scripts/html5lib_tokenizer.py`).
 The tokens in canonical form, adjacent text joined, as html5lib-tests
 writes them.
 
-    let tokenStrings(test: TokenizerTest, tokenizer: HtmlTokenizer): List<String> {
+    let tokenStrings(tokens: HtmlTokens): List<String> {
       let out = new ListBuilder<String>();
       var chars = new StringBuilder();
       var inText = false;
-      let children = tokenizer.tokenize(test.input).tokens.children;
+      let children = tokens.children;
       for (var i = 0; i < children.length; i += 1) {
         let child = children[i];
         when (child) {
@@ -112,8 +114,12 @@ What a test gives: `ok`, or what went wrong.
         .withInitialState(stateFor(test.state)).withLastStartTag(test.lastStartTag);
       let result = tokenizer.tokenize(test.input);
       if (result.tokens.asWritten != test.input) { return "not lossless"; }
-      let tokens = tokenStrings(test, tokenizer).join("\u{1E}") { (s: String): String => s };
+      let tokens = tokenStrings(result.tokens).join("\u{1E}") { (s: String): String => s };
       if (tokens != test.tokens) { return "tokens: ${tokens}"; }
+      // Without errors, text is skipped by searching, not read: the
+      // same tokens.
+      let fast = tokenStrings(new HtmlTokens(redRoot(tokenizer.tokenizeGreen(test.input)))).join("\u{1E}") { (s: String): String => s };
+      if (fast != tokens) { return "tokens without errors: ${fast}"; }
       let errors = result.errors.join(",") { (e: HtmlParseError): String => errorString(test.input, e) };
       if (errors != expectedErrors(test)) { return "errors: ${errors}"; }
       "ok"

@@ -6,7 +6,7 @@ text, unless the caller chooses otherwise by name. Link and image
 destinations stay as written in the tree (`LinkTarget`); the renderer
 percent-encodes them only as it writes them.
 
-    let { escapeHtml } = import("../kelpto-core");
+    let { escapeHtml, isWordCharacter, lowercase } = import("../kelpto-core");
 
 ```temper inert
 let doc = parseMarkdown("Hi <b>there</b>");
@@ -130,19 +130,68 @@ it, which goes into the HTML as is.
       public rawHtml(content: RawHtmlContent, rendered: String, node: MarkdownNode): Void;
     }
 
+## Highlighting code
+
+How code blocks are highlighted, if at all: given a block's info
+string (empty for an indented block) and its code, the code as spans,
+each with a CSS class, or null to write it plain. The spans' text,
+joined, must be the code exactly, or the code is written plain. Each
+is written as `<span class="…">`, escaped, the class too (or as plain
+text, for an empty class), so a highlighter can't add markup or change
+what the code says, however it's written: no HTML from it reaches the
+page.
+
+```temper inert
+let keywords = new MarkdownRenderer().withCodeHighlighter { (info: String, code: String): List<HighlightSpan>? =>
+  if (info == "py" && code == "pass\n") { [new HighlightSpan("k", "pass"), new HighlightSpan("", "\n")] } else { null }
+};
+keywords.render(parseMarkdown("```py\npass\n```\n"));
+  // "<pre><code class=\"language-py\"><span class=\"k\">pass</span>\n</code></pre>\n"
+```
+
+    export @fun interface CodeHighlighter(info: String, code: String): List<HighlightSpan>?;
+
+A run of code and its CSS class, or `""` for none.
+
+    export class HighlightSpan(public className: String, public text: String) {}
+
+    let noHighlighting(info: String, code: String): List<HighlightSpan>? { null }
+
+    let noSpans: List<HighlightSpan> = new ListBuilder<HighlightSpan>().toList();
+
+What a renderer does beyond CommonMark's HTML.
+
+    class RenderOptions(
+      public headingIds: Boolean,
+      public headingIdPrefix: String,
+      public alerts: Boolean,
+      public highlights: Boolean,
+      public highlighter: CodeHighlighter,
+    ) {}
+
 ## The renderer
 
 CommonMark's HTML, as its reference implementation lays it out: each
 block on its own lines, and tight lists' paragraphs without `<p>`.
+GitHub's heading ids, alerts, and code highlighting are opt-in, with
+`withHeadingIds`, `withAlerts`, and `withCodeHighlighter`, so the HTML
+stays CommonMark's (or GFM's) unless asked.
 
     export class MarkdownRenderer {
       private rawHtmlRenderer: RawHtmlRenderer;
+      private var options: RenderOptions = new RenderOptions(false, "", false, false, noHighlighting);
 
 A renderer that escapes raw HTML, unless given another
 `RawHtmlRenderer`.
 
       public constructor(rawHtmlRenderer: RawHtmlRenderer = new EscapedRawHtml()) {
         this.rawHtmlRenderer = rawHtmlRenderer;
+      }
+
+      private made(rawHtml: RawHtmlRenderer, newOptions: RenderOptions): MarkdownRenderer {
+        let renderer = new MarkdownRenderer(rawHtml);
+        renderer.options = newOptions;
+        renderer
       }
 
 A renderer that passes raw HTML through exactly as written, inline and
@@ -153,13 +202,13 @@ page to mislead them. For Markdown from users, keep the default, or
 use the `kelpto` library's `renderSafe`.
 
       public withRawHtmlTrusted(): MarkdownRenderer {
-        new MarkdownRenderer(new TrustedRawHtml())
+        made(new TrustedRawHtml(), options)
       }
 
 A renderer using `renderer` for raw HTML.
 
       public withRawHtmlRenderer(renderer: RawHtmlRenderer): MarkdownRenderer {
-        new MarkdownRenderer(renderer)
+        made(renderer, options)
       }
 
 A renderer that also applies GFM's filter for disallowed raw HTML to
@@ -174,7 +223,45 @@ tag, so trust the Markdown as for `withRawHtmlTrusted()`, or use the
 `kelpto` library's `renderSafe`.
 
       public withDisallowedRawHtmlFiltered(): MarkdownRenderer {
-        new MarkdownRenderer(new FilteredRawHtml(rawHtmlRenderer))
+        made(new FilteredRawHtml(rawHtmlRenderer), options)
+      }
+
+A renderer that gives each heading an `id`, as GitHub's are, so links
+to `#a-heading` work as on GitHub: the heading's text (as the page
+shows it, so without markup, raw HTML tags, or images), with leading
+and trailing whitespace dropped, lowercased (see kelpto-core's
+`lowercase`), with each space as `-`, and only `-` and word characters
+kept (see `isWordCharacter`): `## This'll be a _Helpful_ Section` is
+`thisll-be-a-helpful-section`. A repeat gets `-1`, `-2`, and so on, as
+github-slugger numbers them, so every id is unique. `prefix` goes
+before each, such as GitHub's `user-content-`, to keep ids apart from
+the page's own. A heading with no word characters gets no `id`.
+
+      public withHeadingIds(prefix: String = ""): MarkdownRenderer {
+        let o = options;
+        made(rawHtmlRenderer, new RenderOptions(true, prefix, o.alerts, o.highlights, o.highlighter))
+      }
+
+A renderer that writes GitHub's alerts as GitHub does: a block quote at
+the top of the document whose first line is `[!NOTE]`, `[!TIP]`,
+`[!IMPORTANT]`, `[!WARNING]`, or `[!CAUTION]` (in any case, alone on
+its line, as written, without escapes), with something after it,
+becomes `<div class="markdown-alert markdown-alert-note">` with a
+title, `<p class="markdown-alert-title">Note</p>`, and the rest. Block
+quotes inside others, in lists, or in footnotes stay block quotes, as
+on GitHub.
+
+      public withAlerts(): MarkdownRenderer {
+        let o = options;
+        made(rawHtmlRenderer, new RenderOptions(o.headingIds, o.headingIdPrefix, true, o.highlights, o.highlighter))
+      }
+
+A renderer that highlights code blocks with `highlighter` (see
+`CodeHighlighter`).
+
+      public withCodeHighlighter(highlighter: CodeHighlighter): MarkdownRenderer {
+        let o = options;
+        made(rawHtmlRenderer, new RenderOptions(o.headingIds, o.headingIdPrefix, o.alerts, true, highlighter))
       }
 
       public render(doc: MarkdownDocument): String { renderWith(doc, null).toString() }
@@ -187,7 +274,18 @@ writing a string.
       private renderWith(doc: MarkdownDocument, sink: RenderSink?): HtmlOut {
         let footnotes = if (hasFootnotes(doc.node)) { new FootnoteIndex(doc.node) } else { null };
         let out = new HtmlOut(definitionsOf(doc), isGfmDocument(doc.node), footnotes, sink);
-        renderBlocks(doc.children, false, out);
+        let blocks = doc.children;
+        for (var i = 0; i < blocks.length; i += 1) {
+          let block = blocks[i];
+          if (options.alerts && block is BlockQuote) {
+            let alert = alertOf(block as BlockQuote orelse panic());
+            if (alert != null) {
+              renderAlert(alert, out);
+              continue;
+            }
+          }
+          renderBlock(block, false, out);
+        }
         if (footnotes != null) { renderFootnotes(doc, footnotes, out); }
         out
       }
@@ -269,6 +367,40 @@ text as written.
         out.characters("[^${reference.label}]", reference);
       }
 
+An alert, as GitHub writes it, but laid out as cmark lays out a block
+quote: the title, then the rest of the first paragraph, if any, as a
+paragraph, then the other blocks.
+
+      private renderAlert(alert: Alert, out: HtmlOut): Void {
+        let quote = alert.quote;
+        out.line(quote);
+        out.startTag("div", "<div class=\"markdown-alert markdown-alert-${alert.type}\">", quote);
+        out.newline(quote);
+        out.startTag("p", "<p class=\"markdown-alert-title\">", quote);
+        out.characters(alert.title, quote);
+        out.endTag("p", quote);
+        out.newline(quote);
+        let kids = quote.children;
+        let first = kids[0] as Paragraph orelse panic();
+        let inlines = first.children;
+        if (alert.restAt < inlines.length) {
+          out.startTag("p", "<p>", first);
+          let split = inlines[alert.restAt];
+          if (alert.restText != "" && split is Text) {
+            out.characters(alert.restText, split);
+          } else {
+            renderInline(split, out);
+          }
+          for (var i = alert.restAt + 1; i < inlines.length; i += 1) { renderInline(inlines[i], out); }
+          out.endTag("p", first);
+          out.newline(first);
+        }
+        for (var i = 1; i < kids.length; i += 1) { renderBlock(kids[i], false, out); }
+        out.line(quote);
+        out.endTag("div", quote);
+        out.newline(quote);
+      }
+
       private renderBlocks(blocks: List<BlockChild>, tight: Boolean, out: HtmlOut): Void {
         for (var i = 0; i < blocks.length; i += 1) {
           renderBlock(blocks[i], tight, out);
@@ -282,7 +414,12 @@ text as written.
           is Heading -> do {
             let tag = "h${block.level.toString()}";
             out.line(block);
-            out.startTag(tag, "<${tag}>", block);
+            var id = "";
+            if (options.headingIds) {
+              let slug = out.uniqueSlug(slugOf(headingText(block.children, out.footnotes)));
+              if (!slug.isEmpty) { id = " id=\"${escapeHtml("${options.headingIdPrefix}${slug}")}\""; }
+            }
+            out.startTag(tag, "<${tag}${id}>", block);
             renderInlines(block.children, out);
             out.endTag(tag, block);
             out.newline(block);
@@ -307,7 +444,7 @@ text as written.
             } else {
               out.startTag("code", "<code class=\"language-${escapeHtml(language)}\">", block);
             }
-            out.characters(block.code, block);
+            renderCode(block.info, block.code, block, out);
             out.endTag("code", block);
             out.endTag("pre", block);
             out.newline(block);
@@ -316,7 +453,7 @@ text as written.
             out.line(block);
             out.startTag("pre", "<pre>", block);
             out.startTag("code", "<code>", block);
-            out.characters(block.code, block);
+            renderCode("", block.code, block, out);
             out.endTag("code", block);
             out.endTag("pre", block);
             out.newline(block);
@@ -378,6 +515,32 @@ text as written.
           is LinkReferenceDefinition -> do {};
           is BlankLine -> do {};
         }
+      }
+
+Code, highlighted if the highlighter gives spans that join to it.
+
+      private renderCode(info: String, code: String, block: MarkdownNode, out: HtmlOut): Void {
+        if (options.highlights) {
+          let highlighter = options.highlighter;
+          let found = highlighter(info, code);
+          // Typed apart, since Temper types `found` as any value, not null.
+          let spans: List<HighlightSpan> = found ?? noSpans;
+          if (found != null && spannedText(spans) == code) {
+            for (var i = 0; i < spans.length; i += 1) {
+              let span = spans[i];
+              if (span.text.isEmpty) { continue; }
+              if (span.className.isEmpty) {
+                out.characters(span.text, block);
+              } else {
+                out.startTag("span", "<span class=\"${escapeHtml(span.className)}\">", block);
+                out.characters(span.text, block);
+                out.endTag("span", block);
+              }
+            }
+            return;
+          }
+        }
+        out.characters(code, block);
       }
 
 A GFM table, as cmark-gfm writes it: `<thead>` with the header row,
@@ -555,6 +718,162 @@ each of its `count` references.
       }
     }
 
+    let spannedText(spans: List<HighlightSpan>): String {
+      let out = new StringBuilder();
+      for (var i = 0; i < spans.length; i += 1) { out.append(spans[i].text); }
+      out.toString()
+    }
+
+## Heading ids
+
+A heading's text as the page shows it, for its id: what the renderer
+writes as text, without tags, so without raw HTML's tags or images'
+`alt`, and footnote references as their numbers.
+
+    let headingText(inlines: List<ParagraphChild>, footnotes: FootnoteIndex?): String {
+      let out = new StringBuilder();
+      addHeadingText(inlines, out, footnotes);
+      out.toString()
+    }
+
+    let addHeadingText(inlines: List<ParagraphChild>, out: StringBuilder, footnotes: FootnoteIndex?): Void {
+      for (var i = 0; i < inlines.length; i += 1) {
+        let inline = inlines[i];
+        when (inline) {
+          is Text -> out.append(inline.text);
+          is CodeSpan -> out.append(inline.code);
+          is CharacterReference -> out.append(inline.value);
+          is Autolink -> out.append(inline.text);
+          is Emphasis -> addHeadingText(inline.children, out, footnotes);
+          is Strong -> addHeadingText(inline.children, out, footnotes);
+          is Strikethrough -> addHeadingText(inline.children, out, footnotes);
+          is Link -> addHeadingText(paragraphChildrenOf(inline.node), out, footnotes);
+          is FootnoteReference -> do {
+            let number = footnotes?.numberAt(inline.node.offset) ?? 0;
+            out.append(if (number > 0) { number.toString() } else { "[^${inline.label}]" });
+          };
+          else -> do {};
+        }
+      }
+    }
+
+GitHub's slug of `text`, before numbering repeats: trimmed,
+lowercased, spaces as `-`, and only `-` and word characters kept.
+
+    let slugOf(text: String): String {
+      var start = String.begin;
+      var end = text.end;
+      while (text.hasIndex(start) && isWhitespaceCode(text[start])) { start = text.next(start); }
+      while (end > start && isWhitespaceCode(text[text.prev(end)])) { end = text.prev(end); }
+      let lower = lowercase(text.slice(start, end));
+      let out = new StringBuilder();
+      var runStart = String.begin;
+      var i = String.begin;
+      while (lower.hasIndex(i)) {
+        let c = lower[i];
+        let next = lower.next(i);
+        if (c == char' ') {
+          out.append(lower.slice(runStart, i));
+          out.append("-");
+          runStart = next;
+        } else if (c != char'-' && !isWordCharacter(c)) {
+          out.append(lower.slice(runStart, i));
+          runStart = next;
+        }
+        i = next;
+      }
+      out.append(lower.slice(runStart, lower.end));
+      out.toString()
+    }
+
+    let isWhitespaceCode(c: Int): Boolean {
+      c == char' ' || c == char'\t' || c == char'\n' || c == char'\r' || c == 0xC
+    }
+
+## Alerts
+
+A block quote that's a GitHub alert: its `type` (`note`, `tip`,
+`important`, `warning`, or `caution`) and `title`, and where the first
+paragraph goes on after the marker's line, as an index among its
+inlines and, if that's a `Text` the line ends in, the text after the
+line break.
+
+    class Alert(
+      public quote: BlockQuote,
+      public type: String,
+      public title: String,
+      public restAt: Int,
+      public restText: String,
+    ) {}
+
+    let alertTypes = ["note", "tip", "important", "warning", "caution"];
+    let alertTitles = ["Note", "Tip", "Important", "Warning", "Caution"];
+
+The alert `quote` is, or null: its first block a paragraph whose first
+line is only plain text, as written, that reads `[!NOTE]` or another
+type, ignoring ASCII case and trailing spaces, and something after
+that line.
+
+    let alertOf(quote: BlockQuote): Alert? {
+      let kids = quote.children;
+      if (kids.isEmpty || !(kids[0] is Paragraph)) { return null; }
+      let inlines = (kids[0] as Paragraph orelse panic()).children;
+      let line = new StringBuilder();
+      var restAt = inlines.length;
+      var restText = "";
+      for (var i = 0; i < inlines.length; i += 1) {
+        let inline = inlines[i];
+        if (inline is HardBreak) {
+          restAt = i + 1;
+          break;
+        }
+        if (!(inline is Text)) { return null; }
+        let text = (inline as Text orelse panic()).text;
+        let written = inline.asWritten;
+        let breakAt = firstLineEnd(text);
+        let firstLine = text.slice(String.begin, breakAt);
+        // As written: no escapes or references on the marker's line.
+        if (!startsWithText(written, firstLine)) { return null; }
+        line.append(firstLine);
+        if (text.hasIndex(breakAt)) {
+          let rest = text.slice(text.next(breakAt), text.end);
+          if (rest.isEmpty) {
+            restAt = i + 1;
+          } else {
+            restAt = i;
+            restText = rest;
+          }
+          break;
+        }
+      }
+      let marker = asciiLowercase(trimEnd(line.toString()));
+      for (var k = 0; k < alertTypes.length; k += 1) {
+        if (marker == "[!${alertTypes[k]}]") {
+          var more = restAt < inlines.length;
+          for (var j = 1; j < kids.length; j += 1) {
+            let kid = kids[j];
+            if (!(kid is BlankLine || kid is LinkReferenceDefinition)) { more = true; }
+          }
+          return if (more) { new Alert(quote, alertTypes[k], alertTitles[k], restAt, restText) } else { null };
+        }
+      }
+      null
+    }
+
+    let firstLineEnd(text: String): StringIndex {
+      var i = String.begin;
+      while (text.hasIndex(i) && text[i] != char'\n') { i = text.next(i); }
+      i
+    }
+
+    let trimEnd(text: String): String {
+      var end = text.end;
+      while (end > String.begin && (text[text.prev(end)] == char' ' || text[text.prev(end)] == char'\t')) {
+        end = text.prev(end);
+      }
+      text.slice(String.begin, end)
+    }
+
     let titleAttribute(title: String?): String {
       if (title != null) { " title=\"${escapeHtml(title)}\"" } else { "" }
     }
@@ -704,6 +1023,22 @@ How the document's footnotes number, if it was parsed with them.
 
       public footnotes: FootnoteIndex?;
 
+Heading ids given so far, each with how many repeats of it there were,
+as github-slugger counts them.
+
+      private slugs: MapBuilder<String, Int> = new MapBuilder<String, Int>();
+
+      public uniqueSlug(base: String): String {
+        var result = base;
+        while (slugs.has(result)) {
+          let n = slugs.getOr(base, 0) + 1;
+          slugs[base] = n;
+          result = "${base}-${n.toString()}";
+        }
+        slugs[result] = 0;
+        result
+      }
+
       public constructor(
         definitions: Map<String, LinkReferenceDefinition>, gfm: Boolean, footnotes: FootnoteIndex?,
         sink: RenderSink?,
@@ -851,4 +1186,116 @@ What `renderTo` hands a sink: each part, with its node.
       let escaped = new RecordingSink();
       new MarkdownRenderer().renderTo(doc, escaped);
       assert(escaped.out.toString().split("R:&lt;b&gt;@RawHtml;").length == 2) { escaped.out.toString() };
+    }
+
+### Heading ids
+
+GitHub's documented examples ("Section links", in its docs on basic
+writing and formatting syntax), and more: markup, raw HTML, code,
+references, footnotes, and repeats of repeats, numbered as
+github-slugger numbers them.
+
+    let idsOf(html: String): String {
+      let parts = html.split(" id=\"");
+      let out = new ListBuilder<String>();
+      for (var i = 1; i < parts.length; i += 1) { out.add(parts[i].split("\"")[0]); }
+      out.toList().join(" ") { (s: String): String => s }
+    }
+
+    test("heading ids, as GitHub's") {
+      let doc = MarkdownParser.gfm.parse([
+        "# Example headings\n\n## Sample Section\n\n",
+        "## This'll  be a _Helpful_ Section About the Greek Letter \u{398}!\n\n",
+        "## This    heading is not unique in the file\n\nTEXT 1\n\n",
+        "## This    heading is not unique in the file\n\nTEXT 2\n",
+      ].join("") { (s: String): String => s });
+      let html = new MarkdownRenderer().withHeadingIds().render(doc);
+      let expected = [
+        "<h1 id=\"example-headings\">Example headings</h1>\n<h2 id=\"sample-section\">Sample Section</h2>\n",
+        "<h2 id=\"thisll--be-a-helpful-section-about-the-greek-letter-\u{3B8}\">This'll  be a <em>Helpful</em> Section About the Greek Letter \u{398}!</h2>\n",
+        "<h2 id=\"this----heading-is-not-unique-in-the-file\">This    heading is not unique in the file</h2>\n<p>TEXT 1</p>\n",
+        "<h2 id=\"this----heading-is-not-unique-in-the-file-1\">This    heading is not unique in the file</h2>\n<p>TEXT 2</p>\n",
+      ].join("") { (s: String): String => s };
+      assert(html == expected) { html };
+      let more = MarkdownParser.gfm.parse([
+        "# `a.b` & <b>C</b> [D](/d) ![e](/e.png) f_g\n# A\n# A\n# A-1\n# !!!\n# Ünïcödé Straße İ\n",
+        "Setext\nheading\n---\n## Note[^1]\n\n[^1]: x\n",
+      ].join("") { (s: String): String => s });
+      let ids = idsOf(new MarkdownRenderer().withHeadingIds("user-content-").render(more));
+      let expectedIds = [
+        "user-content-ab--c-d--f_g", "user-content-a", "user-content-a-1", "user-content-a-1-1",
+        "user-content-\u{FC}n\u{EF}c\u{F6}d\u{E9}-stra\u{DF}e-i\u{307}", "user-content-setextheading",
+        "user-content-note1", "fnref-1", "fn-1",
+      ].join(" ") { (s: String): String => s };
+      assert(ids == expectedIds) { ids };
+      assert(idsOf(more.toHtml()) == "fnref-1 fn-1") { "off by default" };
+    }
+
+### Alerts
+
+Each of GitHub's five types, as its docs on basic writing and
+formatting syntax show them (with our own words), and what isn't an
+alert.
+
+    test("alerts, as GitHub's") {
+      let types = ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"];
+      let titles = ["Note", "Tip", "Important", "Warning", "Caution"];
+      let says = [
+        "Worth knowing, even when skimming.", "A better or easier way.", "Needed to reach the goal.",
+        "Needs attention now, to avoid trouble.", "Risks, or what can go wrong.",
+      ];
+      let alerts = new MarkdownRenderer().withAlerts();
+      for (var i = 0; i < types.length; i += 1) {
+        let html = alerts.render(MarkdownParser.gfm.parse("> [!${types[i]}]\n> ${says[i]}\n"));
+        let expected = "<div class=\"markdown-alert markdown-alert-${asciiLowercase(types[i])}\">\n<p class=\"markdown-alert-title\">${titles[i]}</p>\n<p>${says[i]}</p>\n</div>\n";
+        assert(html == expected) { html };
+      }
+      let more = alerts.render(MarkdownParser.gfm.parse("> [!tip]  \n> **Bold** advice.\n>\n> - and a list\n"));
+      assert(more == "<div class=\"markdown-alert markdown-alert-tip\">\n<p class=\"markdown-alert-title\">Tip</p>\n<p><strong>Bold</strong> advice.</p>\n<ul>\n<li>and a list</li>\n</ul>\n</div>\n") { more };
+      let blank = alerts.render(parseMarkdown("> [!Warning]\n>\n> Hot.\n"));
+      assert(blank == "<div class=\"markdown-alert markdown-alert-warning\">\n<p class=\"markdown-alert-title\">Warning</p>\n<p>Hot.</p>\n</div>\n") { blank };
+      let notAlerts = [
+        "> [!NOTE] on one line\n", "> [!NOTE]\n", "> \\[!NOTE]\n> escaped\n", "> [!INFO]\n> unknown\n",
+        "> > [!NOTE]\n> > nested\n", "- > [!NOTE]\n  > in a list\n", "> *[!NOTE]*\n> emphasis\n",
+        "> x\n> [!NOTE]\n> second line\n", "[!NOTE]\nnot quoted\n",
+      ];
+      for (var i = 0; i < notAlerts.length; i += 1) {
+        let doc = MarkdownParser.gfm.parse(notAlerts[i]);
+        let html = alerts.render(doc);
+        assert(html == doc.toHtml()) { "${i.toString()}: ${html}" };
+      }
+      let plain = MarkdownParser.gfm.parse("> [!NOTE]\n> x\n");
+      assert(plain.toHtml() == "<blockquote>\n<p>[!NOTE]\nx</p>\n</blockquote>\n") { "off by default" };
+    }
+
+### Highlighting
+
+A highlighter's spans are written escaped, classes too, so nothing it
+gives becomes markup, and spans that don't join to the code are
+ignored.
+
+    test("code highlighting, safe whatever the highlighter gives") {
+      let doc = parseMarkdown("```py extra\nif a < b: pass\n```\n\n    indented\n\n```\n<i>x</i>\n```\n");
+      let calls = new ListBuilder<String>();
+      let html = new MarkdownRenderer().withCodeHighlighter { (info: String, code: String): List<HighlightSpan>? =>
+        calls.add(info);
+        if (info == "py extra") {
+          [new HighlightSpan("k", "if"), new HighlightSpan("", " a < b: "), new HighlightSpan("k", "pass"), new HighlightSpan("", "\n")]
+        } else if (info == "") {
+          [new HighlightSpan("x\" onmouseover=\"alert(1)", code)]
+        } else {
+          null
+        }
+      }.render(doc);
+      let expected = [
+        "<pre><code class=\"language-py\"><span class=\"k\">if</span> a &lt; b: <span class=\"k\">pass</span>\n</code></pre>\n",
+        "<pre><code><span class=\"x&quot; onmouseover=&quot;alert(1)\">indented\n</span></code></pre>\n",
+        "<pre><code><span class=\"x&quot; onmouseover=&quot;alert(1)\">&lt;i&gt;x&lt;/i&gt;\n</span></code></pre>\n",
+      ].join("") { (s: String): String => s };
+      assert(html == expected) { html };
+      assert(calls.toList().join("|") { (s: String): String => s } == "py extra||") { "info strings" };
+      let changing = new MarkdownRenderer().withCodeHighlighter { (info: String, code: String): List<HighlightSpan>? =>
+        [new HighlightSpan("k", "<script>alert(1)</script>")]
+      }.render(doc);
+      assert(changing == doc.toHtml()) { changing };
     }

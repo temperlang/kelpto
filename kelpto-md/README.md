@@ -98,6 +98,14 @@ notes.toHtml();   // "<p>Hi<sup class=\"footnote-ref\"><a href=\"#fn-n\" …>1</
   rules and handed to a `RawHtmlHandler` (opaque text by default), and
   rendered by a `RawHtmlRenderer` (escaped by default). The `kelpto`
   library fills both in with kelpto-html; kelpto-md never imports it.
+- **GitHub's extras,** opt-in on the renderer: `withHeadingIds()`
+  gives headings GitHub's ids (`## This'll be _it_!` is
+  `thisll-be-it`, repeats `-1`, `-2`, …), so in-page links work as on
+  GitHub; `withAlerts()` writes `> [!NOTE]` and the other four as
+  GitHub's alerts; `withCodeHighlighter(fn)` hands each code block's
+  info string and code to a function giving `HighlightSpan`s (a CSS
+  class and text), written escaped, so a highlighter can't inject
+  markup. See [Rendering like GitHub](#rendering-like-github).
 - **Rendering in parts:** `renderTo(doc, sink)` hands a `RenderSink`
   each tag, run of text, and raw HTML piece `render` writes, with the
   view it renders, for building something other than a string, as
@@ -141,6 +149,37 @@ emphasis of its own kind (`<em>` in `<em>`) can, rarely, read back
 otherwise when punctuation or markup is at its edges; the builder
 checks and retries, but CommonMark can't always say it. Tables and
 task list items are still to come.
+
+## Rendering like GitHub
+
+```temper
+let doc = MarkdownParser.gfm.parse("# Set up\n\n> [!NOTE]\n> Read *this*.\n\n```py\npass\n```\n\n# Set up\n");
+new MarkdownRenderer().withHeadingIds().withAlerts().withCodeHighlighter { (info: String, code: String): List<HighlightSpan>? =>
+  if (info == "py") { [new HighlightSpan("keyword", "pass"), new HighlightSpan("", "\n")] } else { null }
+}.render(doc);
+  // "<h1 id=\"set-up\">Set up</h1>\n"
+  // "<div class=\"markdown-alert markdown-alert-note\">\n<p class=\"markdown-alert-title\">Note</p>\n<p>Read <em>this</em>.</p>\n</div>\n"
+  // "<pre><code class=\"language-py\"><span class=\"keyword\">pass</span>\n</code></pre>\n<h1 id=\"set-up-1\">Set up</h1>\n"
+```
+
+In Python the highlighter is any function:
+
+```python
+renderer = MarkdownRenderer().with_heading_ids("user-content-").with_code_highlighter(
+    lambda info, code: [HighlightSpan("comment", code)] if info == "text" else None)
+```
+
+- **Ids** are GitHub's: the heading's text as shown, trimmed and
+  lowercased, spaces as `-`, and only `-` and word characters kept
+  (letters, marks, digits, and `_`); `prefix` goes before each, such as
+  GitHub's `user-content-`. A heading of only punctuation gets none.
+- **Alerts** follow GitHub's rules: a block quote at the top level, its
+  first line only `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`,
+  or `[!CAUTION]` (any case), and something after it. Nested ones, and
+  ones in lists, stay block quotes, as on GitHub.
+- **Highlighting** gives spans, not HTML: if their text doesn't join to
+  the code, the code is written plain, so a highlighter can only add
+  classes. Indented code gets an empty info string.
 
 ## Speed
 

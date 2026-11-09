@@ -6,7 +6,7 @@ gives it, writing a green tree that keeps every code point, so
 are kept as a list beside the tree, by code and position.
 
     let {
-      GreenNode, GreenNodeBuilder, Kind, RedNode, asciiLowercase, isAsciiAlpha, isAsciiAlphanumeric,
+      GreenNode, GreenNodeBuilder, GreenToken, Kind, RedNode, asciiLowercase, isAsciiAlpha, isAsciiAlphanumeric,
       isAsciiDigit, isAsciiWhitespace, namedCharacterReference, redRoot, unknownKind,
     } = import("../kelpto-core");
 
@@ -180,13 +180,13 @@ The last start tag's name, lowercase, or empty for none.
       }
 
       public tokenize(text: String): TokenizedHtml {
-        let machine = new Tokenizer(text, lastStartTag, switchesState, null);
+        let machine = new Tokenizer(text, lastStartTag, switchesState, null, true);
         machine.run(initialState.id);
         new TokenizedHtml(new HtmlTokens(redRoot(machine.green())), machine.parseErrors())
       }
 
       public tokenizeGreen(text: String): GreenNode {
-        let machine = new Tokenizer(text, lastStartTag, switchesState, null);
+        let machine = new Tokenizer(text, lastStartTag, switchesState, null, false);
         machine.run(initialState.id);
         machine.green()
       }
@@ -318,6 +318,11 @@ that methods share are fields.
       private switchesState: Boolean;
       private sink: TokenSink;
       private hasSink: Boolean;
+
+Whether parse errors are kept. Without them, runs of text are found
+with `indexOf`, unread.
+
+      private reportsErrors: Boolean;
       private references: ReferenceMatcher;
       private builder: GreenNodeBuilder = new GreenNodeBuilder();
       private errorCodes: ListBuilder<String> = new ListBuilder<String>();
@@ -349,7 +354,9 @@ what it said after the last.
       private var deliveredWidth: Int = 0;
       private var sinkState: Int = 0;
 
-      public constructor(text: String, lastStartTag: String, switchesState: Boolean, sink: TokenSink?) {
+      public constructor(
+        text: String, lastStartTag: String, switchesState: Boolean, sink: TokenSink?, reportsErrors: Boolean,
+      ) {
         this.text = text;
         this.end = text.end;
         this.references = new ReferenceMatcher(text);
@@ -357,6 +364,7 @@ what it said after the last.
         this.switchesState = switchesState;
         this.sink = sink ?? new NoTokenSink();
         this.hasSink = sink != null;
+        this.reportsErrors = reportsErrors;
       }
 
 Hands the sink every finished top-level token it doesn't have yet.
@@ -396,6 +404,7 @@ one pass, since they come in order.
       }
 
       private error(code: String, at: StringIndex): Void {
+        if (!reportsErrors) { return; }
         errorCodes.add(code);
         errorPositions.add(at);
       }
@@ -709,6 +718,14 @@ error that says so, as html5lib-tests has it.
         var closeStart = String.begin;
         var quote = 0;
         var quirks = false;
+
+Without errors, where the next `<`, `&`, and NUL are, found ahead
+with `indexOf` (each found again only once passed), so text in the
+data state is skipped unread.
+
+        var nextLt = String.begin;
+        var nextAmp = String.begin;
+        var nextNul = String.begin;
         while (state != doneState) {
           let c = if (i < end) { text[i] } else { -1 };
           if (
@@ -732,11 +749,18 @@ error that says so, as html5lib-tests has it.
               } else {
                 if (c == 0) { error("unexpected-null-character", i); }
                 i = text.next(i);
-                while (i < end) {
-                  let d = text[i];
-                  if (d == char'<' || d == char'&' || d == 0) { break; }
-                  if ((d < 0x20 && d != char'\n') || d >= 0x7F) { inputError(d, i); }
-                  i = text.next(i);
+                if (reportsErrors) {
+                  while (i < end) {
+                    let d = text[i];
+                    if (d == char'<' || d == char'&' || d == 0) { break; }
+                    if ((d < 0x20 && d != char'\n') || d >= 0x7F) { inputError(d, i); }
+                    i = text.next(i);
+                  }
+                } else {
+                  if (nextLt < i) { nextLt = firstAt(text, "<", i, end); }
+                  if (nextAmp < i) { nextAmp = firstAt(text, "&", i, end); }
+                  if (nextNul < i) { nextNul = firstAt(text, "\u{0}", i, end); }
+                  i = earlier(nextLt, earlier(nextAmp, nextNul));
                 }
                 checkedTo = i;
               }
@@ -876,11 +900,18 @@ error that says so, as html5lib-tests has it.
               } else {
                 if (c == 0) { error("unexpected-null-character", i); }
                 i = text.next(i);
-                while (i < end) {
-                  let d = text[i];
-                  if (d == quote || d == char'&' || d == 0) { break; }
-                  if ((d < 0x20 && d != char'\n') || d >= 0x7F) { inputError(d, i); }
-                  i = text.next(i);
+                if (reportsErrors) {
+                  while (i < end) {
+                    let d = text[i];
+                    if (d == quote || d == char'&' || d == 0) { break; }
+                    if ((d < 0x20 && d != char'\n') || d >= 0x7F) { inputError(d, i); }
+                    i = text.next(i);
+                  }
+                } else {
+                  if (nextAmp < i) { nextAmp = firstAt(text, "&", i, end); }
+                  if (nextNul < i) { nextNul = firstAt(text, "\u{0}", i, end); }
+                  let closing = firstAt(text, if (quote == char'"') { "\"" } else { "'" }, i, end);
+                  i = earlier(closing, earlier(nextAmp, nextNul));
                 }
                 checkedTo = i;
               }
@@ -1698,6 +1729,24 @@ noncharacters, each reported once, where read.
       }
     }
 
+## Searching
+
+Text is searched with `indexOf`, which every backend has natively
+(`str.find` in Python, `string.find` in Lua), rather than a loop
+reading each code point, which costs far more in Python and Lua and
+no less elsewhere. Each search finds the first match from `from`, or
+gives `limit` if there's none before it.
+
+    let contains(text: String, target: String): Boolean { text.indexOf(target) is StringIndex }
+
+    let firstAt(text: String, target: String, from: StringIndex, limit: StringIndex): StringIndex {
+      let found = text.indexOf(target, from);
+      when (found) {
+        is StringIndex -> if (found < limit) { found } else { limit };
+        else -> limit;
+      }
+    }
+
 ## Character references, shared with the views
 
     let isNoncharacter(c: Int): Boolean {
@@ -1826,20 +1875,10 @@ endings read as `\n`, and NUL as U+FFFD.
 
     let decodeAttributeValue(raw: String): String {
       let end = raw.end;
-      var i = String.begin;
-      var plain = true;
-      while (i < end) {
-        let c = raw[i];
-        if (c == char'&' || c == char'\r' || c == 0) {
-          plain = false;
-          break;
-        }
-        i = raw.next(i);
-      }
-      if (plain) { return raw; }
+      if (!contains(raw, "&") && !contains(raw, "\r") && !contains(raw, "\u{0}")) { return raw; }
       let out = new StringBuilder();
       var runStart = String.begin;
-      i = String.begin;
+      var i = String.begin;
       while (i < end) {
         let c = raw[i];
         let next = raw.next(i);
@@ -1905,20 +1944,10 @@ endings as `\n`, and NUL as U+FFFD if `replaceNul`.
 
     let normalizeText(raw: String, replaceNul: Boolean): String {
       let end = raw.end;
-      var i = String.begin;
-      var plain = true;
-      while (i < end) {
-        let c = raw[i];
-        if (c == char'\r' || (c == 0 && replaceNul)) {
-          plain = false;
-          break;
-        }
-        i = raw.next(i);
-      }
-      if (plain) { return raw; }
+      if (!contains(raw, "\r") && !(replaceNul && contains(raw, "\u{0}"))) { return raw; }
       let out = new StringBuilder();
       var runStart = String.begin;
-      i = String.begin;
+      var i = String.begin;
       while (i < end) {
         let c = raw[i];
         let next = raw.next(i);

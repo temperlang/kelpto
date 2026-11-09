@@ -123,7 +123,7 @@ HTML as written, tokenized from where the last piece left off.
           return;
         }
         sink.startPiece(html, origin);
-        let machine = new Tokenizer(html, sink.lastStartTag, true, sink);
+        let machine = new Tokenizer(html, sink.lastStartTag, true, sink, false);
         machine.run(0);
         if (sink.carryFrom >= 0) {
           carrying = true;
@@ -147,7 +147,7 @@ finishes the tree. Read the tree after this.
         ended = true;
         if (carrying) {
           sink.holding = false;
-          let machine = new Tokenizer(carried.toString(), sink.lastStartTag, true, sink);
+          let machine = new Tokenizer(carried.toString(), sink.lastStartTag, true, sink, false);
           machine.run(carryState);
         } else {
           builder.end();
@@ -183,8 +183,7 @@ browser joins them.
 Line endings as the input stream reads them: `\r\n` and `\r` as `\n`.
 
     let normalizedLineEndings(text: String): String {
-      var i = String.begin;
-      while (text.hasIndex(i) && text[i] != char'\r') { i = text.next(i); }
+      var i = firstAt(text, "\r", String.begin, text.end);
       if (!text.hasIndex(i)) { return text; }
       let out = new StringBuilder();
       var runStart = String.begin;
