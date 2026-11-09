@@ -25,16 +25,19 @@ using kelpto_md::Heading;
 using kelpto_md::MarkdownParser;
 using kelpto_md::MarkdownRenderer;
 
-using Op = std::function<long(std::string const &)>;
+using temper::core::Str;
+
+// Texts are Temper's shared strings, made once, so Kelpto's calls copy none.
+using Op = std::function<long(Str const &)>;
 using Tasks = std::map<std::string, Op>;
 
 static Tasks kelpto() {
   auto renderer = MarkdownRenderer::make()->withRawHtmlTrusted();
   return {
-      {"parse", [](std::string const &text) { return long(MarkdownParser::commonMark()->parse(text)->get_span()->get_end()); }},
-      {"render", [renderer](std::string const &text) { return long(renderer->render(MarkdownParser::commonMark()->parse(text)).size()); }},
+      {"parse", [](Str const &text) { return long(MarkdownParser::commonMark()->parse(text)->get_span()->get_end()); }},
+      {"render", [renderer](Str const &text) { return long(renderer->render(MarkdownParser::commonMark()->parse(text)).size()); }},
       {"walk",
-       [](std::string const &text) {
+       [](Str const &text) {
          auto doc = MarkdownParser::commonMark()->parse(text);
          auto views = doc->get_descendants();
          long headings = 0;
@@ -44,7 +47,7 @@ static Tasks kelpto() {
          return long(views->size()) + headings + long(doc->get_asWritten().size());
        }},
       {"transform",
-       [](std::string const &text) {
+       [](Str const &text) {
          auto doc = MarkdownParser::commonMark()->parse(text);
          auto editor = doc->editor();
          auto headings = doc->get_headings();  // Kept alive: the loop would outlive a temporary.
@@ -60,14 +63,14 @@ static Tasks kelpto() {
 static Tasks cmark() {
   return {
       {"parse",
-       [](std::string const &text) {
+       [](Str const &text) {
          cmark_node *root = cmark_parse_document(text.data(), text.size(), CMARK_OPT_DEFAULT);
          long check = cmark_node_first_child(root) != nullptr;
          cmark_node_free(root);
          return check;
        }},
       {"render",
-       [](std::string const &text) {
+       [](Str const &text) {
          cmark_node *root = cmark_parse_document(text.data(), text.size(), CMARK_OPT_DEFAULT);
          // Raw HTML passes through, as in the others here.
          char *html = cmark_render_html(root, CMARK_OPT_UNSAFE);
@@ -82,7 +85,7 @@ static Tasks cmark() {
 static Tasks library(std::string const &name) {
   if (name == "kelpto") return kelpto();
   if (name == "cmark") return cmark();
-  if (name == "none") return {{"read", [](std::string const &text) { return long(text.size()); }}};
+  if (name == "none") return {{"read", [](Str const &text) { return long(text.size()); }}};
   std::cerr << "unknown library " << name << "\n";
   std::exit(2);
 }
@@ -118,7 +121,7 @@ int main(int argc, char **argv) {
     while (std::getline(fields, field, '\t')) job.push_back(field);
     if (!made.count(job[0])) made[job[0]] = library(job[0]);
     Op &op = made[job[0]][job[1]];
-    std::string text = read(job[2]);
+    Str text = read(job[2]);
     long check = 0;
     int count = 0;
     double elapsed;

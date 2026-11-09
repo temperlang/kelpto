@@ -36,6 +36,7 @@ using kelpto_md::MarkdownRenderer;
 using kelpto_md::Paragraph;
 using kelpto_md::TableCell;
 using kelpto_md::parseMarkdown;
+using temper::core::Str;
 using temper::core::TemperBubble;
 
 void section(std::string const &title) { std::cout << "\n## " << title << "\n"; }
@@ -76,14 +77,16 @@ void changes(std::string const &before, std::string const &after) {
   std::cout << changed << " of " << old.size() << " lines changed, the rest byte for byte\n";
 }
 
-std::string joined(std::vector<std::string> const &parts) {
+// Kelpto's lists of strings hold Temper's strings, temper::core::Str, which
+// convert to and from std::string.
+std::string joined(std::vector<Str> const &parts) {
   std::string out;
   for (auto const &part : parts) out += (out.empty() ? "" : ", ") + part;
   return out;
 }
 
 std::string texts(std::vector<std::shared_ptr<TableCell>> const &cells) {
-  std::vector<std::string> out;
+  std::vector<Str> out;
   for (auto const &cell : cells) out.push_back(cell->get_text());
   return joined(out);
 }
@@ -232,7 +235,7 @@ Read [the docs][docs].
     if (auto heading = std::dynamic_pointer_cast<Heading>(view)) {
       editor->setLevel(heading, heading->get_level() + 1);
     } else if (auto link = std::dynamic_pointer_cast<Link>(view)) {
-      auto url = link->get_destination()->get_url();
+      std::string url = link->get_destination()->get_url();
       if (link->get_style() == "inline" && url.rfind("#", 0) != 0) {
         editor->setDestination(link, LinkTarget::make(base + url));
       }
@@ -301,7 +304,7 @@ Read [the docs][docs].
   std::cout << "printed back exactly: " << (htmlDoc->get_asWritten() == htmlText ? "true" : "false") << "\n";
   rendered("html", htmlDoc->get_html());
   auto paragraphs = htmlDoc->get_body()->get_children();
-  std::vector<std::string> names;
+  std::vector<Str> names;
   for (auto const &node : *paragraphs) names.push_back(std::dynamic_pointer_cast<Element>(node)->get_name());
   auto firstId = std::dynamic_pointer_cast<Element>(paragraphs->at(0))->attribute("id");
   std::cout << "body: " << joined(names) << ", the first with id " << firstId.value << "\n";
