@@ -297,7 +297,7 @@ keeps `id` and `class`, which Kelpto's own HTML needs.
 
       // Built by `named`, with the names inline, since in Python and
       // Lua a static's initializer can't call module-level functions
-      // or read module-level values (notes/temper-fixes.md).
+      // or read module-level values.
       public static standard: SanitizerPolicy = SanitizerPolicy.named(
         "a abbr b bdi bdo blockquote br caption cite code col colgroup dd del details dfn div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p picture pre q rp rt ruby s samp section small source span strong sub summary sup table tbody td tfoot th thead time tr u ul var wbr",
         "*=id,class,title,lang,dir a=href,aria-label,data-footnote-ref,data-footnote-backref,data-footnote-backref-idx img=src,srcset,alt,width,height source=srcset,media,type,width,height ol=start,reversed,type li=value td=align,colspan,rowspan th=align,colspan,rowspan,scope col=span colgroup=span input=type,checked,disabled section=data-footnotes blockquote=cite q=cite del=cite,datetime ins=cite,datetime time=datetime details=open",

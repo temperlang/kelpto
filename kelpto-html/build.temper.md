@@ -2620,7 +2620,7 @@ already parsed.
       public name: String;
       // A getter over `namespaceName`, not a field or parameter named
       // `namespace`: Temper's C# backend doesn't escape that keyword in
-      // fields and parameters (see notes/temper-fixes.md).
+      // fields and parameters.
       private namespaceName: String;
       public attributes: List<BuiltAttribute>;
       public insideForm: Boolean;

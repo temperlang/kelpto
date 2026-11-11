@@ -289,8 +289,8 @@ held is taken first.
             carryFrom = piece.countBetween(String.begin, piece.end);
             carryState = state;
           }
-          // A second statement, so C# keeps the braces (dangling `else`;
-          // see notes/temper-fixes.md).
+          // A second statement, so Temper's C# backend keeps the braces
+          // and a dangling `else` can't attach to the wrong `if`.
           return;
         }
         let token = last as GreenNode orelse panic();

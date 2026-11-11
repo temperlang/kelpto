@@ -654,10 +654,10 @@ user text never needs hand-escaping.
     (link text can't hold a link, a heading holds no blocks). Today
     one `Inlines` serves every inline position.
   - **Foreign content:** HTML from a kelpto-html tree or builder, or a
-    `SafeHtml` (secure-composition), as a block or inline; and fenced
-    blocks from any typed source (Mermaid, say) through a small
-    interface giving an info string and text, with the fence chosen
-    to fit, as `codeBlock` does now.
+    safe-HTML value from another library, as a block or inline; and
+    fenced blocks from any typed source (Mermaid, say) through a small
+    interface giving an info string and text, with the fence chosen to
+    fit, as `codeBlock` does now.
   - **A link context,** shared by a page or a set of pages: anchors
     allocated before their heading exists (usable by links before and
     after it, and from other pages), never colliding; and named
@@ -670,20 +670,20 @@ user text never needs hand-escaping.
   - **A block-style builder:** nested content as trailing blocks
     (`b.blockQuote { q => ... }`) as well as sub-builders, close to a
     Kotlin DSL while translating to plain lambdas everywhere.
-  - **Tagged strings:** an `md"..."` accumulator through
-    secure-composition's contextual autoescaping, escaping each
-    interpolation for where it lands (heading, link text, URL, code
-    span), using this builder's escaping rules per context.
+  - **Tagged strings:** an `md"..."` accumulator for contextual
+    autoescaping by a caller, escaping each interpolation for where it
+    lands (heading, link text, URL, code span), using this builder's
+    escaping rules per context.
 
 **Immediate-mode users** (a note, 2026-11-04): Kelpto keeps a lossless
 tree of documents that exist as text. Immediate-mode HTML (htpy, maud,
 templ, React-style views) generates HTML from state on each render and
 keeps nothing. The two meet where a view embeds a document: render
 Markdown inside a view, memoized by a hash of its content. Safety
-there comes from the planned sanitizer bridge to secure-composition's
-`SafeHtml`, a separate small adapter, as "Foreign content" above has
-it. An emit-only builder for these users is an open question in
-[plan.md](plan.md).
+there comes from Kelpto's sanitizer, or from a safe-HTML type in
+another library through a separate small adapter, as "Foreign
+content" above has it. An emit-only builder for these users is an
+open question in [plan.md](plan.md).
 
 **Next,** roughly in order:
 

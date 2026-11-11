@@ -642,8 +642,7 @@ A paragraph.
 
     // Called from outside the class: in Temper's main since #625,
     // `Inlines.empty.text(text)` in a class with a `text` getter reads
-    // that getter (notes/temper-fixes.md, "Kelpto doesn't build on main
-    // 24b86157").
+    // that getter instead of calling the method.
     let plainInlines(text: String): Inlines { Inlines.empty.text(text) }
 
     export class Paragraph extends BlockChild {

@@ -158,7 +158,7 @@ it was parsed with `parseMarkdownWithHtml` and rendered as written.
 
       // Counted only so each method writes a field: Temper's C++
       // backend makes methods that don't `const`, and then they don't
-      // override `RenderSink`'s, which aren't (notes/temper-fixes.md).
+      // override `RenderSink`'s, which aren't.
       private var parts: Int = 0;
 
       public constructor(stream: FragmentStream) { this.stream = stream; }
@@ -372,8 +372,7 @@ the sanitizer checks its output again.
     class OnlyExampleLinks extends UrlCheck {
       // Writes no field, as kelpto-html's `SchemeUrlCheck` doesn't:
       // Temper's C++ backend then makes `UrlCheck.checkUrl` `const`,
-      // and an override writing a field isn't, so doesn't override
-      // (notes/temper-fixes.md).
+      // and an override writing a field isn't, so doesn't override.
       public constructor() {}
       public checkUrl(url: String, element: String, attribute: String): String? {
         let www = "https://www.example.com/";

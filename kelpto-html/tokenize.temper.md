@@ -224,7 +224,7 @@ For the tokenizer on its own.
 
     // Called from outside the class: in Temper's main since #625, a
     // `sink.end()` in a class with a property `end` reads that property
-    // (notes/temper-fixes.md, "Kelpto doesn't build on main 24b86157").
+    // instead of calling the method.
     let endSink(sink: TokenSink): Void { sink.end(); }
 
     class NoTokenSink extends TokenSink {

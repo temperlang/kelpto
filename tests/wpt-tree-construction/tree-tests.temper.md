@@ -204,7 +204,7 @@ file, and the first failures.
     // where `??>` in the generated string literal for
     // processing-instructions.dat's `<?something ?\t   ??>` is a
     // trigraph for `}`, so the test's input itself differs. Kelpto
-    // reads the real input right (notes/temper-fixes.md).
+    // reads the real input right.
     let documentFloor(): Int { 1761 }
     let fragmentFloor(): Int { 206 }
 

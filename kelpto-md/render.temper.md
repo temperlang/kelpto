@@ -121,7 +121,7 @@ Text, not escaped: written escaped as HTML (`&lt;` for `<`), it's the
 text in the HTML. Line breaks between blocks are text too.
 
       // Not `text`: a method of that name makes Temper's C++ backend
-      // treat views' `text` getters as non-const (notes/temper-fixes.md).
+      // treat views' `text` getters as non-const.
       public characters(text: String, node: MarkdownNode): Void;
 
 Raw HTML, inline or a block, and what the `RawHtmlRenderer` gave for
