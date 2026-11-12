@@ -149,7 +149,12 @@ keywords.render(parseMarkdown("```py\npass\n```\n"));
   // "<pre><code class=\"language-py\"><span class=\"k\">pass</span>\n</code></pre>\n"
 ```
 
-    export @fun interface CodeHighlighter(info: String, code: String): List<HighlightSpan>?;
+A highlighter can't refer to a `MarkdownRenderer`, even through other
+objects: a renderer keeps its highlighter, so that could lead back to
+the renderer, a reference cycle (see [CYCLES.md](../CYCLES.md)).
+
+    export @fun interface CodeHighlighter(info: String, code: String): List<HighlightSpan>?
+      forbids MarkdownRenderer;
 
 A run of code and its CSS class, or `""` for none.
 

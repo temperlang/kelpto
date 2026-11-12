@@ -59,7 +59,13 @@ doesn't make them).
 How many blocks it's inside: 0 for the document.
 
       public depth: Int;
-      public children: ListBuilder<BlockData> = new ListBuilder<BlockData>();
+
+Its children's ids, in order. The blocks themselves are in the
+parser's `blocks`, by id, so that a block doesn't hold its children:
+with `parent`, that would make each a reference cycle, which reference
+counting can't free.
+
+      public children: ListBuilder<Int> = new ListBuilder<Int>();
       public var open: Boolean = true;
       public var firstLine: Int;
 
@@ -112,20 +118,6 @@ cells would be filled in empty (see `maxFilledCells`).
 Whether the algorithm counts this as a child.
 
       public get isReal(): Boolean { blockType != typeBlankLine && blockType != typeDefinition }
-
-      public get lastChild(): BlockData? {
-        if (children.isEmpty) { null } else { children[children.length - 1] }
-      }
-
-      public get lastRealChild(): BlockData? {
-        for (var i = children.length - 1; i >= 0; i -= 1) {
-          let child = children[i];
-          if (child.isReal) { return child; }
-        }
-        null
-      }
-
-      public get hasRealChild(): Boolean { lastRealChild != null }
     }
 
 A token of a container's prefix on a line: indentation, a `>`, a list
@@ -227,7 +219,10 @@ Every line's container prefix tokens, in order (see `LineData`).
       public prefixes: ListBuilder<PrefixToken> = new ListBuilder<PrefixToken>();
       public document: BlockData;
       private extensions: Extensions;
-      private var nextId: Int = 1;
+
+Every block made, by id.
+
+      private blocks: ListBuilder<BlockData> = new ListBuilder<BlockData>();
       private var current: BlockData;
 
 The state for the line being parsed, as cmark keeps it: `offset` is a
@@ -254,6 +249,7 @@ prefix matched or opened.
         this.extensions = extensions;
         this.lines = splitLines(text);
         let document = new BlockData(0, typeDocument, null, 0);
+        blocks.add(document);
         this.document = document;
         this.current = document;
       }
@@ -432,7 +428,7 @@ not, 1 if so, and 2 for a closing code fence, which ends the line.
             containerOffset = offset;
             return 1;
           }
-          if (blank && block.hasRealChild) {
+          if (blank && hasRealChild(block)) {
             let start = offset;
             advanceTo(firstNonspace);
             prefixToken(block, indentKind, start, offset);
@@ -519,14 +515,41 @@ column, so it stays for what comes next.
         }
       }
 
+A new block, with the next id.
+
+      private newBlock(type: Int, parent: BlockData?, firstLine: Int): BlockData {
+        let block = new BlockData(blocks.length, type, parent, firstLine);
+        blocks.add(block);
+        block
+      }
+
+      private lastRealChild(block: BlockData): BlockData? {
+        let children = block.children;
+        for (var i = children.length - 1; i >= 0; i -= 1) {
+          let child = blocks[children[i]];
+          if (child.isReal) { return child; }
+        }
+        null
+      }
+
+      private hasRealChild(block: BlockData): Boolean { lastRealChild(block) != null }
+
+The last child of `block`, if it's still open.
+
+      private openLastChild(block: BlockData): BlockData? {
+        let children = block.children;
+        if (children.isEmpty) { return null; }
+        let last = blocks[children[children.length - 1]];
+        if (last.open) { last } else { null }
+      }
+
       private addChild(parent: BlockData, type: Int): BlockData {
         var into = parent;
         while (!canContain(into.blockType, type)) {
           into = finalize(into);
         }
-        let child = new BlockData(nextId, type, into, lineNumber);
-        nextId += 1;
-        into.children.add(child);
+        let child = newBlock(type, into, lineNumber);
+        into.children.add(child.id);
         child
       }
 
@@ -613,7 +636,7 @@ Opens the blocks that start on this line, giving the innermost.
             // the delimiter row, joins it below.
           } else if (
             !indented && containerType == typeListItem && extensions.taskListItems &&
-            container.firstLine == lineNumber && !container.hasRealChild &&
+            container.firstLine == lineNumber && !hasRealChild(container) &&
             taskMarkerEnd(text, firstNonspace, lineEnd) > firstNonspace
           ) {
 
@@ -652,14 +675,13 @@ the lines before it stay a paragraph. Gives whether it did.
         }
         if (paragraph.firstLine < headerLine) {
           let parent = paragraph.parent as BlockData orelse panic();
-          let before = new BlockData(nextId, typeParagraph, parent, paragraph.firstLine);
-          nextId += 1;
+          let before = newBlock(typeParagraph, parent, paragraph.firstLine);
           before.open = false;
           before.endLine = headerLine;
           for (var n = before.firstLine; n < headerLine; n += 1) {
             lines[n].leaf = before;
           }
-          parent.children.add(before, indexOfChild(parent, paragraph));
+          parent.children.add(before.id, indexOfChild(parent, paragraph));
           if (!splitDefinitions(before)) { removeChild(before); }
         }
         paragraph.blockType = typeTable;
@@ -764,13 +786,13 @@ What's left of the line goes to a leaf, or makes a paragraph.
         var container = start;
         findFirstNonspace();
         if (blank) {
-          let last = container.lastRealChild;
+          let last = lastRealChild(container);
           if (last != null) { last.lastLineBlank = true; }
         }
         let type = container.blockType;
         container.lastLineBlank = blank && type != typeBlockQuote && type != typeAtxHeading &&
           type != typeSetextHeading && type != typeThematicBreak && type != typeFencedCode &&
-          !(type == typeListItem && !container.hasRealChild && container.firstLine == lineNumber);
+          !(type == typeListItem && !hasRealChild(container) && container.firstLine == lineNumber);
         clearLastLineBlank(container.parent);
         if (
           current.id != lastMatched.id && container.id == lastMatched.id && !blank &&
@@ -795,7 +817,7 @@ A lazy continuation line.
           if (
             (type == typeBlockQuote || type == typeListItem || type == typeFootnoteDefinition) &&
             container.firstLine == lineNumber &&
-            !container.hasRealChild
+            !hasRealChild(container)
           ) {
 
 The rest of a line that opens a container, with nothing after it,
@@ -803,10 +825,9 @@ goes to the container itself.
 
             lines[lineNumber].leafStart = containerOffset;
           } else {
-            let blankLine = new BlockData(nextId, typeBlankLine, container, lineNumber);
-            nextId += 1;
+            let blankLine = newBlock(typeBlankLine, container, lineNumber);
             blankLine.open = false;
-            container.children.add(blankLine);
+            container.children.add(blankLine.id);
             addLine(blankLine);
           }
         } else if (type == typeTable) {
@@ -880,14 +901,13 @@ blocks of their own, before it. Gives whether any lines are left.
           let end = definitionEnd(content, at);
           if (end == at) { break; }
           let lastLine = content.lineOf(joined.prev(end));
-          let definition = new BlockData(nextId, typeDefinition, parent, first);
-          nextId += 1;
+          let definition = newBlock(typeDefinition, parent, first);
           definition.open = false;
           definition.endLine = paragraph.firstLine + lastLine + 1;
           for (var n = first; n < definition.endLine; n += 1) {
             lines[n].leaf = definition;
           }
-          parent.children.add(definition, insertAt);
+          parent.children.add(definition.id, insertAt);
           insertAt += 1;
           first = definition.endLine;
           at = end;
@@ -912,12 +932,11 @@ become blank lines after it.
           end -= 1;
         }
         for (var n = end; n < code.endLine; n += 1) {
-          let blankLine = new BlockData(nextId, typeBlankLine, parent, n);
-          nextId += 1;
+          let blankLine = newBlock(typeBlankLine, parent, n);
           blankLine.open = false;
           blankLine.endLine = n + 1;
           lines[n].leaf = blankLine;
-          parent.children.add(blankLine, insertAt);
+          parent.children.add(blankLine.id, insertAt);
           insertAt += 1;
         }
         code.endLine = end;
@@ -959,16 +978,6 @@ parents: stopping there keeps deep nesting linear.
       }
     }
 
-The last child of `block`, if it's still open.
-
-    let openLastChild(block: BlockData): BlockData? {
-      let last = block.lastChild;
-      if (last != null) {
-        if (last.open) { return last; }
-      }
-      null
-    }
-
 Where the definition at `at` ends, or `at` if none.
 
     let definitionEnd(content: Content, at: StringIndex): StringIndex {
@@ -979,7 +988,7 @@ Where the definition at `at` ends, or `at` if none.
     let indexOfChild(parent: BlockData, child: BlockData): Int {
       let children = parent.children;
       for (var i = children.length - 1; i >= 0; i -= 1) {
-        if (children[i].id == child.id) { return i; }
+        if (children[i] == child.id) { return i; }
       }
       panic()
     }
