@@ -47,10 +47,5 @@ release signing, and prints in UTF-8 whatever the locale. Python's tour
 names Temper's runtime as a dependency too, so it comes from
 `temper.out/`, not from older releases on PyPI.
 
-Rust's tour doesn't build for now: Temper's Rust backend currently
-generates code for kelpto-md that rustc rejects (E0282, a constructor
-reading another object's field as its own), a Temper bug, not
-Kelpto's. The tour is kept as written, to run once that's fixed.
-
 The site shows these tours, and runs the JavaScript one in the page; see
 [docs/site.md](../docs/site.md).

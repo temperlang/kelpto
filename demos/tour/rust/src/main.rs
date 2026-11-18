@@ -10,7 +10,7 @@ use kelpto_md::{
 };
 use kelpto::{build_html, markdown_node_of, parse_markdown_with_html, render_safe};
 use kelpto_html::builders::FragmentContextBuilder;
-use kelpto_html::{parse_html, parse_html_fragment, tokenize_html, BuiltNode, Element, FragmentContext, HtmlNodeTrait, SanitizerPolicy};
+use kelpto_html::{parse_html, parse_html_fragment, tokenize_html, BuiltNode, Element, FragmentContext, SanitizerPolicy};
 use std::sync::Arc;
 use temper_core::cast;
 
@@ -294,7 +294,7 @@ Read [the docs][docs].
 
     // That tree, sanitized: only what the policy allows, with every URL checked.
     let untrusted = parse_markdown_with_html("[a](javascript:alert(1)) <b onclick=x>b</b><script>alert(2)</script>\n");
-    rendered("safe", &render_safe(untrusted, None, None).html());
-    let text_only = render_safe(parse_markdown_with_html("# *a* [b](/c)\n"), Some(SanitizerPolicy::text_only()), None);
+    rendered("safe", &render_safe(untrusted, None, None, None).html());
+    let text_only = render_safe(parse_markdown_with_html("# *a* [b](/c)\n"), Some(SanitizerPolicy::text_only()), None, None);
     rendered("text only", &text_only.html());
 }

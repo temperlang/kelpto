@@ -19,8 +19,8 @@ requires-dist = [
     { name = "kelpto-core" },
     { name = "kelpto-html" },
     { name = "kelpto-md" },
-    { name = "temper-core", specifier = "==0.6.0" },
-    { name = "temper-std", specifier = "==0.6.0" },
+    { name = "temper-core", specifier = "==0.7.0.dev243" },
+    { name = "temper-std", specifier = "==0.7.0.dev243" },
 ]
 
 [[package]]
@@ -34,8 +34,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "temper-core", specifier = "==0.6.0" },
-    { name = "temper-std", specifier = "==0.6.0" },
+    { name = "temper-core", specifier = "==0.7.0.dev243" },
+    { name = "temper-std", specifier = "==0.7.0.dev243" },
 ]
 
 [[package]]
@@ -51,8 +51,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "kelpto-core" },
-    { name = "temper-core", specifier = "==0.6.0" },
-    { name = "temper-std", specifier = "==0.6.0" },
+    { name = "temper-core", specifier = "==0.7.0.dev243" },
+    { name = "temper-std", specifier = "==0.7.0.dev243" },
 ]
 
 [[package]]
@@ -68,8 +68,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "kelpto-core" },
-    { name = "temper-core", specifier = "==0.6.0" },
-    { name = "temper-std", specifier = "==0.6.0" },
+    { name = "temper-core", specifier = "==0.7.0.dev243" },
+    { name = "temper-std", specifier = "==0.7.0.dev243" },
 ]
 
 [[package]]
@@ -97,16 +97,16 @@ requires-dist = [
 
 [[package]]
 name = "temper-core"
-version = "0.6.0"
+version = "0.7.0.dev243"
 source = { editable = "../../../temper.out/py/temper-core" }
 
 [[package]]
 name = "temper-std"
-version = "0.6.0"
+version = "0.7.0.dev243"
 source = { editable = "../../../temper.out/py/std" }
 dependencies = [
     { name = "temper-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "temper-core", specifier = "==0.6.0" }]
+requires-dist = [{ name = "temper-core", specifier = "==0.7.0.dev243" }]

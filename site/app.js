@@ -106,9 +106,7 @@ async function selectLanguage(file) {
   $("tour-run-note").textContent =
     file === "js"
       ? "Runs the JavaScript tour in this page."
-      : file === "rs"
-        ? "Only JavaScript runs in this page. Rust's doesn't build yet: Temper's Rust backend has a bug that rustc rejects in kelpto-md."
-        : "Only JavaScript runs in this page. Run this one locally with the command above.";
+      : "Only JavaScript runs in this page. Run this one locally with the command above.";
   const [source, view] = await Promise.all([
     loadSource(`tour/tour.${file}`).catch(() => `${comment} Couldn't load this tour.`),
     loadSource(`view/view.${file}`).catch(() => `${comment} Couldn't load this example.`),

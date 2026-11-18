@@ -506,7 +506,7 @@ reads as built, for up to three passes.
       let chains = if (first.chains < 30) { first.chains } else { 30 };
       for (var pass = 0; pass < 3; pass += 1) {
         for (var k = 0; k < chains; k += 1) {
-          let tryMask = mask ^ bitAt(k);
+          let tryMask = mask ^ (1 << k);
           let writer = new InlineWriter(context, tryMask);
           writer.writeSequence(all, blockLevel, 0);
           let written = writer.out.toString();
@@ -520,15 +520,6 @@ reads as built, for up to three passes.
         }
       }
       text
-    }
-
-`1 << k`, without a shift of a literal, which Temper's Rust backend
-leaves untyped (2026-11-03).
-
-    let bitAt(k: Int): Int {
-      var bit = 1;
-      for (var i = 0; i < k; i += 1) { bit *= 2; }
-      bit
     }
 
 How many code points `a` and `b` share at their start.

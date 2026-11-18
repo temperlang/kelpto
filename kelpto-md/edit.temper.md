@@ -911,16 +911,14 @@ Random block edits in one container of sample documents: what's
 outside the container stays byte for byte, the blocks kept stay as
 written and in order, among as many new ones as were built, and the
 tree is what parsing its text gives. Some edits bubble, as they should
-(two at one block, an empty container, a task's first block). The
-documents come from a function, since Temper's Rust backend leaves
-test-only module values out of tests (2026-10-30).
+(two at one block, an empty container, a task's first block).
 
-    let fuzzDocuments(): List<String> { [
+    let fuzzDocuments: List<String> = [
       "# T\nIntro\n\n- a\n- b\n\n  more\n\n> q\n> # h\nlazy?\n\n```\nc\n```\n\n    ind\n\nlast",
       "> a\n>\n> - x\n>   - y\n>\n> b\n\n1. one\n2. two\n   > nested\n\n***\n[d]: /u\n\n[^n]: Note.\n\n    more\n\nRef[^n] [d].\n",
       "- a\n- b\n\n+ c\n\npara\n# H\nnext\n<div>\nhtml\n</div>\n\n| a | b |\n|---|---|\n| c | d |\n\n",
       " - a\n   - b\n\n     c\n> > deep\n> > more\n\ntext\n===\n\n- [ ] task\n- [x] done\n\n\n",
-    ] }
+    ];
 
     let randomBlocks(random: Random): MarkdownBuilder {
       let b = new MarkdownBuilder();
@@ -980,7 +978,7 @@ The code points of `text` from `start` to `end` (or its end, for -1).
       let random = new Random(7);
       var made = 0;
       for (var round = 0; round < 300; round += 1) {
-        let documents = fuzzDocuments();
+        let documents = fuzzDocuments;
         let text = documents[random.below(documents.length)];
         let parser = MarkdownParser.gfm;
         let doc = parser.parse(text);
