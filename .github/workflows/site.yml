@@ -17,7 +17,8 @@ env:
   # builds it from a pinned commit of its transition branch,
   # rfc-657-transition. Once the switch lands, download Temper's
   # nightly from temperlang/temper's releases instead, and drop the
-  # `temper` job's build.
+  # `temper` job's build. test.yml has the same pin; change both
+  # together.
   TEMPEST_COMMIT: 5f3cf49801fcd5f125ea2175cc5cb993b630419b
 
 jobs:

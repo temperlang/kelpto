@@ -126,7 +126,10 @@ test-only libraries, since the examples are CC-BY-SA 4.0; see
 `scripts/gfm_spec.py` (run with `uv run`) regenerate them. Real
 documents (the CommonMark spec and some READMEs), with worked examples
 walking and transforming them, are in
-[tests/samples](tests/samples/README.md). The HTML suites and the
+[tests/samples](tests/samples/README.md), and kelpto-md's linearity
+tests on pathological inputs, which a loaded machine can push past a
+timeout, in [tests/pathological](tests/pathological/README.md). The
+HTML suites and the
 sample documents are stored as text in string literals, parsed when
 the tests start (`scripts/temper_data.py`), so each backend compiles
 them quickly. Benchmarks against each language's usual Markdown
@@ -136,9 +139,19 @@ parsers, on those documents and on cmark's pathological inputs, are in
 
 ## Building
 
-One Temper worktree with a library in each directory; run `temper test`
-at the top. Libraries import each other by path, as
-`import("../kelpto-core")`.
+One Temper worktree with a library in each directory. Libraries import
+each other by path, as `import("../kelpto-core")`. Tests run in two
+tiers, from the top:
+
+    temper test -b js -ign tests/quick.temperignore   # quick: the four libraries' own tests
+    temper test -b js                                 # full: the test libraries under tests/ too
+
+On JavaScript, Lua, and Python, the quick tier takes seconds, and the
+full suite up to a minute; the compiled backends spend most of either
+building (C++ minutes). CI (`.github/workflows/test.yml`) runs the
+quick tier on JavaScript, Lua, and Python for every push and pull
+request, and the full suite on all seven backends nightly and when run
+by hand.
 
 Run the tour in every language against `temper.out/`, checking each
 prints the same text (see [demos](demos/README.md)):

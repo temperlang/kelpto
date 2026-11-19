@@ -17,10 +17,6 @@ Three of domjs.test's tests still expect the error `<?` gave before
 the standard read processing instructions; the runner expects what it
 gives now there, and says so.
 
-In C++, test2.test's `<?foo bar??>` fails, since the `temper` C++
-backend writes `??>` into a string literal, which C++14 reads as a
-trigraph (`}`).
-
 Left out: xmlViolation.test, which expects an XML writer's coercions,
 and 4 tests whose input holds a lone surrogate, which Temper strings
 can't.
