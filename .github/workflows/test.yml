@@ -1,11 +1,12 @@
-# Kelpto's Temper tests, with Temper's new compiler (written in Rust),
-# in two tiers. Every push and pull request runs the quick tier, the
-# four libraries' own tests (`-ign tests/quick.temperignore` leaves out
-# the test libraries under tests/), on the fastest backends. Nightly,
-# and when run by hand, the full suite runs on all seven, the vendored
-# conformance suites and the pathological inputs included. Pull
-# requests, pushes to main, and runs by hand also build the project
-# site (site/), and runs on main publish it to GitHub Pages.
+# Kelpto's Temper tests, with Temper's compiler built from source at the
+# pinned TEMPEST_COMMIT, in two tiers. Every push and pull request runs
+# the quick tier, the four libraries' own tests
+# (`-ign tests/quick.temperignore` leaves out the test libraries under
+# tests/), on the fastest backends. Nightly, and when run by hand, the full suite
+# runs on all seven, the vendored conformance suites and the
+# pathological inputs included. Pull requests, pushes to main, and runs
+# by hand also build the project site (site/), and runs on main publish
+# it to GitHub Pages.
 name: test
 
 on:
