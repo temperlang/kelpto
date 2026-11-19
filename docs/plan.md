@@ -53,7 +53,7 @@ other in a cycle, so the layers go one way:
    Hrefine, so `javascript:` and tricky hosts are caught), HTML subtrees
    inside Markdown nodes, and maybe HTML to Markdown.
 
-Names: the working name is Kelpto (2026-10-30; see
+Names: Kelpto (chosen 2026-10-30, final 2026-11-19; see
 [names.md](names.md)), with `kelpto-md` and `kelpto-html` in
 subdirectories. These libraries are designed to work together, so
 similar names and an umbrella name fit, unlike our other libraries'.

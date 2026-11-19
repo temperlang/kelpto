@@ -1,17 +1,18 @@
 # Name candidates
 
-**Working name: Kelpto** (the user, 2026-10-30), a clever misspelling of
-"klepto", for a set that keeps everything. Free on PyPI, npm,
-crates.io, and NuGet (bare, `-markdown`, and `-html`), and none of
+**The name is Kelpto** (chosen 2026-10-30, final 2026-11-19), a clever
+misspelling of "klepto", for a set that keeps everything. Free on PyPI,
+npm, crates.io, and NuGet (bare, `-markdown`, and `-html`), and none of
 kelpto.com, .dev, or .org resolves; a thorough search found only a 2020
-song and a known misspelling of Klepto, a Super Mario enemy. To weigh
-before release: people typing "klepto" land on Python's `klepto` (a
-caching package); "klepto" means thief, slightly off for a library
+song and a known misspelling of Klepto, a Super Mario enemy. Weighed
+before settling on it: people typing "klepto" land on Python's `klepto`
+(a caching package); "klepto" means thief, slightly off for a library
 about safe rendering; some may read "kelp-to". Library names would be
 `kelpto-markdown`, `kelpto-html`, `kelpto-tree`, and `kelpto-safe`.
 
-Undecided. These libraries work together, so an umbrella name for the
-repo and similar library names fit. Checked 2026-10-30: package
+Decided. These libraries work together, so an umbrella name for the
+repo and similar library names fit. The candidates below are kept for
+the record. Checked 2026-10-30: package
 registries by their APIs (LuaRocks and Maven Central weren't reachable),
 domains by DNS only, and clashes by a light web search. Nothing here is
 a trademark search.
