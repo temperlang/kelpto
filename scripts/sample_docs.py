@@ -18,13 +18,14 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from temper_data import literal, text_function
+
 TAG = "0.31.2"
 SPEC_URL = f"https://raw.githubusercontent.com/commonmark/commonmark-spec/{TAG}/spec.txt"
 ROOT = Path(__file__).resolve().parent.parent
 DIR = ROOT / "tests" / "samples"
 DOCS = DIR / "docs"
 OUT = DIR / "documents.temper.md"
-CHUNK = 2000  # Code points per string literal, well under Java's limit on constants.
 
 # File name, Temper name, and whether it's GitHub Flavored Markdown (else CommonMark).
 DOCUMENTS = [
@@ -34,17 +35,6 @@ DOCUMENTS = [
     ("kelpto-readme.md", "kelptoReadme", True),
     ("ordable-readme.md", "ordableReadme", True),
 ]
-
-
-def literal(s: str) -> str:
-    """A Temper string literal for `s`, escaping anything but plain ASCII."""
-    out = []
-    for ch in s:
-        if " " <= ch <= "~" and ch not in '"\\$':
-            out.append(ch)
-        else:
-            out.append(f"\\u{{{ord(ch):X}}}")
-    return '"' + "".join(out) + '"'
 
 
 def temper() -> str:
@@ -61,18 +51,12 @@ def temper() -> str:
         "      public gfm: Boolean,",
         "    ) {}",
         "",
-        "Each text is built from short literals, so each backend compiles it",
-        "easily.",
+        "Each text is built from literals short enough for every backend.",
         "",
     ]
     for file, name, _ in DOCUMENTS:
         text = (DOCS / file).read_bytes().decode("utf-8")
-        out.append(f"    let {name}(): String {{")
-        out.append("      let out = new StringBuilder();")
-        for start in range(0, len(text), CHUNK):
-            out.append(f"      out.append({literal(text[start:start + CHUNK])});")
-        out.append("      out.toString()")
-        out.append("    }")
+        out += text_function(name, text)
         out.append("")
     out.append("Every sample, by its file name in `docs/`.")
     out.append("")

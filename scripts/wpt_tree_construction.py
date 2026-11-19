@@ -11,9 +11,10 @@ The files are downloaded once, at COMMIT, into data/ (not in git), and
 checked against their pinned SHA-256s. To move to a newer commit,
 change COMMIT and the hashes together and regenerate.
 
-Each test becomes one Temper value: its file, its input, its fragment
-context (empty for a whole document), its scripting (`on`, `off`,
-or `both`), and the expected tree in the files' own dump format
+Each test becomes one Temper value, all stored as text in string
+literals (see temper_data.py): its file, its input, its
+fragment context (empty for a whole document), its scripting (`on`,
+`off`, or `both`), and the expected tree in the files' own dump format
 (lines joined by `\n`, without the `| ` prefix). Error counts aren't
 kept, since kelpto-html doesn't keep tree construction's errors yet.
 
@@ -27,12 +28,13 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from temper_data import table
+
 ROOT = Path(__file__).resolve().parent.parent
 COMMIT = "4aa56d3beafc5655fa55491169eb14845b44eab3"
 RESOURCES = "html/syntax/parsing/resources"
 DATA = ROOT / "data" / f"wpt-{COMMIT[:12]}" / RESOURCES
 OUT_DIR = ROOT / "tests" / "wpt-tree-construction"
-CHUNK = 60  # Tests per function, keeping each function small.
 
 FILES = {
     "adoption01.dat": "b2aba05bd1d832f73a0c6103b3c8b151b283bab7c56887274d81f3a062c4963e",
@@ -146,16 +148,6 @@ def has_lone_surrogate(s: str) -> bool:
     return any(0xD800 <= ord(ch) <= 0xDFFF for ch in s)
 
 
-def literal(s: str) -> str:
-    out = []
-    for ch in s:
-        if " " <= ch <= "~" and ch not in '"\\$':
-            out.append(ch)
-        else:
-            out.append(f"\\u{{{ord(ch):X}}}")
-    return '"' + "".join(out) + '"'
-
-
 def main() -> None:
     cases = []
     skipped = 0
@@ -194,27 +186,11 @@ def main() -> None:
         "      public tree: String,",
         "    ) {}",
         "",
-        "In functions rather than a module-level list, and in chunks, so each",
-        "backend compiles them easily.",
+        "All of them, as text in string literals parsed once, rather than as",
+        "thousands of calls each backend would compile.",
         "",
     ]
-    names = []
-    for start in range(0, len(cases), CHUNK):
-        fn = f"trees{start // CHUNK}"
-        names.append(fn)
-        out.append(f"    let {fn}(): List<TreeTest> {{")
-        out.append("      [")
-        for case in cases[start:start + CHUNK]:
-            out.append(f"        new TreeTest({', '.join(literal(x) for x in case)}),")
-        out.append("      ]")
-        out.append("    }")
-        out.append("")
-    out.append("    export let treeTests(): List<TreeTest> {")
-    out.append("      let all = new ListBuilder<TreeTest>();")
-    for fn in names:
-        out.append(f"      all.addAll({fn}());")
-    out.append("      all.toList()")
-    out.append("    }")
+    out += table("treeTests", cases, "TreeTest", "new TreeTest(f[0], f[1], f[2], f[3], f[4])")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "tests.temper.md").write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"{len(cases)} tests; {skipped} left out for lone surrogates")
