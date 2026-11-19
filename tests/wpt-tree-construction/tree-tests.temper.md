@@ -200,11 +200,6 @@ Every test passes: at least `documentFloor()` documents and
 Rust can't see test-only module values). Logs the counts for every
 file, and the first failures.
 
-    // C++ passes 1,760: Temper's C++ backend compiles with -std=c++14,
-    // where `??>` in the generated string literal for
-    // processing-instructions.dat's `<?something ?\t   ??>` is a
-    // trigraph for `}`, so the test's input itself differs. Kelpto
-    // reads the real input right.
     let documentFloor(): Int { 1761 }
     let fragmentFloor(): Int { 206 }
 

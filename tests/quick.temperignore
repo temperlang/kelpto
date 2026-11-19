@@ -1,0 +1,4 @@
+# The quick tier: `temper test -ign tests/quick.temperignore` skips
+# every test library here, running only the four libraries' own tests.
+# Patterns are relative to this directory.
+*

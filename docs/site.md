@@ -1,7 +1,7 @@
 # The site
 
 A static page in `site/`, built by `site/build.py` from Temper's JS
-output, and deployed by `.github/workflows/site.yml`. It runs Kelpto's
+output, and deployed by `.github/workflows/test.yml`. It runs Kelpto's
 libraries live, with the same build every other language's tests run
 on: kelpto-md first, then kelpto-html and kelpto once the page is up
 (`tree.js`), so the Markdown demo never waits for them.
