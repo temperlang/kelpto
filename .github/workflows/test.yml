@@ -1,9 +1,11 @@
-# Kelpto's Temper tests, with Temper's new compiler (tempest, written in
-# Rust), in two tiers. Every push and pull request runs the quick tier,
-# the four libraries' own tests (`-ign tests/quick.temperignore` leaves
-# out the test libraries under tests/), on the fastest backends. Nightly,
+# Kelpto's Temper tests, with Temper's new compiler (written in Rust),
+# in two tiers. Every push and pull request runs the quick tier, the
+# four libraries' own tests (`-ign tests/quick.temperignore` leaves out
+# the test libraries under tests/), on the fastest backends. Nightly,
 # and when run by hand, the full suite runs on all seven, the vendored
-# conformance suites and the pathological inputs included.
+# conformance suites and the pathological inputs included. Pull
+# requests, pushes to main, and runs by hand also build the project
+# site (site/), and runs on main publish it to GitHub Pages.
 name: test
 
 on:
@@ -17,18 +19,14 @@ permissions:
   contents: read
 
 env:
-  # The same pin as site.yml's; change both together. Until the new
-  # compiler's switch lands, its nightly build (from temperlang/tempest's
-  # main) lags the fixes Kelpto relies on, so CI builds it from a pinned
-  # commit of its transition branch, rfc-657-transition. Once the switch
-  # lands, download Temper's nightly from temperlang/temper's releases
-  # instead, and drop the `temper` job's build.
-  TEMPEST_COMMIT: 5f3cf49801fcd5f125ea2175cc5cb993b630419b
+  # CI builds Temper's compiler (temperlang/temper) at a pinned commit, so
+  # a change in Temper never breaks this library unannounced; bump
+  # TEMPEST_COMMIT deliberately, with the library's tests passing.
+  TEMPEST_COMMIT: 709467bfd51234d1df388805ed4e358766a01b23
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
 jobs:
-  # The compiler, built once per pin (the cache is shared with
-  # site.yml's), as an artifact for the other jobs.
+  # The compiler, built once per pin, as an artifact for the other jobs.
   temper:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -42,14 +40,14 @@ jobs:
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: temperlang/tempest
+          repository: temperlang/temper
           ref: ${{ env.TEMPEST_COMMIT }}
           path: tempest
           persist-credentials: false
           # The whole history and its tags, from which the compiler names
           # its version, as its releases are built.
           fetch-depth: 0
-      # Tempest's minimum Rust, which its own CI builds with.
+      # Temper's minimum Rust, which its own CI builds with.
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@cfcaf53ba4c621917ec7f78a66bff7a8848ddad4 # 1.85.0 branch, 2026-10-16
       - if: steps.cache.outputs.cache-hit != 'true'
@@ -60,7 +58,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/temper-bin"
           cp target/release/temper "$RUNNER_TEMP/temper-bin/"
       # Checkouts must be inside the workspace, but Temper builds every
-      # Temper file under it, so the compiler's sources must go.
+      # Temper file under it, so the compiler's sources must go before
+      # any job here builds.
       - if: steps.cache.outputs.cache-hit != 'true'
         run: rm -rf tempest
       - run: '"$RUNNER_TEMP/temper-bin/temper" --version'
@@ -167,3 +166,56 @@ jobs:
 
       - if: always() && matrix.backend == 'cpp'
         run: ccache --show-stats
+
+  # The project site, built with the same compiler, for pull requests,
+  # pushes to main, and runs by hand, and published to GitHub Pages from
+  # main.
+  site:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: temper
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: temper
+          path: ${{ runner.temp }}/temper-bin
+      - name: Get Temper
+        run: |
+          chmod +x "$RUNNER_TEMP/temper-bin/temper"
+          echo "$RUNNER_TEMP/temper-bin" >> "$GITHUB_PATH"
+
+      # Node runs the JS tour, the spec examples, and the code panel's
+      # JavaScript at build time; uv runs its Python.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Build the site
+        run: |
+          temper build -b js -b py
+          uv run site/build.py
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/build
+
+  # Publishes only from main. Needs Settings > Pages > Source: GitHub
+  # Actions.
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: site
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

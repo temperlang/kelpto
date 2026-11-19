@@ -11,7 +11,7 @@ most PIECE_BUDGET, counted at the most any backend might spend on each
 character. That keeps each literal far under the strictest backend's
 limit (MSVC's 16,380 bytes per literal piece; Java's is 65,535 bytes of
 modified UTF-8 per constant), and short literals also translate faster:
-tempest's C++, C#, Java, and Lua backends slow down sharply on long
+Temper's C++, C#, Java, and Lua backends slow down sharply on long
 literals full of escapes (12,000 took C++ three times as long as 1,000).
 
 Imported by the generators in scripts/, which `uv run` from there.
