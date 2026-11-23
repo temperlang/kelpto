@@ -258,13 +258,16 @@ a third of what a parse allocated in JavaScript (2026-11-03).
 
 ### Items
 
-      private newItem(kind: Kind, start: StringIndex, end: StringIndex, textual: Boolean, node: Boolean): Int {
+A token, not textual; `newTextItem` makes a textual one and `newNode`
+a node.
+
+      private newItem(kind: Kind, start: StringIndex, end: StringIndex): Int {
         let item = kinds.length;
         kinds.add(kind);
         starts.add(start);
         ends.add(end);
-        nodes.add(node);
-        this.textual.add(textual);
+        nodes.add(false);
+        textual.add(false);
         firsts.add(-1);
         lasts.add(-1);
         nexts.add(-1);
@@ -272,7 +275,17 @@ a third of what a parse allocated in JavaScript (2026-11-03).
         item
       }
 
-      private newNode(kind: Kind): Int { newItem(kind, start, start, false, true) }
+      private newTextItem(kind: Kind, start: StringIndex, end: StringIndex): Int {
+        let item = newItem(kind, start, end);
+        textual.set(item, true);
+        item
+      }
+
+      private newNode(kind: Kind): Int {
+        let item = newItem(kind, start, start);
+        nodes.set(item, true);
+        item
+      }
 
       private append(parent: Int, item: Int): Void {
         let last = lasts[parent];
@@ -285,11 +298,19 @@ a third of what a parse allocated in JavaScript (2026-11-03).
         lasts.set(parent, item);
       }
 
-Appends a token to `parent`, unless it's empty.
+Appends a token to `parent`, unless it's empty; `textToken` appends a
+textual one.
 
-      private token(parent: Int, kind: Kind, start: StringIndex, end: StringIndex, textual: Boolean): Int {
+      private token(parent: Int, kind: Kind, start: StringIndex, end: StringIndex): Int {
         if (start >= end) { return -1; }
-        let item = newItem(kind, start, end, textual, false);
+        let item = newItem(kind, start, end);
+        append(parent, item);
+        item
+      }
+
+      private textToken(parent: Int, kind: Kind, start: StringIndex, end: StringIndex): Int {
+        if (start >= end) { return -1; }
+        let item = newTextItem(kind, start, end);
         append(parent, item);
         item
       }
@@ -299,7 +320,7 @@ A node of `kind` holding one token.
       private wrapped(kind: Kind, tokenKind: Kind, start: StringIndex, end: StringIndex): Void {
         let node = newNode(kind);
         append(0, node);
-        token(node, tokenKind, start, end, false);
+        token(node, tokenKind, start, end);
       }
 
 Whether `item` is plain text starting at `at`, or empty, so the writer
@@ -313,7 +334,7 @@ can join it to the plain text before.
 Plain text from `pending` to `at` becomes an item.
 
       private flush(at: StringIndex): Void {
-        token(0, plainKind, pending, at, true);
+        textToken(0, plainKind, pending, at);
         pending = at;
       }
 
@@ -375,7 +396,7 @@ backslashes are a `PipeEscape` and the `|` is text.
 
           let close = if (c == char'|') { next } else { text.next(next) };
           flush(i);
-          token(0, pipeEscapeKind, i, close, true);
+          textToken(0, pipeEscapeKind, i, close);
           pending = close;
           return close;
         }
@@ -384,15 +405,15 @@ backslashes are a `PipeEscape` and the `|` is text.
           flush(i);
           let node = newNode(hardBreakKind);
           append(0, node);
-          token(node, hardBreakMarkerKind, i, next, false);
-          token(node, whitespaceKind, next, after, false);
+          token(node, hardBreakMarkerKind, i, next);
+          token(node, whitespaceKind, next, after);
           pending = after;
           return after;
         }
         if (isAsciiPunctuation(c)) {
           let after = text.next(next);
           flush(i);
-          token(0, escapeKind, i, after, true);
+          textToken(0, escapeKind, i, after);
           pending = after;
           return after;
         }
@@ -411,10 +432,10 @@ with the line ending.
         if (endsWithTwoSpaces(text, spaceStart, i)) {
           let node = newNode(hardBreakKind);
           append(0, node);
-          token(node, hardBreakMarkerKind, spaceStart, i, false);
-          token(node, whitespaceKind, i, after, false);
+          token(node, hardBreakMarkerKind, spaceStart, i);
+          token(node, whitespaceKind, i, after);
         } else {
-          token(0, whitespaceKind, spaceStart, after, true);
+          textToken(0, whitespaceKind, spaceStart, after);
         }
         pending = after;
         after
@@ -440,9 +461,9 @@ run is text.
         flush(i);
         let node = newNode(codeSpanKind);
         append(0, node);
-        token(node, backticksKind, i, runEnd, false);
+        token(node, backticksKind, i, runEnd);
         codeText(node, runEnd, close);
-        token(node, backticksKind, close, closeEnd, false);
+        token(node, backticksKind, close, closeEnd);
         pending = closeEnd;
         closeEnd
       }
@@ -457,14 +478,14 @@ before `|` is a `PipeEscape`, which the code leaves out.
           while (k < to) {
             let next = text.next(k);
             if (next < to && text[k] == char'\\' && text[next] == char'|') {
-              token(node, codeTextKind, at, k, false);
-              token(node, pipeEscapeKind, k, next, false);
+              token(node, codeTextKind, at, k);
+              token(node, pipeEscapeKind, k, next);
               at = next;
             }
             k = next;
           }
         }
-        token(node, codeTextKind, at, to, false);
+        token(node, codeTextKind, at, to);
       }
 
 Whether a run of exactly `count` backticks starts at or after `from`,
@@ -505,16 +526,16 @@ At `<`: an autolink, or raw HTML, or else text.
           flush(i);
           let node = newNode(autolinkKind);
           append(0, node);
-          token(node, angleBracketKind, i, textStart, false);
-          token(node, autolinkTextKind, textStart, textEnd, false);
-          token(node, angleBracketKind, textEnd, autolink, false);
+          token(node, angleBracketKind, i, textStart);
+          token(node, autolinkTextKind, textStart, textEnd);
+          token(node, angleBracketKind, textEnd, autolink);
           pending = autolink;
           return autolink;
         }
         let html = rawHtmlEnd(i);
         if (html > i) {
           flush(i);
-          token(0, rawHtmlKind, i, html, false);
+          token(0, rawHtmlKind, i, html);
           pending = html;
           return html;
         }
@@ -620,7 +641,7 @@ whitespace.
           closes = rightFlanking && (!leftFlanking || afterPunctuation);
         }
         flush(i);
-        let item = token(0, plainKind, i, runEnd, true);
+        let item = textToken(0, plainKind, i, runEnd);
         pending = runEnd;
         if (opens || closes) { pushDelimiter(item, c, length, opens, closes); }
         runEnd
@@ -660,7 +681,7 @@ two long.
         let opens = !afterSpace && (!afterPunctuation || beforeSpace || beforePunctuation);
         let closes = !beforeSpace && (!beforePunctuation || afterSpace || afterPunctuation);
         flush(i);
-        let item = token(0, plainKind, i, runEnd, true);
+        let item = textToken(0, plainKind, i, runEnd);
         pending = runEnd;
         if ((opens || closes) && length <= 2) { pushDelimiter(item, char'~', length, opens, closes); }
         runEnd
@@ -777,8 +798,8 @@ Wraps what's between `opener` and `closer` in a node of `kind`, with
         starts.set(closeItem, closeEnd);
         delimiterLefts.set(opener, delimiterLefts[opener] - use);
         delimiterLefts.set(closer, delimiterLefts[closer] - use);
-        let openMarker = newItem(markerKind, openStart, openEnd, false, false);
-        let closeMarker = newItem(markerKind, closeStart, closeEnd, false, false);
+        let openMarker = newItem(markerKind, openStart, openEnd);
+        let closeMarker = newItem(markerKind, closeStart, closeEnd);
         let first = nexts[openItem];
         let last = prevs[closeItem];
         firsts.set(node, openMarker);
@@ -878,7 +899,7 @@ From `from` to the next whitespace or `<`.
         flush(from);
         let node = newNode(kind);
         append(0, node);
-        token(node, autolinkTextKind, from, to, false);
+        token(node, autolinkTextKind, from, to);
         pending = to;
         to
       }
@@ -995,7 +1016,7 @@ The new items: text outside the links, and a node for each.
                 node = newNode(emailAutolinkKind);
                 out.add(node);
               }
-              append(node, newItem(if (escape) { escapeKind } else { autolinkTextKind }, at, stop, false, false));
+              append(node, newItem(if (escape) { escapeKind } else { autolinkTextKind }, at, stop));
               at = stop;
               if (at >= linkEnds[j]) {
                 node = -1;
@@ -1003,7 +1024,7 @@ The new items: text outside the links, and a node for each.
               }
             } else {
               let stop = if (escape || j >= linkStarts.length) { e } else { minIndex(e, linkStarts[j]) };
-              out.add(newItem(if (escape) { escapeKind } else { plainKind }, at, stop, true, false));
+              out.add(newTextItem(if (escape) { escapeKind } else { plainKind }, at, stop));
               at = stop;
             }
           }
@@ -1026,7 +1047,7 @@ A `[`, or `![` for an image, is text, and goes on the bracket stack.
 
       private openBracket(i: StringIndex, textStart: StringIndex, image: Boolean): StringIndex {
         flush(i);
-        let item = token(0, plainKind, i, textStart, true);
+        let item = textToken(0, plainKind, i, textStart);
         pending = textStart;
         if (!bracketAfter.isEmpty) { bracketAfter.set(bracketAfter.length - 1, true); }
         bracketItems.add(item);
@@ -1078,19 +1099,19 @@ definition has. Else `]` is text.
             if (codeAt(close) == char')') {
               let closeEnd = text.next(close);
               let node = makeLink(b, i);
-              token(node, openParenKind, after, inside, false);
-              token(node, whitespaceKind, inside, destinationStart, false);
-              token(node, linkDestinationKind, destinationStart, destinationEnd, false);
+              token(node, openParenKind, after, inside);
+              token(node, whitespaceKind, inside, destinationStart);
+              token(node, linkDestinationKind, destinationStart, destinationEnd);
               if (hasTitle) {
-                token(node, whitespaceKind, destinationEnd, titleStart, false);
+                token(node, whitespaceKind, destinationEnd, titleStart);
                 let title = newNode(linkTitleKind);
                 append(node, title);
-                token(title, titleTextKind, titleStart, titleEnd, false);
-                token(node, whitespaceKind, titleEnd, close, false);
+                token(title, titleTextKind, titleStart, titleEnd);
+                token(node, whitespaceKind, titleEnd, close);
               } else {
-                token(node, whitespaceKind, destinationEnd, close, false);
+                token(node, whitespaceKind, destinationEnd, close);
               }
-              token(node, closeParenKind, close, closeEnd, false);
+              token(node, closeParenKind, close, closeEnd);
               return finishLink(b, closeEnd);
             }
           }
@@ -1113,7 +1134,7 @@ definition has. Else `]` is text.
           if (labelEnd > after) {
             let labelNode = newNode(linkLabelKind);
             append(node, labelNode);
-            token(labelNode, labelTextKind, after, labelEnd, false);
+            token(labelNode, labelTextKind, after, labelEnd);
           }
           return finishLink(b, labelEnd);
         }
@@ -1181,8 +1202,8 @@ so do the delimiters there, as cmark-gfm drops them.
         nexts.set(opener, -1);
         firsts.set(node, opener);
         lasts.set(node, opener);
-        token(node, labelTextKind, labelStart, close, false);
-        token(node, linkCloseKind, close, closeEnd, false);
+        token(node, labelTextKind, labelStart, close);
+        token(node, linkCloseKind, close, closeEnd);
         popBracket();
         pending = closeEnd;
         closeEnd
@@ -1239,7 +1260,7 @@ and the `]`. Gives the node, to add the rest to.
         lasts.set(node, lasts[0]);
         prevs.set(opener, -1);
         lasts.set(0, node);
-        token(node, linkCloseKind, close, text.next(close), false);
+        token(node, linkCloseKind, close, text.next(close));
         node
       }
 
