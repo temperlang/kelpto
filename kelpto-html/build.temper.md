@@ -2815,7 +2815,7 @@ a `body` in this document's quirks mode. Empty for a frameset.
         while (root >= 0 && tree.kinds[root] != elementNode) { root = tree.nexts[root]; }
         var body = if (root >= 0) { tree.firsts[root] } else { -1 };
         while (body >= 0 && !tree.isHtml(body, "body")) { body = tree.nexts[body]; }
-        sanitizeTree(tree, tokens, body, new FragmentContext("body", "html", [], false, quirksMode), policy)
+        SafeHtml.sanitizeTree(tree, tokens, body, new FragmentContext("body", "html", [], false, quirksMode), policy)
       }
     }
 
@@ -2851,7 +2851,7 @@ The nodes serialized as the context element's contents (so text in a
 The nodes sanitized by `policy` for the context (see `sanitizeHtml`).
 
       public sanitize(policy: SanitizerPolicy = SanitizerPolicy.standard): SafeHtml {
-        sanitizeTree(tree, tokens, tree.fragmentRoot, context, policy)
+        SafeHtml.sanitizeTree(tree, tokens, tree.fragmentRoot, context, policy)
       }
     }
 

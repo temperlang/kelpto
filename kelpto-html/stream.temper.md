@@ -174,7 +174,7 @@ together (a `<b title="` in one, `">` in the next) are judged as the
 browser joins them.
 
       public sanitize(policy: SanitizerPolicy = SanitizerPolicy.standard): SafeHtml {
-        sanitizeTree(builder.tree, null, builder.tree.fragmentRoot, context, policy)
+        SafeHtml.sanitizeTree(builder.tree, null, builder.tree.fragmentRoot, context, policy)
       }
     }
 

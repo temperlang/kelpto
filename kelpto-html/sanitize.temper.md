@@ -89,8 +89,15 @@ list of image candidates, and `ping` and `archive` space-separated URLs.
 ## Safe HTML
 
 HTML this library sanitized: a type of its own, so code can ask for it
-by type rather than trusting any string. Only the sanitizer makes one.
-`removals` lists what it removed, in document order (see `Removal`).
+by type rather than trusting any string. `removals` lists what it
+removed, in document order (see `Removal`).
+
+Only the sanitizer makes one: `sanitizeTree` gives the children of
+`root` in `tree`, sanitized for `context`, checked by parsing the
+output again (see "What it guarantees", above), with origins from
+`tokens` (null if the tree has none, or is joined), or nothing for a
+`root` not in `tree`. `sanitizeHtml` and the `sanitize` methods call
+it.
 
     export class SafeHtml {
       public html: String;
@@ -100,6 +107,33 @@ by type rather than trusting any string. Only the sanitizer makes one.
         this.removals = removals;
       }
       public toString(): String { html }
+      public static sanitizeTree(tree: BuiltTree, tokens: HtmlTokens?, root: Int, context: FragmentContext, policy: SanitizerPolicy): SafeHtml {
+        let space = context.namespace;
+        let name = if (space == "html") { asciiLowercase(context.name) } else { "${space}:${context.name}" };
+        let allowed = if (space == "html") {
+          policy.allowsElement(name) || !dropsContents.has(name)
+        } else {
+          policy.allowsElement(name) && !svgNever.has(name)
+        };
+        if (root < 0 || root >= tree.kinds.length || !allowed) { return new SafeHtml("", []); }
+        let raw = space == "html" && rawTextParents.has(name);
+        let removals = new ListBuilder<Removal>();
+        let first = new Sanitizer(tree, tokens, policy, removals);
+        first.run(root, raw);
+        var html = first.out.toString();
+        for (var round = 0; round < 4; round += 1) {
+          let reparsed = fragmentTree(html, context);
+          let again = new Sanitizer(reparsed, null, policy, removals);
+          again.run(reparsed.fragmentRoot, raw);
+          let next = again.out.toString();
+          if (again.changes == 0 && next == html) { return new SafeHtml(html, removals.toList()); }
+          html = next;
+        }
+        let last = fragmentTree(html, context);
+        let text = new Sanitizer(last, null, SanitizerPolicy.textOnly, removals);
+        text.run(last.fragmentRoot, raw);
+        new SafeHtml(text.out.toString(), removals.toList())
+      }
     }
 
 ## What was removed
@@ -562,40 +596,6 @@ if `rawContext`.
     let unwrapIt = 1;
     let keepIt = 2;
 
-## Sanitizing a tree
-
-The children of `root` in `tree`, sanitized for `context`, checked by
-parsing the output again (see "What it guarantees", above), with
-origins from `tokens` (null if the tree has none, or is joined).
-
-    let sanitizeTree(tree: BuiltTree, tokens: HtmlTokens?, root: Int, context: FragmentContext, policy: SanitizerPolicy): SafeHtml {
-      let space = context.namespace;
-      let name = if (space == "html") { asciiLowercase(context.name) } else { "${space}:${context.name}" };
-      let allowed = if (space == "html") {
-        policy.allowsElement(name) || !dropsContents.has(name)
-      } else {
-        policy.allowsElement(name) && !svgNever.has(name)
-      };
-      if (root < 0 || !allowed) { return new SafeHtml("", []); }
-      let raw = space == "html" && rawTextParents.has(name);
-      let removals = new ListBuilder<Removal>();
-      let first = new Sanitizer(tree, tokens, policy, removals);
-      first.run(root, raw);
-      var html = first.out.toString();
-      for (var round = 0; round < 4; round += 1) {
-        let reparsed = fragmentTree(html, context);
-        let again = new Sanitizer(reparsed, null, policy, removals);
-        again.run(reparsed.fragmentRoot, raw);
-        let next = again.out.toString();
-        if (again.changes == 0 && next == html) { return new SafeHtml(html, removals.toList()); }
-        html = next;
-      }
-      let last = fragmentTree(html, context);
-      let text = new Sanitizer(last, null, SanitizerPolicy.textOnly, removals);
-      text.run(last.fragmentRoot, raw);
-      new SafeHtml(text.out.toString(), removals.toList())
-    }
-
 The built tree of `text` parsed as a fragment in `context`, with
 scripting on, as browsers parse `innerHTML`.
 
@@ -616,7 +616,7 @@ Parses `text` as a fragment in `context` (`body` by default), as
       context: FragmentContext = new FragmentContext("body"),
     ): SafeHtml {
       let tree = fragmentTree(text, context);
-      sanitizeTree(tree, null, tree.fragmentRoot, context, policy)
+      SafeHtml.sanitizeTree(tree, null, tree.fragmentRoot, context, policy)
     }
 
 ## Tests
@@ -681,6 +681,11 @@ output checked to parse back to itself.
         let reparsed = parseHtmlFragment(html, body);
         assert(reparsed.html == html && reparsed.sanitize().html == html) { "${i.toString()}: reparses otherwise" };
       }
+      let tree = fragmentTree("<b>b</b>", body);
+      let outside = SafeHtml.sanitizeTree(tree, null, tree.kinds.length, body, SanitizerPolicy.standard);
+      assert(outside.html == "" && outside.removals.isEmpty) { "a root not in the tree: ${outside.html}" };
+      let inside = SafeHtml.sanitizeTree(tree, null, tree.fragmentRoot, body, SanitizerPolicy.standard);
+      assert(inside.html == "<b>b</b>") { inside.html };
     }
 
     test("documents, contexts, and policies") {
