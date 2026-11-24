@@ -106,6 +106,9 @@ its token, so its origin; few documents have any, hence a map.
 
       public constructor() {}
 
+Appends a node, in no parent yet, and gives its id. Each argument goes
+on the list named for it (`kind` on `kinds`, and so on).
+
       public add(kind: Int, name: String, space: Int, data: String, tokenIndex: Int, tokenOffset: Int, attributes: List<String>): Int {
         let id = kinds.length;
         kinds.add(kind);
@@ -347,7 +350,15 @@ as lists in `contentLists`, by index.
 
       public constructor(scripting: Boolean) {
         this.scripting = scripting;
-        tree.add(documentNode, "", htmlNs, "", -1, 0, noStrings);
+        addSynthetic(documentNode, "", htmlNs);
+      }
+
+A node from no token, so without data or attributes: the document,
+a fragment's root and context, an implied element, or a template's
+contents.
+
+      private addSynthetic(kind: Int, name: String, space: Int): Int {
+        tree.add(kind, name, space, "", -1, 0, noStrings)
       }
 
 ### Starting a fragment
@@ -362,7 +373,7 @@ carries over, which matters only for `<table>` closing a `<p>`.
       public startFragment(context: FragmentContext): Int {
         quirks = context.quirksMode;
         let space = if (context.namespace == "svg") { svgNs } else if (context.namespace == "math") { mathNs } else { htmlNs };
-        let root = tree.add(elementNode, "html", htmlNs, "", -1, 0, noStrings);
+        let root = addSynthetic(elementNode, "html", htmlNs);
         tree.insert(0, root, -1);
         stack.add(root);
         let triples = new ListBuilder<String>();
@@ -373,7 +384,8 @@ carries over, which matters only for `<table>` closing a `<p>`.
           triples.add(attributes[i].value);
         }
         let name = if (space == htmlNs) { asciiLowercase(context.name) } else { context.name };
-        contextNode = tree.add(elementNode, name, space, "", -1, 0, triples.toList());
+        contextNode = addSynthetic(elementNode, name, space);
+        tree.attributeLists.set(contextNode, triples.toList());
         tree.fragmentRoot = root;
         tree.fragmentContext = contextNode;
         tree.contextInsideForm = context.insideForm;
@@ -383,7 +395,7 @@ carries over, which matters only for `<table>` closing a `<p>`.
         if (htmlName == "form") {
           form = contextNode;
         } else if (context.insideForm) {
-          form = tree.add(elementNode, "form", htmlNs, "", -1, 0, noStrings);
+          form = addSynthetic(elementNode, "form", htmlNs);
         }
         if (htmlName == "title" || htmlName == "textarea") {
           ContentState.rcdata.id
@@ -832,7 +844,7 @@ The appropriate place for inserting a node, with foster parenting.
       private createElement(t: TreeToken, name: String, space: Int): Int {
         let id = tree.add(elementNode, name, space, "", t.index, t.offset, t.tokenAttributes);
         if (space == htmlNs && name == "template") {
-          tree.contents.set(id, tree.add(fragmentNode, "", htmlNs, "", -1, 0, noStrings));
+          tree.contents.set(id, addSynthetic(fragmentNode, "", htmlNs));
         }
         id
       }
@@ -861,7 +873,7 @@ The appropriate place for inserting a node, with foster parenting.
 An element the standard implies, from no token.
 
       private insertImplied(name: String): Int {
-        let id = tree.add(elementNode, name, htmlNs, "", -1, 0, noStrings);
+        let id = addSynthetic(elementNode, name, htmlNs);
         place(current());
         tree.insert(placeParent, id, placeBefore);
         stack.add(id);
@@ -1287,7 +1299,7 @@ Copies `from`'s children, and theirs, into `to`, without recursing
           tree.insert(parent, copy, -1);
           let contents = tree.contents[source];
           if (contents >= 0) {
-            let copied = tree.add(fragmentNode, "", htmlNs, "", -1, 0, noStrings);
+            let copied = addSynthetic(fragmentNode, "", htmlNs);
             tree.contents.set(copy, copied);
             copyChildren(contents, copied);
           }
@@ -1381,7 +1393,7 @@ In a fragment, the context element stands in for the root.
         if (t.kind == endToken && !(t.name == "head" || t.name == "body" || t.name == "html" || t.name == "br")) {
           return false;
         }
-        let id = tree.add(elementNode, "html", htmlNs, "", -1, 0, noStrings);
+        let id = addSynthetic(elementNode, "html", htmlNs);
         tree.insert(0, id, -1);
         stack.add(id);
         mode = beforeHeadMode;
